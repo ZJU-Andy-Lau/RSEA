@@ -6,6 +6,7 @@ import math
 from rpc import RPCModelParameterTorch
 from utils import project_mercator,mercator2lonlat
 import time
+from typing import List
 
 class SmoothL1Loss(nn.Module):
     def __init__(self, beta=1.0):
@@ -157,7 +158,7 @@ class CriterionFinetune(nn.Module):
                 obj1_P3,obj2_P3,
                 local1_P2,local2_P2,
                 residual1_P,residual2_P,
-                rpcs:list[RPCModelParameterTorch],v1,v2,
+                rpcs:List[RPCModelParameterTorch],v1,v2,
                 B,H,W
                 ):
         P = H*W

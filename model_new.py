@@ -9,6 +9,7 @@ from timm.models.layers import trunc_normal_
 from timm.models.vision_transformer import VisionTransformer
 from functools import partial
 from torchvision import transforms
+from typing import List
 
 def bnac(channels):
     return nn.Sequential(
@@ -177,7 +178,7 @@ class Encoder0324(nn.Module):
         self.unfreeze_backbone(self.cfg['unfreeze_backbone_modules'])
 
 
-    def unfreeze_backbone(self,module_names:list[str]):
+    def unfreeze_backbone(self,module_names:List[str]):
         unfreeze_modules = []
         for name in module_names:
             module = self.backbone_modules.get(name,None)
@@ -391,7 +392,7 @@ class Encoder0409(nn.Module):
         self.unfreeze_backbone(self.cfg['unfreeze_backbone_modules'])
 
 
-    def unfreeze_backbone(self,module_names:list[str]):
+    def unfreeze_backbone(self,module_names:List[str]):
         unfreeze_modules = []
         for name in module_names:
             module = self.backbone_modules.get(name,None)

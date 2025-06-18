@@ -26,6 +26,7 @@ from torchvision import transforms
 from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
+from typing import List
 
 cfg_base = {
             'input_channels':3,
@@ -932,7 +933,7 @@ class Element():
         
         return avg_transform
     
-    def __compose_transforms__(self,transforms:list[np.ndarray]) -> np.ndarray:
+    def __compose_transforms__(self,transforms:List[np.ndarray]) -> np.ndarray:
         res = None
         for transform in transforms:
             if res is None:
@@ -947,7 +948,7 @@ class Element():
 
 
     @torch.no_grad()
-    def get_transform(self,elements:list['Element']):
+    def get_transform(self,elements:List['Element']):
         start_time = time.perf_counter()
         for element in elements:
             if element.id == self.id:
@@ -1072,7 +1073,7 @@ class Grid():
         self.encoder = encoder
         self.output_path = output_path
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
-        self.elements:list[Element] = []
+        self.elements:List[Element] = []
         self.transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -1222,7 +1223,7 @@ class Grid():
         t_inv = -A_inv @ t
         return np.hstack([A_inv,t_inv.reshape(2,1)])
     
-    def centerize_transforms(self,elements:list[Element]):
+    def centerize_transforms(self,elements:List[Element]):
         transforms = np.stack([element.af_trans for element in elements],axis=0)
         trans_avg = self.__average_transforms__(transforms)
         trans_avg_inv = self.__inverse_transform__(trans_avg)
@@ -1582,8 +1583,8 @@ class RSEA():
         print("===================================================================")
         self.options = options
         random.seed(42)
-        self.imgs:list[RSImage] = []
-        self.grids:list[Grid] = []
+        self.imgs:List[RSImage] = []
+        self.grids:List[Grid] = []
         self.encoder = Encoder0409(cfg_large)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
@@ -1793,7 +1794,7 @@ class RSEA():
         print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
     
 
-    def adjust(self,image_folders:list[str],options):
+    def adjust(self,image_folders:List[str],options):
 
         # def check_error(check_points:np.ndarray,trans:np.ndarray):
         #     ones = np.ones((check_points.shape[0],1))
@@ -1807,7 +1808,7 @@ class RSEA():
             xyh -= mean
             np.savetxt(output_path,xyh,fmt='%.2f',delimiter=' ')
         
-        adjust_images:list[RSImage] = []
+        adjust_images:List[RSImage] = []
         
         for image_id,image_folder in enumerate(image_folders):
             image = RSImage(self.options,image_folder,image_id)
@@ -1878,7 +1879,7 @@ class RSEA():
 
             return adjust_images
 
-    def check_error(self,log_path,images:list[RSImage] = None):        
+    def check_error(self,log_path,images:List[RSImage] = None):        
         def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
             R = 6371000 
             lat1 = coords1[:, 0]
