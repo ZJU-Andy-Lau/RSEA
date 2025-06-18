@@ -1,6 +1,7 @@
 datasets/
 log/
 weights/
+tmp/
 datasets.zip
 packages.txt
 adjust_multitasks.sh
