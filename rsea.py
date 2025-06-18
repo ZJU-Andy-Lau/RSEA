@@ -481,7 +481,7 @@ class Element():
         #     else:
         #         color = (255,0,0)
         #     cv2.circle(output_img,(int(local[1] - self.top_left_linesamp[1]),int(local[0] - self.top_left_linesamp[0])),1,color,-1)
-        # cv2.imwrite(f'./datasets/Rage/d0_v0/conf_{self.id}.png',output_img)
+        # cv2.imwrite(f'./datasets/Rsea/d0_v0/conf_{self.id}.png',output_img)
         # exit()
         #============================
         
@@ -1032,7 +1032,7 @@ class Element():
         output_img = self.img_raw
         for local in locals:
             cv2.circle(output_img,(int(local[1] - self.top_left_linesamp[1]),int(local[0] - self.top_left_linesamp[0])),1,(0,255,0),-1)
-        cv2.imwrite(f'./datasets/Rage/d0_v0/vis_{self.id}.png',output_img)
+        cv2.imwrite(f'./datasets/Rsea/d0_v0/vis_{self.id}.png',output_img)
         #============================
         
         self.af_trans = self.__average_transforms__(np.stack([new_trans,self.af_trans],axis=0))
@@ -1574,7 +1574,7 @@ class Grid():
 
 
 
-class RAGE():
+class RSEA():
     def __init__(self,options):
         print("==============================options==============================")
         for k,v in vars(options).items():
@@ -1790,7 +1790,7 @@ class RAGE():
             new_grid = Grid(self.options,extend,diag,self.encoder,os.path.join(self.root,grid_path))
             new_grid.load_mapper(os.path.join(self.root,grid_path,'grid_mapper.pth'))
             self.grids.append(new_grid)
-        print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RAGE now")
+        print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
     
 
     def adjust(self,image_folders:list[str],options):

@@ -4,7 +4,7 @@ import argparse
 from distutils.util import strtobool
 import os
 from copy import deepcopy
-from rage import RAGE
+from rsea import RSEA
 
 
 def _strtobool(x):
@@ -116,32 +116,17 @@ if __name__ == '__main__':
 
     options = parser.parse_args()
 
-    rage = RAGE(options)
+    rsea = RSEA(options)
 
     image_folders = [i for i in os.listdir(options.root) if 'view' in i]
     for image in image_folders:
-        rage.add_image(os.path.join(options.root,image))
-    rage.create_grids(grid_size=options.grid_size)
-    # rage.load_grids()
-    adjust_images = rage.adjust([os.path.join(options.root,i) for i in image_folders],options)
-    rage.check_error(os.path.join(options.root,f'log_{options.log_postfix}.csv'),adjust_images)
+        rsea.add_image(os.path.join(options.root,image))
+    rsea.create_grids(grid_size=options.grid_size)
+    # rsea.load_grids()
+    adjust_images = rsea.adjust([os.path.join(options.root,i) for i in image_folders],options)
+    rsea.check_error(os.path.join(options.root,f'log_{options.log_postfix}.csv'),adjust_images)
 
 
-    # rage.add_image('./datasets/Rage/d0_v0')
-    # rage.add_image('./datasets/Rage/d0_v1')
-    # rage.add_image('./datasets/Rage/d0_v2')
-    # rage.add_image('./datasets/Rage/d0_v0_cp')
-    # rage.add_image('./datasets/gf7/fwd')
-    # rage.add_image('./datasets/gf7/bwd')
-    #rage.create_grids(grid_size=2000)
-    # rage.load_grids()
-    # rage.adjust(['./datasets/Rage/d0_v5'])
-    #rage.adjust(['./datasets/Rage/d0_v0','./datasets/Rage/d0_v1','./datasets/Rage/d0_v2'])#,'./datasets/Rage/d0_v2'
-    # rage.adjust(['./datasets/gf7/fwd','./datasets/gf7/bwd'])
-    # rage.load_grids()
-    # rage.add_image('./datasets/rage/test0227/bwd')
-    # rage.add_image('./datasets/rage/test0227/fwd')
-    # rage.create_grids()
-    # rage.adjust(['./datasets/rage/test0227/fwd']) #,'./datasets/rage/test0227/bwd'
+   
     
     
