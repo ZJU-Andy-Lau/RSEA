@@ -3,3 +3,5 @@ log/
 weights/
 datasets.zip
 packages.txt
+adjust_multitasks.sh
+adjust_onetask.sh
