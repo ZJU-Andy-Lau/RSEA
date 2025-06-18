@@ -556,7 +556,7 @@ class Element():
         dem_std = np.std(self.dem)
         dem_min = max(self.dem.min(),dem_mean - 2 * dem_std)
         dem_max = min(self.dem.max(),dem_mean + 2 * dem_std)
-        extend = np.concat([af_mat.reshape(-1),scale,np.array([dem_min,dem_max])])
+        extend = np.concatenate([af_mat.reshape(-1),scale,np.array([dem_min,dem_max])])
         
         extend = torch.from_numpy(extend)
         if self.use_gpu:
@@ -1798,7 +1798,7 @@ class RSEA():
 
         # def check_error(check_points:np.ndarray,trans:np.ndarray):
         #     ones = np.ones((check_points.shape[0],1))
-        #     trans_points = np.concat([check_points,ones],axis=-1)
+        #     trans_points = np.concatenate([check_points,ones],axis=-1)
         #     trans_points = np.matmul(trans_points,trans.T)
         #     dis = np.linalg.norm(trans_points - check_points,axis=-1)
         #     return dis
@@ -1832,7 +1832,7 @@ class RSEA():
                 
                 pred_res = grid.pred_xyh(img_raw)
 
-                xyh = np.concat([pred_res['yx_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
+                xyh = np.concatenate([pred_res['yx_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
                 all_xyh.append(xyh)
 
                 latlon_P2 = mercator2lonlat(pred_res['yx_P2'])
@@ -1972,7 +1972,7 @@ class RSEA():
     #     dem_std = np.std(dem)
     #     dem_min = max(dem.min(),dem_mean - 2 * dem_std)
     #     dem_max = min(dem.max(),dem_mean + 2 * dem_std)
-    #     warped_extend = np.concat([af_mat.reshape(-1),scale,np.array([dem_min,dem_max])])
+    #     warped_extend = np.concatenate([af_mat.reshape(-1),scale,np.array([dem_min,dem_max])])
     #     return warped_extend
 
 
