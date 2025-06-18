@@ -26,7 +26,7 @@ from torchvision import transforms
 from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
-from typing import List
+from typing import List,Dict
 
 cfg_base = {
             'input_channels':3,
@@ -414,7 +414,7 @@ class Element():
         return crop_imgs,crop_locals,crop_dems
 
     @torch.no_grad()
-    def __extract_features__(self) -> dict[str,torch.Tensor]:
+    def __extract_features__(self) -> Dict[str,torch.Tensor]:
         
         print("Extracting features")
         
@@ -1464,7 +1464,7 @@ class Grid():
         return crop_imgs,crop_locals
 
     @torch.no_grad()
-    def pred_xyh(self,img_raw:np.ndarray) -> dict[str,np.ndarray]:
+    def pred_xyh(self,img_raw:np.ndarray) -> Dict[str,np.ndarray]:
         """
         return: {"yx_P2","h_P1","locals_P2","confs_P1"} np.ndarray
         """
