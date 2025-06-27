@@ -56,7 +56,7 @@ class PretrainDataset(Dataset):
         if dataset_num is None:
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
-        self.database_keys = self.database.keys()[:dataset_num]
+        self.database_keys = list(self.database.keys())[:dataset_num]
         self.iter_num = iter_num
         self.DOWNSAMPLE=downsample
         self.img_size = self.database[self.database.keys()[0]]['image_1'][:].shape[0]

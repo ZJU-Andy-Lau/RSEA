@@ -335,8 +335,8 @@ if __name__ == '__main__':
 
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
-
-    print('=========================configs=========================')
-    print(args)
-    print('=========================================================')
+    print("==============================configs==============================")
+    for k,v in vars(args).items():
+        print(f"{k}:{v}")
+    print("===================================================================")
     pretrain(args)
