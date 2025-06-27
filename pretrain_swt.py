@@ -159,9 +159,6 @@ def pretrain(args):
             obj = objs[dataset_idx][0].contiguous()
             residual1 = residuals[dataset_idx]['v1'][0].contiguous()
             residual2 = residuals[dataset_idx]['v2'][0].contiguous()
-            print(img1.shape,img2.shape)
-            print(obj.shape)
-            print(residual1.shape,residual2.shape)
 
             decoder= decoders[dataset_idx]
             decoder.train()

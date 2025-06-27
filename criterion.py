@@ -177,7 +177,7 @@ class CriterionFinetuneNormal(nn.Module):
         loss_conf = .5 * torch.abs(conf1_P[conf_valid1] - conf1_gt_P[conf_valid1]) + .5 * torch.abs(conf2_P[conf_valid2] - conf2_gt_P[conf_valid2])
         loss_conf *= 1000 * min(1.,epoch / 3.)
 
-        shift_amount = torch.randint(low=-P // 2,high = P // 2)
+        shift_amount = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
         feat1_PD = F.normalize(feat1_PD,dim=1)
         feat2_PD = F.normalize(feat2_PD,dim=1)
         simi_positive = torch.concatenate([torch.sum(feat1_PD[robust_mask] * feat2_PD[robust_mask],dim=1),
