@@ -50,11 +50,11 @@ cfg_large = {
 
 def warp_by_bbox(raw,bbox):
     print(bbox)
-    print(raw[:,0].min(),raw[:,0].max(),raw[:,1].min(),raw[:,1].max(),raw[:,2].min(),raw[:,2].max())
+    print(raw[:,0].min().item(),raw[:,0].max().item(),raw[:,1].min().item(),raw[:,1].max().item(),raw[:,2].min().item(),raw[:,2].max().item())
     raw[:,0] = .5 * (raw[:,0] + 1.) * (bbox['x_max'] - bbox['x_min']) + bbox['x_min']
     raw[:,1] = .5 * (raw[:,1] + 1.) * (bbox['y_max'] - bbox['y_min']) + bbox['y_min']
     raw[:,2] = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
-    print(raw[:,0].min(),raw[:,0].max(),raw[:,1].min(),raw[:,1].max(),raw[:,2].min(),raw[:,2].max())
+    print(raw[:,0].min().item(),raw[:,0].max().item(),raw[:,1].min().item(),raw[:,1].max().item(),raw[:,2].min().item(),raw[:,2].max().item())
     return raw
 
 def pretrain(args):
@@ -214,9 +214,9 @@ def pretrain(args):
                 obj_P3 = obj.flatten(0,2)
                 residual1_P = residual1.reshape(-1)
                 residual2_P = residual2.reshape(-1)
-                print("output:",torch.isnan(output1_B3hw).any(),torch.isinf(output1_B3hw).any(),torch.isnan(output2_B3hw).any(),torch.isinf(output2_B3hw).any())
-                print("pred:",torch.isnan(pred1_P3).any(),torch.isinf(pred1_P3).any(),torch.isnan(pred2_P3).any(),torch.isinf(pred2_P3).any())
-                print("obj:",torch.isnan(obj).any(),torch.isinf(obj).any())
+                print("output:",torch.isnan(output1_B3hw).any().item(),torch.isinf(output1_B3hw).any().item(),torch.isnan(output2_B3hw).any().item(),torch.isinf(output2_B3hw).any().item())
+                print("pred:",torch.isnan(pred1_P3).any().item(),torch.isinf(pred1_P3).any().item(),torch.isnan(pred2_P3).any().item(),torch.isinf(pred2_P3).any().item())
+                print("obj:",torch.isnan(obj).any().item(),torch.isinf(obj).any().item())
                 loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
                                                                                 pred1_P3,pred2_P3,
