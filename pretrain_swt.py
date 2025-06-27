@@ -186,7 +186,7 @@ def pretrain(args):
                 'h_max':obj[:,:,2].max(),
             }
 
-            with autocast('cuda'):
+            with autocast():
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
 
