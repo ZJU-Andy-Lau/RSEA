@@ -59,7 +59,7 @@ class PretrainDataset(Dataset):
         self.database_keys = list(self.database.keys())[:dataset_num]
         self.iter_num = iter_num
         self.DOWNSAMPLE=downsample
-        self.img_size = self.database[self.database.keys()[0]]['image_1'][:].shape[0]
+        self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
         self.batch_size = batch_size
         self.obj_bboxs = []
