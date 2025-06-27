@@ -49,12 +49,9 @@ cfg_large = {
     }
 
 def warp_by_bbox(raw,bbox):
-    print(bbox)
-    print(raw[:,0].min().item(),raw[:,0].max().item(),raw[:,1].min().item(),raw[:,1].max().item(),raw[:,2].min().item(),raw[:,2].max().item())
     raw[:,0] = .5 * (raw[:,0] + 1.) * (bbox['x_max'] - bbox['x_min']) + bbox['x_min']
     raw[:,1] = .5 * (raw[:,1] + 1.) * (bbox['y_max'] - bbox['y_min']) + bbox['y_min']
     raw[:,2] = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
-    print(raw[:,0].min().item(),raw[:,0].max().item(),raw[:,1].min().item(),raw[:,1].max().item(),raw[:,2].min().item(),raw[:,2].max().item())
     return raw
 
 def pretrain(args):
@@ -312,7 +309,7 @@ def pretrain(args):
             'loss_dis':total_loss_dis,
             'loss_conf':total_loss_conf,
             'loss_feat':total_loss_feat,
-            'k':k,
+            'k':k.item(),
             'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
             'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
         })
