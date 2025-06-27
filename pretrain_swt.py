@@ -55,10 +55,9 @@ def warp_by_bbox(raw,bbox):
     return raw
 
 def pretrain(args):
-    dataset_num = args.dataset_num
     print("Loading Dataset")
     dataset = PretrainDataset(root = args.dataset_path,
-                              dataset_num = dataset_num,
+                              dataset_num = args.dataset_num,
                               iter_num = args.max_epoch,
                               batch_size = args.batch_size,
                               downsample = 16,
@@ -66,7 +65,7 @@ def pretrain(args):
                               mode='train')
     
     dataloader = DataLoader(dataset,batch_size=1,num_workers=4,drop_last=False)
-
+    dataset_num = dataset.dataset_num
     print("Building Encoder")
 
     cfg = cfg_large
@@ -177,7 +176,14 @@ def pretrain(args):
                 residual2 = residual2.cuda()
             
             B,H,W = obj.shape[0],obj.shape[1],obj.shape[2]
-            obj_bbox = dataset.obj_bboxs[dataset_idx]
+            obj_bbox = {
+                'x_min':obj[:,:,0].min(),
+                'x_max':obj[:,:,0].max(),
+                'y_min':obj[:,:,1].min(),
+                'y_max':obj[:,:,1].max(),
+                'h_min':obj[:,:,2].min(),
+                'h_max':obj[:,:,2].max(),
+            }
 
             with autocast('cuda'):
                 feat1,conf1 = encoder(img1)
