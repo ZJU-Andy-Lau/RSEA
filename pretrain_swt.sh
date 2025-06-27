@@ -5,8 +5,3 @@ python -u pretrain_swt.py --dataset_path datasets/ant \
  --decoder_output_path ./weights/decoders_ant_0627 \
  --max_epoch 300 \
  --batch_size 1 \
-# --decoder_path weights \
-#  --min_loss 10.5 \
-#  --decoder_path weights/pretrain_swt_cnn_r2_0409_large \
-#4,5,6,7
-#pretrain_swt_cnn_r2_0409_large  pretrain_swt_r2_0324_large_b

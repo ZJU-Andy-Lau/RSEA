@@ -3,7 +3,6 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim import lr_scheduler
 import torch.nn.functional as F
 import torch.nn.init as init
 import numpy as np
@@ -11,13 +10,11 @@ from torch.utils.data import Dataset,DataLoader
 from criterion import CriterionFinetuneNormal,CriterionFinetuneDis
 from model_new import Encoder,ProjectHead,Decoder
 
-import cv2
 import datetime
 import time
 from tqdm import tqdm,trange
 from skimage.transform import AffineTransform
 from skimage.measure import ransac
-from PIL import Image
 from torch.cuda.amp import autocast, GradScaler
 from dataloader import PretrainDataset
 from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend
@@ -25,8 +22,6 @@ import random
 import warnings
 warnings.filterwarnings("ignore")
 from scheduler import MultiStageOneCycleLR
-
-from torch.amp import autocast, GradScaler
 cfg_base = {
             'input_channels':3,
             'patch_feature_channels':512,
@@ -108,7 +103,7 @@ def pretrain(args):
 
     if args.decoder_output_path is not None:
         os.makedirs(args.decoder_output_path,exist_ok=True)
-        
+
     decoders = []
     optimizers = []
     schedulers = []
