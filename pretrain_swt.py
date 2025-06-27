@@ -309,7 +309,7 @@ def pretrain(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_path',type=str,default='./datasets')
-    parser.add_argument('--decoder_num',type=int,default=None)
+    parser.add_argument('--dataset_num',type=int,default=None)
     parser.add_argument('--encoder_path',type=str,default=None)
     parser.add_argument('--decoder_path',type=str,default=None)
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
