@@ -5,3 +5,4 @@ python -u pretrain_swt.py --dataset_path datasets/ant \
  --decoder_output_path ./weights/decoders_ant_0627 \
  --max_epoch 300 \
  --batch_size 1 \
+ --dataset_num 10 \
