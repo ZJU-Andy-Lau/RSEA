@@ -205,35 +205,43 @@ def pretrain(args):
                 output2_B3hw = decoder(feat_input2)
                 output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                 output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
-                pred1_P3 = warp_by_bbox(output1_P3,obj_bbox)
-                pred2_P3 = warp_by_bbox(output2_P3,obj_bbox)
-                project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
-                project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
-                conf1_P = conf1.permute(0,2,3,1).reshape(-1)
-                conf2_P = conf2.permute(0,2,3,1).reshape(-1)
-                obj_P3 = obj.flatten(0,2)
-                residual1_P = residual1.reshape(-1)
-                residual2_P = residual2.reshape(-1)
-                print("output:",torch.isnan(output1_B3hw).any().item(),torch.isinf(output1_B3hw).any().item(),torch.isnan(output2_B3hw).any().item(),torch.isinf(output2_B3hw).any().item())
-                print("pred:",torch.isnan(pred1_P3).any().item(),torch.isinf(pred1_P3).any().item(),torch.isnan(pred2_P3).any().item(),torch.isinf(pred2_P3).any().item())
-                print("obj:",torch.isnan(obj).any().item(),torch.isinf(obj).any().item())
-                loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
-                                                                                project_feat1_PD,project_feat2_PD,
-                                                                                pred1_P3,pred2_P3,
-                                                                                conf1_P,conf2_P,
-                                                                                obj_P3,
-                                                                                residual1_P,residual2_P,
-                                                                                H,W)
 
                 decoder.requires_grad_(False)
-                output1_B3hw = decoder(feat1)
-                output2_B3hw = decoder(feat2)
-                output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
-                output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
-                pred1_P3 = warp_by_bbox(output1_P3,obj_bbox)
-                pred2_P3 = warp_by_bbox(output2_P3,obj_bbox)
-                loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+                output_skip_1_B3hw = decoder(feat1)
+                output_skip_2_B3hw = decoder(feat2)
+                output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
+                output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
                 decoder.requires_grad_(True)
+
+            output1_P3,output2_P3,output_skip_1_P3,output_skip_2_P3 = \
+                output1_P3.to(torch.float32),output2_P3.to(torch.float32),output_skip_1_P3.to(torch.float32),output_skip_2_P3.to(torch.float32)
+
+            pred1_P3 = warp_by_bbox(output1_P3,obj_bbox)
+            pred2_P3 = warp_by_bbox(output2_P3,obj_bbox)
+            pred_skip_1_P3 = warp_by_bbox(output_skip_1_P3,obj_bbox)
+            pred_skip_2_P3 = warp_by_bbox(output_skip_2_P3,obj_bbox)
+            project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
+            project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
+            conf1_P = conf1.permute(0,2,3,1).reshape(-1)
+            conf2_P = conf2.permute(0,2,3,1).reshape(-1)
+            obj_P3 = obj.flatten(0,2)
+            residual1_P = residual1.reshape(-1)
+            residual2_P = residual2.reshape(-1)
+            # print("output:",torch.isnan(output1_B3hw).any().item(),torch.isinf(output1_B3hw).any().item(),torch.isnan(output2_B3hw).any().item(),torch.isinf(output2_B3hw).any().item())
+            # print("pred:",torch.isnan(pred1_P3).any().item(),torch.isinf(pred1_P3).any().item(),torch.isnan(pred2_P3).any().item(),torch.isinf(pred2_P3).any().item())
+            # print("obj:",torch.isnan(obj).any().item(),torch.isinf(obj).any().item())
+            loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
+                                                                            project_feat1_PD,project_feat2_PD,
+                                                                            pred1_P3,pred2_P3,
+                                                                            conf1_P,conf2_P,
+                                                                            obj_P3,
+                                                                            residual1_P,residual2_P,
+                                                                            H,W)
+
+            
+            
+            loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)
+                
             
             if torch.isnan(loss_feat):
                 print("nan feat loss,continue")
