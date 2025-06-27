@@ -64,7 +64,7 @@ class PretrainDataset(Dataset):
         self.batch_size = batch_size
         self.obj_bboxs = []
 
-        for key in self.database_keys:
+        for key in tqdm(self.database_keys):
             obj = self.database[key]['obj'][:]
             self.obj_bboxs.append({
                 'x_min':obj[:,:,0].min(),
@@ -88,6 +88,7 @@ class PretrainDataset(Dataset):
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
 
+        print("creating windows")
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         self.windows = np.concatenate([

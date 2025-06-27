@@ -56,6 +56,7 @@ def warp_by_bbox(raw,bbox):
 
 def pretrain(args):
     dataset_num = args.dataset_num
+    print("Loading Dataset")
     dataset = PretrainDataset(root = args.dataset_path,
                               dataset_num = dataset_num,
                               iter_num = args.max_epoch,
@@ -72,7 +73,7 @@ def pretrain(args):
     # cfg['unfreeze_backbone_modules'] = ['head','norm',*[f'layers.2.blocks.{i}' for i in unfreeze_blocks]]
 
     encoder = Encoder(cfg)
-    projector = ProjectHead(patch_feature_channels,128)
+    projector = ProjectHead(encoder.patch_feature_channels,128)
     if not args.encoder_path is None:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth')).items()},strict=True)
         print('Encoder Loaded')
