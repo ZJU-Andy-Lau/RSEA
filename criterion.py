@@ -139,166 +139,77 @@ def residual2conf(residual,t = 6.):
     conf[torch.isnan(residual)] = .5
     return conf
 
-class CriterionFinetune(nn.Module):
-    def __init__(self,dataset_num):
+class CriterionFinetuneNormal(nn.Module):
+    def __init__(self):
         super().__init__()
-        self.dataset_num = dataset_num
-        self.height_tolerance = 10
-        self.clamp_max = 1000
-        self.loss_height_weight = 1
-        self.near_threshold = 8.
-        self.residual_thresholds = [4.] * dataset_num
+        self.residual_thresholds = 5.
         self.gamma = .05
         self.bce = nn.BCELoss()
 
-    def forward(self,epoch,max_epoch,dataset_idx,
+    def forward(self,epoch,
                 feat1_PD,feat2_PD,
                 pred1_P3,pred2_P3,
                 conf1_P,conf2_P,
-                obj1_P3,obj2_P3,
-                local1_P2,local2_P2,
+                obj_P3,
                 residual1_P,residual2_P,
-                rpcs:List[RPCModelParameterTorch],v1,v2,
-                B,H,W
+                H,W
                 ):
-        P = H*W
-        #--------------------------------------------
-        # t0 = time.perf_counter()
-        #--------------------------------------------
-
-        pred1_P3,pred2_P3,conf1_P,conf2_P,obj1_P3,obj2_P3,local1_P2,local2_P2,residual1_P,residual2_P= \
-            [i.to(torch.float64) for i in [pred1_P3,pred2_P3,conf1_P,conf2_P,obj1_P3,obj2_P3,local1_P2,local2_P2,residual1_P,residual2_P]]
-        feat1_PD,feat2_PD = feat1_PD.to(torch.float32),feat2_PD.to(torch.float32)
         
+        P = H*W
+
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
         if not torch.isnan(res_mid):
-            self.residual_thresholds[dataset_idx] = (1. - self.gamma) * self.residual_thresholds[dataset_idx] + self.gamma * res_mid
+            self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
         else:
-            print("all res nan")   
+            print("all res nan")
+        conf1_gt_P = residual2conf(residual1_P,self.residual_thresholds)
+        conf2_gt_P = residual2conf(residual2_P,self.residual_thresholds)
+        robust_mask = (residual1_P <= self.residual_thresholds) & (residual2_P <= self.residual_thresholds)
 
-        feat1_PD = F.normalize(feat1_PD,dim=1)
-        feat2_PD = F.normalize(feat2_PD,dim=1)
-        feat_BHWD = torch.concatenate([feat1_PD.reshape(B,H,W,-1),feat2_PD.reshape(B,H,W,-1)],dim=0)
-        feat_BPD = torch.concatenate([feat1_PD.reshape(B,H*W,-1),feat2_PD.reshape(B,H*W,-1)],dim=0)
         conf_valid1 = ~torch.isnan(residual1_P)
         conf_valid2 = ~torch.isnan(residual2_P)
-        conf1_gt_P = residual2conf(residual1_P,self.residual_thresholds[dataset_idx])
-        conf2_gt_P = residual2conf(residual2_P,self.residual_thresholds[dataset_idx])
+        weights1_P = conf_norm(conf1_gt_P)
+        weights2_P = conf_norm(conf2_gt_P)
 
-        obj_yx_pred1_P2,dem_pred1_P = pred1_P3[:,:2],pred1_P3[:,2]
-        obj_yx_pred2_P2,dem_pred2_P = pred2_P3[:,:2],pred2_P3[:,2]
-        obj_yx_gt1_P2,dem_gt1_P = obj1_P3[:,[1,0]],obj1_P3[:,2] # (y,x) (h)
-        obj_yx_gt2_P2,dem_gt2_P = obj2_P3[:,[1,0]],obj2_P3[:,2]
-
-        local1_P2[:,[0,1]] = local1_P2[:,[1,0]] # line,samp -> samp,line
-        local2_P2[:,[0,1]] = local2_P2[:,[1,0]]
-
-
-        # 通过投影获取匹配点
-
-        obj_latlon_gt2_P2 = mercator2lonlat(obj_yx_gt2_P2)
-
-        local1_Bp2 = local1_P2.reshape(B,P,2)
-        obj_latlon_gt2_Bp2 = obj_latlon_gt2_P2.reshape(B,P,2)
-        dem_gt2_Bp = dem_gt2_P.reshape(B,P)
-        anchor_points = []
-        positive_points = []
-        for v in torch.unique(v1):
-            rpc = rpcs[v]
-            img_idxs = torch.where(v1 == v)[0].to(local1_Bp2.device)
-            img_num = len(img_idxs)
-            local1_bp2 = local1_Bp2[img_idxs]
-            obj_latlon_gt2_p2 = obj_latlon_gt2_Bp2[img_idxs].reshape(-1,2)
-            dem_gt2_p = dem_gt2_Bp[img_idxs].reshape(-1) 
-            local_proj1_bp2 = torch.stack(rpc.RPC_OBJ2PHOTO(obj_latlon_gt2_p2[:,0],obj_latlon_gt2_p2[:,1],dem_gt2_p),dim=-1).reshape(img_num,P,2)
-            local_proj1_bp2 -= local1_bp2[:,0:1,:]
-            local_max = (local1_bp2[:,-1,:] - local1_bp2[:,0,:])[:,None]
-            mask = (local_proj1_bp2 > -8.).all(dim=2) & (local_proj1_bp2 < local_max).all(dim=2)
-            near_idx2 = torch.nonzero(mask).to(device=img_idxs.device)
-            near_idx2 = img_idxs[near_idx2[:,0]] * P + near_idx2[:,1]
-            local_proj1_bp2 = torch.round(local_proj1_bp2 / 16.).to(int)
-            near_idx1 = local_proj1_bp2[...,1] * W + local_proj1_bp2[...,0] + (img_idxs * P)[:,None]
-            near_idx1 = near_idx1[mask].reshape(-1)
-            # near_idx1 = near_idx1[...,1] * 16 + near_idx1[...,0] + img_idxs * P
-            anchor_points.append(near_idx1.reshape(-1))
-            positive_points.append(near_idx2.reshape(-1))
-
-
-        anchor_points = torch.concatenate(anchor_points)
-        positive_points = torch.concatenate(positive_points)
-
-        valid_mask = torch.norm(obj_yx_gt1_P2[anchor_points] - obj_yx_gt2_P2[positive_points],dim=1) < self.near_threshold
-        anchor_points = anchor_points[valid_mask]
-        positive_points = positive_points[valid_mask]
-        negative_points = get_far_points(obj_yx_gt1_P2[anchor_points],obj_yx_gt2_P2,threshold=10)
-
-        dis_obj_proj1_P = torch.norm(obj_yx_pred1_P2 - obj_yx_gt1_P2,dim=1)
-        dis_obj_proj2_P = torch.norm(obj_yx_pred2_P2 - obj_yx_gt2_P2,dim=1)
-        loss_obj = .5 * dis_obj_proj1_P.mean() + .5 * dis_obj_proj2_P.mean()
-
-        dis_pred = torch.norm(obj_yx_pred1_P2[anchor_points] - obj_yx_pred2_P2[positive_points],dim=1)
-
-        
-        dis_gt = torch.norm(obj_yx_gt1_P2[anchor_points] - obj_yx_gt2_P2[positive_points],dim=1)
-        loss_dis = torch.clip(dis_pred - dis_gt,0.).mean()
-
-        obj_yx_pred_bhw2 = torch.concatenate([obj_yx_pred1_P2.reshape(-1,H,W,2),obj_yx_pred2_P2.reshape(-1,H,W,2)],dim=0)
-        obj_yx_gt_bhw2 = torch.concatenate([obj_yx_gt1_P2.reshape(-1,H,W,2),obj_yx_gt2_P2.reshape(-1,H,W,2)],dim=0)
-        dis_adj_pred_line = torch.norm(obj_yx_pred_bhw2[:,1:,:] - obj_yx_pred_bhw2[:,:-1,:],dim=-1)
-        dis_adj_pred_samp = torch.norm(obj_yx_pred_bhw2[:,:,1:] - obj_yx_pred_bhw2[:,:,:-1],dim=-1)
-        dis_adj_gt_line = torch.norm(obj_yx_gt_bhw2[:,1:,:] - obj_yx_gt_bhw2[:,:-1,:],dim=-1)
-        dis_adj_gt_samp = torch.norm(obj_yx_gt_bhw2[:,:,1:] - obj_yx_gt_bhw2[:,:,:-1],dim=-1)
-        loss_adj = .5 * torch.abs(dis_adj_pred_line - dis_adj_gt_line).mean() + .5 * torch.abs(dis_adj_pred_samp - dis_adj_gt_samp).mean()
-
-
-
-        # margin = min(1. * epoch / min(max_epoch,50) + 2.3, 2.7)
-        # margin = .3
-        temperature = .1
-        feat_sim_positive = torch.sum(feat1_PD[anchor_points] * feat2_PD[positive_points],dim=1)
-        feat_sim_negative = torch.sum(feat1_PD[anchor_points] * feat1_PD[negative_points],dim=1)
-        sp = feat_sim_positive.mean().detach()
-        sn = feat_sim_negative.mean().detach()
-        # feat_sim_all = torch.bmm(feat_BPD,feat_BPD.transpose(1,2))
-        weights = feat_sim_negative.detach()
-        weights[weights > .8] = .9
-        weights[weights < .8] = .1
-        weights = weights - weights.mean() + 1.
-        # mask = (feat_sim_all < 1.) & (feat_sim_all > .8)
-        # feat_sim_all = feat_sim_all[mask]
-        # idxs = torch.randperm(len(feat_sim_all))[:feat_sim_positive.shape[0]]
-        # feat_sim_all = feat_sim_all[idxs]
-        feat_sim_positive = torch.sum(feat1_PD[anchor_points] * feat2_PD[positive_points],dim=1)
-        feat_sim_negative = torch.sum(feat1_PD[anchor_points] * feat2_PD[negative_points],dim=1)
-        feat_sim_line = torch.sum(feat_BHWD[:,:-1,:] * feat_BHWD[:,1:,:],dim=-1)
-        feat_sim_samp = torch.sum(feat_BHWD[:,:,:-1] * feat_BHWD[:,:,1:],dim=-1)
-        feat_sim_diag = torch.sum(feat_BHWD[:,:-1,:-1] * feat_BHWD[:,1:,1:],dim=-1)
-        feat_sim_adiag = torch.sum(feat_BHWD[:,1:,:-1] * feat_BHWD[:,:-1,1:],dim=-1)
-        feat_sim_adj = torch.clip(feat_sim_line - sp + .05,min=0.).mean() + torch.clip(feat_sim_samp - sp + .05,min=0.).mean() + torch.clip(feat_sim_diag - sp + .05,min=0.).mean() + torch.clip(feat_sim_adiag - sp + .05,min=0.).mean()
-        sa = (feat_sim_line.mean() + feat_sim_samp.mean() + feat_sim_diag.mean() + feat_sim_adiag.mean()) * .25
-        loss_feat = torch.clip(1. - feat_sim_positive,min=0.).mean() * 10000 + torch.clip((feat_sim_negative - .7) * weights,min=0.).mean() * 1000 + feat_sim_adj * 1000  #-torch.log(torch.sum(torch.exp(feat_sim_positive / temperature)) / torch.sum(torch.exp(feat_sim_all / temperature))) * 100 + 
-
-        
-        # sa = feat_sim_all.mean()
+        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights1_P) + .5 * (torch.norm(pred2_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights2_P)
+        loss_height = (.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P)) * 100
 
         loss_conf = .5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]) + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2])
-
         loss_conf *= 1000 * min(1.,epoch / 3.)
 
-        dis_height1 = torch.abs(dem_pred1_P - dem_gt1_P)
-        dis_height2 = torch.abs(dem_pred2_P - dem_gt2_P)
-        loss_height = torch.cat([dis_height1,dis_height2]).mean()
+        shift_amount = torch.randint(low=-P // 2,high = P // 2)
+        feat1_PD = F.normalize(feat1_PD,dim=1)
+        feat2_PD = F.normalize(feat2_PD,dim=1)
+        simi_positive = torch.concatenate([torch.sum(feat1_PD[robust_mask] * feat2_PD[robust_mask],dim=1),
+                                           torch.sum(feat2_PD[robust_mask] * feat1_PD[robust_mask],dim=1)])
+        simi_negative = torch.concatenate([torch.sum(feat1_PD[robust_mask] * torch.roll(feat2_PD,shift_amount)[robust_mask],dim=1),
+                                           torch.sum(feat2_PD[robust_mask] * torch.roll(feat1_PD,shift_amount)[robust_mask],dim=1)])
+        margin = .7
+        loss_feat = torch.clip(simi_negative - simi_positive + margin,min=0.).mean() * 10000
 
-        #--------------------------------------------
-        # t5 = time.perf_counter()
-        #--------------------------------------------
+        loss = loss_obj + loss_height + loss_conf + loss_feat
 
-        # print(t1 - t0,t2 - t1,t3 - t2,t4 - t3,t5 - t4)
+        return loss,loss_obj,loss_height,loss_conf,loss_feat,self.residual_thresholds 
+        
+class CriterionFinetuneDis(nn.Module):
+    def __init__(self):
+        super().__init__()
 
-        loss = loss_obj + loss_dis + loss_adj + loss_height * self.loss_height_weight + loss_conf + loss_feat# + loss_simi #+ loss_struct * progress # + loss_photo + loss_bias + loss_photo_regularized 
-        return loss,loss_obj,loss_dis, loss_adj ,loss_height ,loss_conf, loss_feat, sp , sn, sa
+    def forward(self,
+                pred1_P3,pred2_P3,
+                residual1_P,residual2_P,
+                residual_thresholds,
+                ):
+        
+        robust_mask = (residual1_P <= residual_thresholds) & (residual2_P <= residual_thresholds)
 
+        dis_obj = torch.norm(pred1_P3[robust_mask,:2] - pred2_P3[robust_mask,:2],dim=-1).mean()
+        dis_height = torch.abs(pred1_P3[robust_mask,2] - pred2_P3[robust_mask,2]).mean() * 100
 
+        loss_dis = dis_obj + dis_height
+        return loss_dis,dis_obj,dis_height
+
+        
     
 class CriterionTrainOneImg(nn.Module):
 
