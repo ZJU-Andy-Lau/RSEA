@@ -138,6 +138,7 @@ def pretrain(args):
     criterion_normal = CriterionFinetuneNormal()
     criterion_dis = CriterionFinetuneDis()
     scaler = GradScaler()
+    os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
         
     for epoch,data in enumerate(dataloader):

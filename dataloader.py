@@ -97,6 +97,7 @@ class PretrainDataset(Dataset):
             np.stack([rows,self.img_size - cols - self.input_size],axis=-1),
             np.stack([self.img_size - rows - self.input_size,self.img_size - cols - self.input_size],axis=-1)
         ],axis=2)
+        print("all windows shape:",self.windows.shape)
     
     def __len__(self):
         return self.iter_num
@@ -108,6 +109,7 @@ class PretrainDataset(Dataset):
 
         for dataset_idx,key in enumerate(self.database_keys):
             windows = self.windows[index,dataset_idx]
+            print("dataset windows shape:",windows.shape)
             image_1_full = self.database[key]['image_1'][:]
             image_2_full = self.database[key]['image_2'][:]
             obj_full = self.database[key]['obj'][:]
