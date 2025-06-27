@@ -175,15 +175,7 @@ def pretrain(args):
                 residual2 = residual2.cuda()
             
             B,H,W = obj.shape[0],obj.shape[1],obj.shape[2]
-            print(obj.shape)
-            obj_bbox = {
-                'x_min':obj[:,:,0].min(),
-                'x_max':obj[:,:,0].max(),
-                'y_min':obj[:,:,1].min(),
-                'y_max':obj[:,:,1].max(),
-                'h_min':obj[:,:,2].min(),
-                'h_max':obj[:,:,2].max(),
-            }
+            obj_bbox = dataset.obj_bboxs[dataset_idx]
 
             with autocast():
                 feat1,conf1 = encoder(img1)
@@ -220,9 +212,9 @@ def pretrain(args):
                 obj_P3 = obj.flatten(0,2)
                 residual1_P = residual1.reshape(-1)
                 residual2_P = residual2.reshape(-1)
-                print("output:",torch.isnan(output1_B3hw).any(),torch.isinf(output1_B3hw).any(),torch.isnan(output2_B3hw).any(),torch.isinf(output2_B3hw).any())
-                print("pred:",torch.isnan(pred1_P3).any(),torch.isinf(pred1_P3).any(),torch.isnan(pred2_P3).any(),torch.isinf(pred2_P3).any())
-                print("obj:",torch.isnan(obj).any(),torch.isinf(obj).any())
+                # print("output:",torch.isnan(output1_B3hw).any(),torch.isinf(output1_B3hw).any(),torch.isnan(output2_B3hw).any(),torch.isinf(output2_B3hw).any())
+                # print("pred:",torch.isnan(pred1_P3).any(),torch.isinf(pred1_P3).any(),torch.isnan(pred2_P3).any(),torch.isinf(pred2_P3).any())
+                # print("obj:",torch.isnan(obj).any(),torch.isinf(obj).any())
                 loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
                                                                                 pred1_P3,pred2_P3,

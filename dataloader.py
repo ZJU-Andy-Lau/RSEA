@@ -64,16 +64,16 @@ class PretrainDataset(Dataset):
         self.batch_size = batch_size
         self.obj_bboxs = []
 
-        # for key in tqdm(self.database_keys):
-        #     obj = self.database[key]['obj'][:]
-        #     self.obj_bboxs.append({
-        #         'x_min':obj[:,:,0].min(),
-        #         'x_max':obj[:,:,0].max(),
-        #         'y_min':obj[:,:,1].min(),
-        #         'y_max':obj[:,:,1].max(),
-        #         'h_min':obj[:,:,2].min(),
-        #         'h_max':obj[:,:,2].max(),
-        #     })
+        for key in tqdm(self.database_keys):
+            obj = self.database[key]['obj'][:]
+            self.obj_bboxs.append({
+                'x_min':obj[:,:,0].min(),
+                'x_max':obj[:,:,0].max(),
+                'y_min':obj[:,:,1].min(),
+                'y_max':obj[:,:,1].max(),
+                'h_min':obj[:,:,2].min(),
+                'h_max':obj[:,:,2].max(),
+            })
 
         if mode == 'train':
             self.transform = transforms.Compose([
