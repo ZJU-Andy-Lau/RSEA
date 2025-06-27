@@ -92,10 +92,10 @@ class PretrainDataset(Dataset):
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         self.windows = np.concatenate([
-            np.stack([rows,cols],axis=-1),
-            np.stack([self.img_size - rows - self.input_size,cols],axis=-1),
-            np.stack([rows,self.img_size - cols - self.input_size],axis=-1),
-            np.stack([self.img_size - rows - self.input_size,self.img_size - cols - self.input_size],axis=-1)
+            np.concatenate([rows,cols],axis=-1),
+            np.concatenate([self.img_size - rows - self.input_size,cols],axis=-1),
+            np.concatenate([rows,self.img_size - cols - self.input_size],axis=-1),
+            np.concatenate([self.img_size - rows - self.input_size,self.img_size - cols - self.input_size],axis=-1)
         ],axis=2)
         print("all windows shape:",self.windows.shape)
     
