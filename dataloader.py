@@ -114,6 +114,8 @@ class PretrainDataset(Dataset):
             residual_1_full = self.database[key]['residual_1'][:]
             residual_2_full = self.database[key]['residual_2'][:]
             # local_full = get_coord_mat(self.img_size,self.img_size)
+            image_1_full = np.stack([image_1_full] * 3,axis=-1)
+            image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
             imgs1 = torch.stack([self.transform(image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
             imgs2 = torch.stack([self.transform(image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
