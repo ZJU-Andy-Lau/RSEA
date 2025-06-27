@@ -107,12 +107,14 @@ class PretrainDataset(Dataset):
         residuals = []
 
         for dataset_idx,key in enumerate(self.database_keys):
+            t0 = time.perf_counter()
             windows = self.windows[index,dataset_idx]
             image_1_full = self.database[key]['image_1'][:]
             image_2_full = self.database[key]['image_2'][:]
             obj_full = self.database[key]['obj'][:]
             residual_1_full = self.database[key]['residual_1'][:]
             residual_2_full = self.database[key]['residual_2'][:]
+            t1 = time.perf_counter()
             # local_full = get_coord_mat(self.img_size,self.img_size)
             image_1_full = np.stack([image_1_full] * 3,axis=-1)
             image_2_full = np.stack([image_2_full] * 3,axis=-1)
@@ -126,6 +128,9 @@ class PretrainDataset(Dataset):
             residual1 = torch.from_numpy(np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
             residual2 = torch.from_numpy(np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
 
+            t2 = time.perf_counter()
+
+            print(t1 - t0, t2 - t1)
             
             imgs.append({
                 'v1':imgs1,
