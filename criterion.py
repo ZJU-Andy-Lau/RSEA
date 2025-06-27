@@ -155,6 +155,9 @@ class CriterionFinetuneNormal(nn.Module):
                 H,W
                 ):
         
+        feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P = \
+            feat1_PD.to(torch.float32),feat2_PD.to(torch.float32),pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),conf1_P.to(torch.float32),conf2_P.to(torch.float32),obj_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
+
         P = H*W
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
         if not torch.isnan(res_mid):
@@ -199,7 +202,8 @@ class CriterionFinetuneDis(nn.Module):
                 residual1_P,residual2_P,
                 residual_thresholds,
                 ):
-        
+        pred1_P3,pred2_P3,residual1_P,residual2_P = \
+           pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
         robust_mask = (residual1_P <= residual_thresholds) & (residual2_P <= residual_thresholds)
 
         dis_obj = torch.norm(pred1_P3[robust_mask,:2] - pred2_P3[robust_mask,:2],dim=-1).mean()
