@@ -174,7 +174,7 @@ class CriterionFinetuneNormal(nn.Module):
         weights2_P = conf_norm(conf2_gt_P)
 
         loss_obj = (.5 * (torch.norm(pred1_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights1_P) + .5 * (torch.norm(pred2_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights2_P)).mean()
-        loss_height = ((.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P))).mean() * 100
+        loss_height = ((.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P))).mean()
 
         loss_conf = (.5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]) + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2])).mean()
         loss_conf *= 1000 * min(1.,epoch / 3.)
