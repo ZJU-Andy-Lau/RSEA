@@ -119,7 +119,6 @@ class PretrainDataset(Dataset):
             image_1_full = np.stack([image_1_full] * 3,axis=-1)
             image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
-            print(windows.shape)
 
             #TODO windows数组形状可能有点问题
 
