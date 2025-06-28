@@ -244,7 +244,7 @@ def pretrain(args):
                 print("nan feat loss,continue")
                 continue
 
-            loss = loss_normal + loss_dis
+            loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
             # loss.backward()
             # encoder_optimizer.step()
             scaler.scale(loss).backward()

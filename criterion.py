@@ -160,6 +160,7 @@ class CriterionFinetuneNormal(nn.Module):
 
         P = H*W
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
+        print("res_mid:",res_mid.item())
         if not torch.isnan(res_mid):
             self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
         else:
@@ -186,8 +187,7 @@ class CriterionFinetuneNormal(nn.Module):
                                            torch.sum(feat2_PD[robust_mask] * feat1_PD[robust_mask],dim=1)])
         simi_negative = torch.concatenate([torch.sum(feat1_PD[robust_mask] * torch.roll(feat2_PD,shift_amount)[robust_mask],dim=1),
                                            torch.sum(feat2_PD[robust_mask] * torch.roll(feat1_PD,shift_amount)[robust_mask],dim=1)])
-        margin = .7
-        loss_feat = torch.clip(simi_negative - simi_positive + margin,min=0.).mean() * 10000
+        loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - 7.,min=0).mean() * 10000.
 
         loss = loss_obj + loss_height + loss_conf + loss_feat
 

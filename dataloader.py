@@ -119,6 +119,10 @@ class PretrainDataset(Dataset):
             image_1_full = np.stack([image_1_full] * 3,axis=-1)
             image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
+            print(windows.shape)
+
+            #TODO windows数组形状可能有点问题
+
             imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
             imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
             imgs1 = self.transform(imgs1)
