@@ -332,8 +332,9 @@ if __name__ == '__main__':
     parser.add_argument('--min_loss',type=float,default=1e8)
 
     args = parser.parse_args()
-    gpus = os.environ['CUDA_VISIBLE_DEVICES']
-    args.multi_gpu = len(gpus.split(',')) > 1
+    # gpus = os.environ['CUDA_VISIBLE_DEVICES']
+    # args.multi_gpu = len(gpus.split(',')) > 1
+    args.multi_gpu = True
 
     if not os.path.exists(args.encoder_output_path):
         os.mkdir(args.encoder_output_path)
