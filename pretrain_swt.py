@@ -251,8 +251,12 @@ def pretrain(args):
             conf1_P = conf1.permute(0,2,3,1).reshape(-1)
             conf2_P = conf2.permute(0,2,3,1).reshape(-1)
             obj_P3 = obj.flatten(0,2)
-            residual1_P = residual1.reshape(-1)
-            residual2_P = residual2.reshape(-1)
+            residual1_P = residual1.reshape(-1).detach()
+            residual2_P = residual2.reshape(-1).detach()
+            print(project_feat1_PD.shape,project_feat1_PD.dtype)
+            print(conf1_P.shape,conf1_P.dtype)
+            print(obj_P3.shpae,obj_P3.dtype)
+            print(residual1_P.shape,residual1_P.dtype)
 
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
