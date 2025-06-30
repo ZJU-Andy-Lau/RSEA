@@ -60,7 +60,7 @@ def warp_by_bbox(raw,bbox):
     return warped
 
 def distibute_model(model:nn.Module,local_rank):
-    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank)
+    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False)
     return model
 
 def pretrain(args):
@@ -150,7 +150,7 @@ def pretrain(args):
     os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
     
-    torch.autograd.set_detect_anomaly(True)
+    # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
         print(f'Epoch:{epoch}')
         sampler.set_epoch(epoch)
