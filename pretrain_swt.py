@@ -280,7 +280,7 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
-
+            print("loss:",loss)
             scaler.scale(loss).backward()
             scaler.step(encoder_optimizer)
             for idx in dataset_idxs:
