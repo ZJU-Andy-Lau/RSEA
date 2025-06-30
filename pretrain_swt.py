@@ -255,8 +255,10 @@ def pretrain(args):
             residual2_P = residual2.reshape(-1).detach()
             print(project_feat1_PD.shape,project_feat1_PD.dtype)
             print(conf1_P.shape,conf1_P.dtype)
-            print(obj_P3.shpae,obj_P3.dtype)
+            print(obj_P3.shape,obj_P3.dtype)
             print(residual1_P.shape,residual1_P.dtype)
+            print(pred1_P3.shape,pred1_P3.dtype)
+            print(pred_skip_1_P3.shape,pred_skip_1_P3.dtype)
 
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
