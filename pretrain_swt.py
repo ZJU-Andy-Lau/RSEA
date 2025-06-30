@@ -58,13 +58,12 @@ def pretrain(args):
     print("Loading Dataset")
     dataset = PretrainDataset(root = args.dataset_path,
                               dataset_num = args.dataset_num,
-                              iter_num = args.max_epoch,
                               batch_size = args.batch_size,
                               downsample = 16,
                               input_size = 1024,
                               mode='train')
     
-    dataloader = DataLoader(dataset,batch_size=1,num_workers=4,drop_last=False)
+    dataloader = DataLoader(dataset,batch_size=args.data_batch_size,num_workers=4,drop_last=False)
     dataset_num = dataset.dataset_num
     print("Building Encoder")
 
@@ -82,10 +81,10 @@ def pretrain(args):
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
                                              max_lr=args.lr_encoder_max,
-                                             steps_per_epoch=dataset_num,
+                                             steps_per_epoch=data_batch_num,
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
-                                             gamma=.63 ** (1. / (50 * dataset_num)),
+                                             gamma=.63 ** (1. / (50 * data_batch_num)),
                                              pct_start=10. / args.max_epoch)
     
 
@@ -131,7 +130,7 @@ def pretrain(args):
         schedulers.append(scheduler)
         decoders.append(decoder)
 
-
+    data_batch_num = len(dataloader)
     min_loss = args.min_loss
     last_loss = None
     start_time = time.perf_counter()
@@ -141,7 +140,7 @@ def pretrain(args):
     os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
         
-    for epoch,data in enumerate(dataloader):
+    for epoch in range(args.max_epoch):
         print(f'Epoch:{epoch}')
         # valid(epoch)
         total_loss = 0
@@ -152,20 +151,22 @@ def pretrain(args):
         total_loss_feat = 0
         count = 0
         encoder.train()
-        imgs,objs,residuals = data
-        for dataset_idx in range(dataset_num):
-            img1 = imgs[dataset_idx]['v1'][0].contiguous()
-            img2 = imgs[dataset_idx]['v2'][0].contiguous()
-            obj = objs[dataset_idx][0].contiguous()
-            residual1 = residuals[dataset_idx]['v1'][0].contiguous()
-            residual2 = residuals[dataset_idx]['v2'][0].contiguous()
-
-            decoder= decoders[dataset_idx]
-            decoder.train()
-            encoder_optimizer.zero_grad()
-            decoder_optimizer = optimizers[dataset_idx]
-            decoder_optimizer.zero_grad()
-
+        for data_batch_idx,data in enumerate(dataloader):
+            img1,img2,obj,residual1,residual2,dataset_idxs = data
+            N,B,C,H,W = img1.shape
+            img1 = img1.reshape(N*B,-1,H,W)
+            img2 = img2.reshape(N*B,-1,H,W)
+            obj = obj.reshape(N*B,-1,H,W)
+            residual1 = residual1.reshape(N*B,H,W)
+            residual2 = residual2.reshape(N*B,H,W)
+            
+            for idx in dataset_idxs:
+                decoder = decoders[idx]
+                decoder.train()
+                encoder_optimizer.zero_grad()
+                decoder_optimizer = optimizers[idx]
+                decoder_optimizer.zero_grad()
+            
             if args.use_gpu:
                 img1 = img1.cuda().contiguous()
                 img2 = img2.cuda().contiguous()
@@ -173,9 +174,6 @@ def pretrain(args):
                 residual1 = residual1.cuda()
                 residual2 = residual2.cuda()
             
-            B,H,W = obj.shape[0],obj.shape[1],obj.shape[2]
-            obj_bbox = dataset.obj_bboxs[dataset_idx]
-
             with autocast():
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
@@ -198,25 +196,39 @@ def pretrain(args):
                 feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
                 feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
 
-                output1_B3hw = decoder(feat_input1)
-                output2_B3hw = decoder(feat_input2)
+            pred1_P3 = []
+            pred2_P3 = []
+            pred_skip_1_P3 = []
+            pred_skip_2_P3 = []
+            
+            for n,idx in enumerate(dataset_idxs):
+                decoder = decoders[idx]
+                output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
+                output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
                 output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                 output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
 
                 decoder.requires_grad_(False)
-                output_skip_1_B3hw = decoder(feat1)
-                output_skip_2_B3hw = decoder(feat2)
+                output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
+                output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
                 output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
                 output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
                 decoder.requires_grad_(True)
 
-            output1_P3,output2_P3,output_skip_1_P3,output_skip_2_P3 = \
-                output1_P3.to(torch.float32),output2_P3.to(torch.float32),output_skip_1_P3.to(torch.float32),output_skip_2_P3.to(torch.float32)
+                output1_P3,output2_P3,output_skip_1_P3,output_skip_2_P3 = \
+                    output1_P3.to(torch.float32),output2_P3.to(torch.float32),output_skip_1_P3.to(torch.float32),output_skip_2_P3.to(torch.float32)
+                
+                obj_bbox = dataset.obj_bboxs[idx]
 
-            pred1_P3 = warp_by_bbox(output1_P3,obj_bbox)
-            pred2_P3 = warp_by_bbox(output2_P3,obj_bbox)
-            pred_skip_1_P3 = warp_by_bbox(output_skip_1_P3,obj_bbox)
-            pred_skip_2_P3 = warp_by_bbox(output_skip_2_P3,obj_bbox)
+                pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
+                pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox)) 
+                pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
+                pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+            
+            pred1_P3 = torch.concatenate(pred1_P3,dim=0)
+            pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+            pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
+            pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
             project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
             project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
             conf1_P = conf1.permute(0,2,3,1).reshape(-1)
@@ -224,22 +236,19 @@ def pretrain(args):
             obj_P3 = obj.flatten(0,2)
             residual1_P = residual1.reshape(-1)
             residual2_P = residual2.reshape(-1)
-            # print("output:",torch.isnan(output1_B3hw).any().item(),torch.isinf(output1_B3hw).any().item(),torch.isnan(output2_B3hw).any().item(),torch.isinf(output2_B3hw).any().item())
-            # print("pred:",torch.isnan(pred1_P3).any().item(),torch.isinf(pred1_P3).any().item(),torch.isnan(pred2_P3).any().item(),torch.isinf(pred2_P3).any().item())
-            # print("obj:",torch.isnan(obj).any().item(),torch.isinf(obj).any().item())
-            loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
-                                                                            project_feat1_PD,project_feat2_PD,
-                                                                            pred1_P3,pred2_P3,
-                                                                            conf1_P,conf2_P,
-                                                                            obj_P3,
-                                                                            residual1_P,residual2_P,
-                                                                            H,W)
 
-            
-            
-            loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)
+            loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
+                                                                                project_feat1_PD,project_feat2_PD,
+                                                                                pred1_P3,pred2_P3,
+                                                                                conf1_P,conf2_P,
+                                                                                obj_P3,
+                                                                                residual1_P,residual2_P,
+                                                                                H,W)
+
                 
-            
+                
+            loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)
+                    
             if torch.isnan(loss_feat):
                 print("nan feat loss,continue")
                 continue
@@ -252,7 +261,6 @@ def pretrain(args):
             scaler.step(decoder_optimizer)
             scaler.update()
 
-
             conf_mean = .5 * conf1_P.mean() + .5 * conf2_P.mean()
 
             total_loss += loss.item()
@@ -263,21 +271,20 @@ def pretrain(args):
             total_loss_feat += loss_feat.item()
 
             count += 1
-
-            
+          
 
             curtime = time.perf_counter()
-            curstep = epoch * dataset_num + count
-            remain_step = args.max_epoch  * dataset_num - curstep
+            curstep = epoch * data_batch_num + count
+            remain_step = args.max_epoch  * data_batch_num - curstep
             cost_time = curtime - start_time
             remain_time = remain_step * cost_time / curstep
 
-            print(f"epoch:{epoch}  dataset:{dataset_idx}/{dataset_num} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+            print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
             encoder_scheduler.step()
+
         for scheduler in schedulers:
-            scheduler.step()
-            
+            scheduler.step()            
         
         total_loss /= count
         total_loss_obj /= count
@@ -322,7 +329,8 @@ if __name__ == '__main__':
     parser.add_argument('--decoder_path',type=str,default=None)
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
     parser.add_argument('--decoder_output_path',type=str,default=None)
-    parser.add_argument('--batch_size',type=int,default=1)
+    parser.add_argument('--batch_size',type=int,default=8)
+    parser.add_argument('--data_batch_size',type=int,default=4)
     parser.add_argument('--use_gpu',type=bool,default=True)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)

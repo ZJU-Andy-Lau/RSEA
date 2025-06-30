@@ -43,7 +43,7 @@ def downsample(arr,ds):
 
 
 class PretrainDataset(Dataset):
-    def __init__(self,root,dataset_num = None,iter_num = 100,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
+    def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
         super().__init__()
         self.root = root
         if mode == 'train':
@@ -57,7 +57,6 @@ class PretrainDataset(Dataset):
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
         self.database_keys = list(self.database.keys())[:dataset_num]
-        self.iter_num = iter_num
         self.DOWNSAMPLE=downsample
         self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
@@ -88,7 +87,7 @@ class PretrainDataset(Dataset):
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
 
-        # print("creating windows")
+
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.iter_num,self.dataset_num,self.batch_size,1)),0,self.img_size - self.input_size)
         self.windows = np.concatenate([
@@ -99,57 +98,44 @@ class PretrainDataset(Dataset):
         ],axis=2)
     
     def __len__(self):
-        return self.iter_num
+        return self.dataset_num
     
     def __getitem__(self, index):
-        imgs = []
-        objs = []
-        residuals = []
+        rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
+        cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
+        windows = np.concatenate([
+            np.concatenate([rows,cols],axis=-1),
+            np.concatenate([self.img_size - rows - self.input_size,cols],axis=-1),
+            np.concatenate([rows,self.img_size - cols - self.input_size],axis=-1),
+            np.concatenate([self.img_size - rows - self.input_size,self.img_size - cols - self.input_size],axis=-1)
+        ],axis=0
+        )
 
-        for dataset_idx,key in enumerate(self.database_keys):
-            # t0 = time.perf_counter()
-            windows = self.windows[index,dataset_idx]
-            image_1_full = self.database[key]['image_1'][:]
-            image_2_full = self.database[key]['image_2'][:]
-            obj_full = self.database[key]['obj'][:]
-            residual_1_full = self.database[key]['residual_1'][:]
-            residual_2_full = self.database[key]['residual_2'][:]
-            # t1 = time.perf_counter()
-            # local_full = get_coord_mat(self.img_size,self.img_size)
-            image_1_full = np.stack([image_1_full] * 3,axis=-1)
-            image_2_full = np.stack([image_2_full] * 3,axis=-1)
-
-
-            #TODO windows数组形状可能有点问题
-
-            imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
-            imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
-            imgs1 = self.transform(imgs1)
-            imgs2 = self.transform(imgs2)
+        key = self.database_keys[index]
+        image_1_full = self.database[key]['image_1'][:]
+        image_2_full = self.database[key]['image_2'][:]
+        obj_full = self.database[key]['obj'][:]
+        residual_1_full = self.database[key]['residual_1'][:]
+        residual_2_full = self.database[key]['residual_2'][:]
+        image_1_full = np.stack([image_1_full] * 3,axis=-1)
+        image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
 
-            obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
-            # local = torch.from_numpy(np.stack([downsample(local_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
+        imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
+        imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
+        imgs1 = self.transform(imgs1)
+        imgs2 = self.transform(imgs2)
 
-            residual1 = torch.from_numpy(np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
-            residual2 = torch.from_numpy(np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
 
-            # t2 = time.perf_counter()
+        obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
 
-            # print(t1 - t0, t2 - t1)
-            
-            imgs.append({
-                'v1':imgs1,
-                'v2':imgs2
-            })
-            objs.append(obj)
-            residuals.append({
-                'v1':residual1,
-                'v2':residual2
-            })
 
-            
+        residual1 = torch.from_numpy(np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
+        residual2 = torch.from_numpy(np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
 
-        return imgs,objs,residuals
-    
+        # t2 = time.perf_counter()
+
+        # print(t1 - t0, t2 - t1)
+        
+        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index)
 
