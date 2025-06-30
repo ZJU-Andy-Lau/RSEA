@@ -40,7 +40,13 @@ def downsample(arr,ds):
     arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
     return arr_ds
 
-
+def centerize_obj(obj:torch.Tensor):
+    x = obj[...,0]
+    y = obj[...,1]
+    h = obj[...,2]
+    x = x - (x.max() + x.min()) * .5
+    y = y - (y.max() + y.min()) * .5
+    return torch.stack([x,y,h],dim=-1)
 
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
@@ -64,7 +70,7 @@ class PretrainDataset(Dataset):
         self.obj_bboxs = []
 
         for key in tqdm(self.database_keys):
-            obj = self.database[key]['obj'][:]
+            obj = centerize_obj(self.database[key]['obj'][:])
             self.obj_bboxs.append({
                 'x_min':obj[:,:,0].min(),
                 'x_max':obj[:,:,0].max(),
@@ -105,7 +111,7 @@ class PretrainDataset(Dataset):
         key = self.database_keys[index]
         image_1_full = self.database[key]['image_1'][:]
         image_2_full = self.database[key]['image_2'][:]
-        obj_full = self.database[key]['obj'][:]
+        obj_full = centerize_obj(self.database[key]['obj'][:])
         residual_1_full = self.database[key]['residual_1'][:]
         residual_2_full = self.database[key]['residual_2'][:]
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
@@ -118,7 +124,7 @@ class PretrainDataset(Dataset):
         imgs2 = self.transform(imgs2)
 
 
-        obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
+        obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0)).to(torch.float32)
 
 
         residual1 = torch.from_numpy(np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))

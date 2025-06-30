@@ -191,8 +191,9 @@ def pretrain(args):
             residual1 = residual1.to(args.device)
             residual2 = residual2.to(args.device)
             
-            feat1,conf1 = encoder(img1)
-            feat2,conf2 = encoder(img2)
+            with autocast():
+                feat1,conf1 = encoder(img1)
+                feat2,conf2 = encoder(img2)
 
             patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
             patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
@@ -275,15 +276,16 @@ def pretrain(args):
                 continue
 
             loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
-            loss.backward()
-            encoder_optimizer.step()
-            for idx in dataset_idxs:
-                optimizers[idx].step()
+            # loss.backward()
+            # encoder_optimizer.step()
+            # for idx in dataset_idxs:
+            #     optimizers[idx].step()
 
-            # scaler.scale(loss).backward()
-            # scaler.step(encoder_optimizer)
-            # scaler.step(decoder_optimizer)
-            # scaler.update()
+            scaler.scale(loss).backward()
+            scaler.step(encoder_optimizer)
+            for idx in dataset_idxs:
+                scaler.step(optimizers[idx])
+            scaler.update()
 
             conf_mean = .5 * conf1_P.mean() + .5 * conf2_P.mean()
 
