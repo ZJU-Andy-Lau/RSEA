@@ -189,14 +189,14 @@ class CriterionFinetuneNormal(nn.Module):
         loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights1_P) + .5 * (torch.norm(pred2_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights2_P)
         loss_height = (.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P))
 
-        loss_conf = .5 * torch.abs(conf1_P[conf_valid1] - conf1_gt_P[conf_valid1]) + .5 * torch.abs(conf2_P[conf_valid2] - conf2_gt_P[conf_valid2])
+        loss_conf = .5 * torch.abs(conf1_P[conf_valid1] - conf1_gt_P[conf_valid1]).mean() + .5 * torch.abs(conf2_P[conf_valid2] - conf2_gt_P[conf_valid2]).mean()
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
 
-        print("3:",detect_nan([loss_obj,loss_height,loss_conf]))
+        print("3:",detect_nan([loss_obj,loss_height]))
 
         loss_obj = loss_obj.mean()
         loss_height = loss_height.mean()
-        loss_conf = loss_conf.mean()
+        # loss_conf = loss_conf.mean()
 
         shift_amount = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
         feat1_PD = F.normalize(feat1_PD,dim=1)
