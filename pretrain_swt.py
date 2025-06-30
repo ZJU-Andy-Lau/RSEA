@@ -314,7 +314,6 @@ def pretrain(args):
             total_loss_feat += loss_feat_rec
             count += 1
 
-            dist.barrier()
 
             dist.all_reduce(loss_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_obj_rec,dist.ReduceOp.AVG)
@@ -388,6 +387,7 @@ def pretrain(args):
                 'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
                 'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
             })
+        dist.barrier()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
