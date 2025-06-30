@@ -40,13 +40,13 @@ def downsample(arr,ds):
     arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
     return arr_ds
 
-def centerize_obj(obj:torch.Tensor):
+def centerize_obj(obj:np.ndarray):
     x = obj[...,0]
     y = obj[...,1]
     h = obj[...,2]
     x = x - (x.max() + x.min()) * .5
     y = y - (y.max() + y.min()) * .5
-    return torch.stack([x,y,h],dim=-1)
+    return np.stack([x,y,h],axis=-1)
 
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
