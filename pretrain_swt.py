@@ -280,7 +280,14 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
-            print("loss:",loss)
+            curtime = time.perf_counter()
+            curstep = epoch * data_batch_num + count
+            remain_step = args.max_epoch  * data_batch_num - curstep
+            cost_time = curtime - start_time
+            remain_time = remain_step * cost_time / curstep
+
+            print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+            
             scaler.scale(loss).backward()
             scaler.step(encoder_optimizer)
             for idx in dataset_idxs:
@@ -299,13 +306,7 @@ def pretrain(args):
             count += 1
           
 
-            curtime = time.perf_counter()
-            curstep = epoch * data_batch_num + count
-            remain_step = args.max_epoch  * data_batch_num - curstep
-            cost_time = curtime - start_time
-            remain_time = remain_step * cost_time / curstep
-
-            print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+            
 
             encoder_scheduler.step()
 
