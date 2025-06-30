@@ -153,7 +153,7 @@ def pretrain(args):
         encoder.train()
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
-            N,B,C,H,W = obj.shape
+            N,B,H,W = obj.shape[:4]
             img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
             img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,-1,H,W)
