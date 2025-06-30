@@ -150,7 +150,7 @@ def pretrain(args):
     os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
     
-    # torch.autograd.set_detect_anomaly(True)
+    torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
         print(f'Epoch:{epoch}')
         sampler.set_epoch(epoch)
@@ -258,12 +258,6 @@ def pretrain(args):
             obj_P3 = obj.flatten(0,2)
             residual1_P = residual1.reshape(-1).detach()
             residual2_P = residual2.reshape(-1).detach()
-            print(project_feat1_PD.shape,project_feat1_PD.dtype)
-            print(conf1_P.shape,conf1_P.dtype)
-            print(obj_P3.shape,obj_P3.dtype)
-            print(residual1_P.shape,residual1_P.dtype)
-            print(pred1_P3.shape,pred1_P3.dtype)
-            print(pred_skip_1_P3.shape,pred_skip_1_P3.dtype)
 
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
