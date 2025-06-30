@@ -69,7 +69,7 @@ def warp_by_bbox(raw,bbox):
     return warped
 
 def distibute_model(model:nn.Module,local_rank):
-    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False)
+    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False,find_unused_parameters=True)
     return model
 
 def pretrain(args):
@@ -288,6 +288,7 @@ def pretrain(args):
                     continue
 
                 loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
+
             # loss.backward()
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
