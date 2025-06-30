@@ -308,12 +308,12 @@ def pretrain(args):
             loss_conf_rec = loss_conf.clone().detach()
             loss_feat_rec = loss_feat.clone().detach()
 
-            total_loss += loss_rec.item()
-            total_loss_obj += loss_obj_rec.item()
-            total_loss_dis += loss_dis_rec.item()
-            total_loss_height += loss_height_rec.item()
-            total_loss_conf += loss_conf_rec.item()
-            total_loss_feat += loss_feat_rec.item()
+            total_loss += loss_rec
+            total_loss_obj += loss_obj_rec
+            total_loss_dis += loss_dis_rec
+            total_loss_height += loss_height_rec
+            total_loss_conf += loss_conf_rec
+            total_loss_feat += loss_feat_rec
             count += 1
 
             dist.all_reduce(loss_rec,dist.ReduceOp.AVG)
@@ -350,6 +350,13 @@ def pretrain(args):
         dist.all_reduce(total_loss_height,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_conf,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_feat,dist.ReduceOp.AVG)
+
+        total_loss = total_loss.item()
+        total_loss_obj = total_loss_obj.item()
+        total_loss_dis = total_loss_dis.item()
+        total_loss_height = total_loss_height.item()
+        total_loss_conf = total_loss_conf.item()
+        total_loss_feat = total_loss_feat.item()
 
 
         if dist.get_rank() == 0:
