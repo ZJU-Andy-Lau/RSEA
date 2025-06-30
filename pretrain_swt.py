@@ -5,8 +5,9 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.nn.init as init
+from torch.nn.parallel import DistributedDataParallel
 import numpy as np
-from torch.utils.data import Dataset,DataLoader
+from torch.utils.data import Dataset,DataLoader,DistributedSampler
 from criterion import CriterionFinetuneNormal,CriterionFinetuneDis
 from model_new import Encoder,ProjectHead,Decoder
 
@@ -54,6 +55,10 @@ def warp_by_bbox(raw,bbox):
     raw[:,2] = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
     return raw
 
+def distibute_model(model:nn.Module,local_rank):
+    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank)
+    return model
+
 def pretrain(args):
     print("Loading Dataset")
     dataset = PretrainDataset(root = args.dataset_path,
@@ -62,8 +67,8 @@ def pretrain(args):
                               downsample = 16,
                               input_size = 1024,
                               mode='train')
-    
-    dataloader = DataLoader(dataset,batch_size=args.data_batch_size,num_workers=4,drop_last=False)
+    sampler = DistributedSampler(dataset)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=4,drop_last=False,pin_memory=True)
     dataset_num = dataset.dataset_num
     data_batch_num = len(dataloader)
     print("Building Encoder")
@@ -92,12 +97,14 @@ def pretrain(args):
     patch_feature_channels = encoder.patch_feature_channels
     output_channels = encoder.output_channels
 
-    if args.use_gpu:
-        encoder = encoder.cuda()
-        projector = projector.cuda()
-        if args.multi_gpu:
-            encoder = nn.DataParallel(encoder)
-            projector = nn.DataParallel(projector)
+
+    encoder = encoder.to(args.device)
+    projector = projector.to(args.device)
+    num_gpus = torch.cuda.device_count()
+    print(f"Using {num_gpus} GPUS")
+    if num_gpus > 1:
+        encoder = distibute_model(encoder,args.local_rank)
+        projector = distibute_model(projector,args.local_rank)
     
     print("Building Decoders")
 
@@ -113,10 +120,9 @@ def pretrain(args):
         if not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})
 
-        if args.use_gpu:
-            decoder = decoder.cuda()
-            if args.multi_gpu:
-                decoder = nn.DataParallel(decoder)
+        decoder = decoder.to(args.device)
+        if num_gpus > 1:
+            decoder = distibute_model(decoder,args.local_rank)
 
         decoder.train()
         optimizer = optim.AdamW(params=decoder.parameters(),lr = args.lr_decoder_max)
@@ -142,6 +148,7 @@ def pretrain(args):
         
     for epoch in range(args.max_epoch):
         print(f'Epoch:{epoch}')
+        sampler.set_epoch(epoch)
         # valid(epoch)
         total_loss = 0
         total_loss_obj = 0
@@ -338,11 +345,16 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
+    parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
     args = parser.parse_args()
     # gpus = os.environ['CUDA_VISIBLE_DEVICES']
     # args.multi_gpu = len(gpus.split(',')) > 1
-    args.multi_gpu = True
+
+    if args.local_rank != -1:
+        torch.cuda.set_device(args.local_rank)
+        args.device=torch.device("cuda", args.local_rank)
+        torch.distributed.init_process_group(backend="nccl", init_method='env://')
 
     if args.batch_size % 4 != 0:
         raise ValueError("Batch size must be divisible by 4")
