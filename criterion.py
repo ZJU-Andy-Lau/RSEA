@@ -222,7 +222,7 @@ class CriterionFinetuneDis(nn.Module):
                 residual1_P,residual2_P,
                 residual_thresholds,
                 ):
-        print("5-1:",detect_nan(pred1_P3,pred2_P3,residual1_P,residual2_P))
+        print("5-1:",detect_nan([pred1_P3,pred2_P3,residual1_P,residual2_P]))
         pred1_P3,pred2_P3,residual1_P,residual2_P = \
            pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
         robust_mask = (residual1_P <= residual_thresholds) & (residual2_P <= residual_thresholds)
