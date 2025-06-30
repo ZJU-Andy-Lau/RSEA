@@ -336,6 +336,10 @@ if __name__ == '__main__':
     # args.multi_gpu = len(gpus.split(',')) > 1
     args.multi_gpu = True
 
+    if args.batchsize % 4 != 0:
+        raise ValueError("Batch size must be divisible by 4")
+    args.batchsize = args.batchsize // 4
+
     if not os.path.exists(args.encoder_output_path):
         os.mkdir(args.encoder_output_path)
 
