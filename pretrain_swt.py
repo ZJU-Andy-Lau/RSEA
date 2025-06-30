@@ -387,7 +387,7 @@ def pretrain(args):
                 'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
                 'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
             })
-        print("debug:",dist.get_rank())
+        print(f"\ndebug:{dist.get_rank()}\n",)
         dist.barrier()
 
 if __name__ == '__main__':
