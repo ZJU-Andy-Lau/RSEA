@@ -153,9 +153,9 @@ def pretrain(args):
         encoder.train()
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
-            N,B,C,H,W = img1.shape
-            img1 = img1.reshape(N*B,-1,H,W)
-            img2 = img2.reshape(N*B,-1,H,W)
+            N,B,C,H,W = obj.shape
+            img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
+            img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,-1,H,W)
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
