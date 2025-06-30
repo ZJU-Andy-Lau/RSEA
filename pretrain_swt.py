@@ -65,6 +65,7 @@ def pretrain(args):
     
     dataloader = DataLoader(dataset,batch_size=args.data_batch_size,num_workers=4,drop_last=False)
     dataset_num = dataset.dataset_num
+    data_batch_num = len(dataloader)
     print("Building Encoder")
 
     cfg = cfg_large
@@ -130,7 +131,6 @@ def pretrain(args):
         schedulers.append(scheduler)
         decoders.append(decoder)
 
-    data_batch_num = len(dataloader)
     min_loss = args.min_loss
     last_loss = None
     start_time = time.perf_counter()
