@@ -139,6 +139,12 @@ def residual2conf(residual,t = 6.):
     conf[torch.isnan(residual)] = .5
     return conf
 
+def detect_nan(items:list):
+    for item in items:
+        if torch.isnan(item).any():
+            return True
+    return False
+
 class CriterionFinetuneNormal(nn.Module):
     def __init__(self):
         super().__init__()
@@ -158,6 +164,8 @@ class CriterionFinetuneNormal(nn.Module):
         feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P = \
             feat1_PD.to(torch.float32),feat2_PD.to(torch.float32),pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),conf1_P.to(torch.float32),conf2_P.to(torch.float32),obj_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
 
+        print("2:",detect_nan([feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P]))
+
         P = H*W
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
         if not torch.isnan(res_mid):
@@ -173,11 +181,17 @@ class CriterionFinetuneNormal(nn.Module):
         weights1_P = conf_norm(conf1_gt_P)
         weights2_P = conf_norm(conf2_gt_P)
 
-        loss_obj = (.5 * (torch.norm(pred1_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights1_P) + .5 * (torch.norm(pred2_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights2_P)).mean()
-        loss_height = ((.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P))).mean()
+        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights1_P) + .5 * (torch.norm(pred2_P3[:,:2] - obj_P3[:,:2],dim=-1) * weights2_P)
+        loss_height = (.5 * (torch.abs(pred1_P3[:,2] - obj_P3[:,2]) * weights1_P) + .5 * (torch.abs(pred2_P3[:,2] - obj_P3[:,2]) * weights2_P))
 
-        loss_conf = (.5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]) + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2])).mean()
+        loss_conf = .5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]) + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2])
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
+
+        print("3:",detect_nan([loss_obj,loss_height,loss_conf]))
+
+        loss_obj = loss_obj.mean()
+        loss_height = loss_height.mean()
+        loss_conf = loss_conf.mean()
 
         shift_amount = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
         feat1_PD = F.normalize(feat1_PD,dim=1)
@@ -186,6 +200,8 @@ class CriterionFinetuneNormal(nn.Module):
                                            torch.sum(feat2_PD[robust_mask] * feat1_PD[robust_mask],dim=1)])
         simi_negative = torch.concatenate([torch.sum(feat1_PD[robust_mask] * torch.roll(feat2_PD,shift_amount)[robust_mask],dim=1),
                                            torch.sum(feat2_PD[robust_mask] * torch.roll(feat1_PD,shift_amount)[robust_mask],dim=1)])
+        
+        print("4:",detect_nan([simi_positive,simi_negative]))
         loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - 7.,min=0).mean() * 10000.
 
         loss = loss_obj + loss_height + loss_conf + loss_feat
@@ -205,8 +221,13 @@ class CriterionFinetuneDis(nn.Module):
            pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
         robust_mask = (residual1_P <= residual_thresholds) & (residual2_P <= residual_thresholds)
 
-        dis_obj = torch.norm(pred1_P3[robust_mask,:2] - pred2_P3[robust_mask,:2],dim=-1).mean()
-        dis_height = torch.abs(pred1_P3[robust_mask,2] - pred2_P3[robust_mask,2]).mean() * 100
+        dis_obj = torch.norm(pred1_P3[robust_mask,:2] - pred2_P3[robust_mask,:2],dim=-1)
+        dis_height = torch.abs(pred1_P3[robust_mask,2] - pred2_P3[robust_mask,2]) * 100
+
+        print("5:",detect_nan([dis_obj,dis_height]))
+
+        dis_obj = dis_obj.mean()
+        dis_height = dis_height.mean()
 
         loss_dis = dis_obj + dis_height
         return loss_dis,dis_obj,dis_height
