@@ -160,7 +160,6 @@ class CriterionFinetuneNormal(nn.Module):
 
         P = H*W
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
-        print("res_mid:",res_mid.item())
         if not torch.isnan(res_mid):
             self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
         else:
