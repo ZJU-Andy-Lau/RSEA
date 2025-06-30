@@ -280,6 +280,7 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
+            count += 1
             curtime = time.perf_counter()
             curstep = epoch * data_batch_num + count
             remain_step = args.max_epoch  * data_batch_num - curstep
@@ -303,7 +304,7 @@ def pretrain(args):
             total_loss_conf += loss_conf.item()
             total_loss_feat += loss_feat.item()
 
-            count += 1
+            
           
 
             
