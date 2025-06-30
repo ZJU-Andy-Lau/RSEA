@@ -238,24 +238,24 @@ def pretrain(args):
                     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
 
-                    decoder.requires_grad_(False)
-                    output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
-                    output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
-                    output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
-                    output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
-                    decoder.requires_grad_(True)
+                    # decoder.requires_grad_(False)
+                    # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
+                    # output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
+                    # output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
+                    # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
+                    # decoder.requires_grad_(True)
                     
                     obj_bbox = dataset.obj_bboxs[idx]
 
                     pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
                     pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox)) 
-                    pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
-                    pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+                    # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
+                    # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
                 
                 pred1_P3 = torch.concatenate(pred1_P3,dim=0)
                 pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-                pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
-                pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
+                # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
+                # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
                 # print("1:",torch.isnan(pred1_P3).any() & torch.isnan(pred2_P3).any() & torch.isnan(pred_skip_1_P3).any() & torch.isnan(pred_skip_2_P3).any())
 
@@ -277,8 +277,8 @@ def pretrain(args):
                                                                                     H,W)
 
                     
-                loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
-                # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+                # loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
+                loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
                         
                 if torch.isnan(loss_feat):
                     pprint("nan feat loss,continue")
