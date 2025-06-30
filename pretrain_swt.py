@@ -314,6 +314,8 @@ def pretrain(args):
             total_loss_feat += loss_feat_rec
             count += 1
 
+            dist.barrier()
+
             dist.all_reduce(loss_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_obj_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_dis_rec,dist.ReduceOp.AVG)
