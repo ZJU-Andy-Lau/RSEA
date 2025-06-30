@@ -6,6 +6,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import torch.nn.init as init
 from torch.nn.parallel import DistributedDataParallel
+import torch.distributed as dist
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
 from criterion import CriterionFinetuneNormal,CriterionFinetuneDis
@@ -23,6 +24,14 @@ import random
 import warnings
 warnings.filterwarnings("ignore")
 from scheduler import MultiStageOneCycleLR
+
+from functools import partial
+
+def print_on_main(msg, rank):
+    if rank == 0:
+        print(msg)
+
+
 cfg_base = {
             'input_channels':3,
             'patch_feature_channels':512,
@@ -64,7 +73,9 @@ def distibute_model(model:nn.Module,local_rank):
     return model
 
 def pretrain(args):
-    print("Loading Dataset")
+    pprint = partial(print_on_main, rank=dist.get_rank())
+    pprint("Loading Dataset")
+
     dataset = PretrainDataset(root = args.dataset_path,
                               dataset_num = args.dataset_num,
                               batch_size = args.batch_size,
@@ -75,7 +86,7 @@ def pretrain(args):
     dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=4,drop_last=False,pin_memory=True)
     dataset_num = dataset.dataset_num
     data_batch_num = len(dataloader)
-    print("Building Encoder")
+    pprint("Building Encoder")
 
     cfg = cfg_large
     # cfg['unfreeze_backbone_modules'] = ['head','norm',*[f'layers.2.blocks.{i}' for i in unfreeze_blocks]]
@@ -84,7 +95,7 @@ def pretrain(args):
     projector = ProjectHead(encoder.patch_feature_channels,128)
     if not args.encoder_path is None:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth')).items()},strict=True)
-        print('Encoder Loaded')
+        pprint('Encoder Loaded')
     os.makedirs(os.path.dirname(args.encoder_output_path),exist_ok=True)
 
     encoder_optimizer = optim.AdamW(params=list(encoder.get_unfreeze_parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
@@ -105,12 +116,12 @@ def pretrain(args):
     encoder = encoder.to(args.device)
     projector = projector.to(args.device)
     num_gpus = torch.cuda.device_count()
-    print(f"Using {num_gpus} GPUS")
+    pprint(f"Using {num_gpus} GPUS")
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
         projector = distibute_model(projector,args.local_rank)
     
-    print("Building Decoders")
+    pprint("Building Decoders")
 
     if args.decoder_output_path is not None:
         os.makedirs(args.decoder_output_path,exist_ok=True)
@@ -152,7 +163,7 @@ def pretrain(args):
     
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
-        print(f'Epoch:{epoch}')
+        pprint(f'Epoch:{epoch}')
         sampler.set_epoch(epoch)
         # valid(epoch)
         total_loss = 0
@@ -258,6 +269,7 @@ def pretrain(args):
                 obj_P3 = obj.flatten(0,2)
                 residual1_P = residual1.reshape(-1).detach()
                 residual2_P = residual2.reshape(-1).detach()
+                conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
 
                 loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                     project_feat1_PD,project_feat2_PD,
@@ -272,7 +284,7 @@ def pretrain(args):
                 loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)
                         
                 if torch.isnan(loss_feat):
-                    print("nan feat loss,continue")
+                    pprint("nan feat loss,continue")
                     continue
 
                 loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
@@ -280,37 +292,47 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
-            count += 1
-            curtime = time.perf_counter()
-            curstep = epoch * data_batch_num + count
-            remain_step = args.max_epoch  * data_batch_num - curstep
-            cost_time = curtime - start_time
-            remain_time = remain_step * cost_time / curstep
-            conf_mean = .5 * conf1_P.mean() + .5 * conf2_P.mean()
-
-            print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t loss:{loss.item():.2f} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
-
+            
             scaler.scale(loss).backward()
             scaler.step(encoder_optimizer)
             for idx in dataset_idxs:
                 scaler.step(optimizers[idx])
             scaler.update()
 
-            
-
-            total_loss += loss.item()
-            total_loss_obj += loss_obj.item()
-            total_loss_dis += loss_dis.item()
-            total_loss_height += loss_height.item()
-            total_loss_conf += loss_conf.item()
-            total_loss_feat += loss_feat.item()
-
-            
-          
-
-            
-
             encoder_scheduler.step()
+            
+            loss_rec = loss.clone().detach()
+            loss_obj_rec = loss_obj.clone().detach()
+            loss_dis_rec = loss_dis.clone().detach()
+            loss_height_rec = loss_height.clone().detach()
+            loss_conf_rec = loss_conf.clone().detach()
+            loss_feat_rec = loss_feat.clone().detach()
+
+            total_loss += loss_rec.item()
+            total_loss_obj += loss_obj_rec.item()
+            total_loss_dis += loss_dis_rec.item()
+            total_loss_height += loss_height_rec.item()
+            total_loss_conf += loss_conf_rec.item()
+            total_loss_feat += loss_feat_rec.item()
+            count += 1
+
+            dist.all_reduce(loss_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_obj_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_dis_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_height_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_conf_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_feat_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(conf_mean,dist.ReduceOp.AVG)
+            
+            if dist.get_rank() == 0:
+                curtime = time.perf_counter()
+                curstep = epoch * data_batch_num + count
+                remain_step = args.max_epoch  * data_batch_num - curstep
+                cost_time = curtime - start_time
+                remain_time = remain_step * cost_time / curstep
+
+                print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t loss:{loss_rec.item():.2f} \t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_height:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+
 
         for scheduler in schedulers:
             scheduler.step()            
@@ -321,34 +343,44 @@ def pretrain(args):
         total_loss_height /= count
         total_loss_conf /= count
         total_loss_feat /= count
-        if last_loss is None:
-            print(f'total_loss:{total_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f}')
-        else:
-            print(f"total_loss:{total_loss} \t diff:{'+' if total_loss - last_loss > 0 else ''}{total_loss - last_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f}")
-        last_loss = total_loss
 
-        torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'backbone_{epoch}.pth')))
-        
-        if total_loss_obj < min_loss:
-            min_loss = total_loss_obj
-            torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
-            # torch.save(encoder.state_dict(),args.encoder_output_path)
-            # if not args.freeze_decoder:
-            for dataset_idx in range(dataset_num):
-                torch.save(decoders[dataset_idx].state_dict(),os.path.join(args.encoder_output_path,f'decoder_{dataset_idx}.pth'))
-            print('best updated')
-        logger.update({
-            'epoch':epoch,
-            'loss':total_loss,
-            'loss_obj':total_loss_obj,
-            'loss_height':total_loss_height,
-            'loss_dis':total_loss_dis,
-            'loss_conf':total_loss_conf,
-            'loss_feat':total_loss_feat,
-            'k':k.item(),
-            'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
-            'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
-        })
+        dist.all_reduce(total_loss,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_obj,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_dis,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_height,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_conf,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_feat,dist.ReduceOp.AVG)
+
+
+        if dist.get_rank() == 0:
+            if last_loss is None:
+                print(f'total_loss:{total_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f}')
+            else:
+                print(f"total_loss:{total_loss} \t diff:{'+' if total_loss - last_loss > 0 else ''}{total_loss - last_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f}")
+            last_loss = total_loss
+
+            torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'backbone_{epoch}.pth')))
+            
+            if total_loss_obj < min_loss:
+                min_loss = total_loss_obj
+                torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
+                # torch.save(encoder.state_dict(),args.encoder_output_path)
+                # if not args.freeze_decoder:
+                for dataset_idx in range(dataset_num):
+                    torch.save(decoders[dataset_idx].state_dict(),os.path.join(args.encoder_output_path,f'decoder_{dataset_idx}.pth'))
+                print('best updated')
+            logger.update({
+                'epoch':epoch,
+                'loss':total_loss,
+                'loss_obj':total_loss_obj,
+                'loss_height':total_loss_height,
+                'loss_dis':total_loss_dis,
+                'loss_conf':total_loss_conf,
+                'loss_feat':total_loss_feat,
+                'k':k.item(),
+                'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
+                'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
+            })
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -382,6 +414,8 @@ if __name__ == '__main__':
         raise ValueError("Batch size must be divisible by 4")
     args.batch_size = args.batch_size // 4
 
+    pprint = partial(print_on_main, rank=dist.get_rank())
+
     if not os.path.exists(args.encoder_output_path):
         os.mkdir(args.encoder_output_path)
 
@@ -390,8 +424,8 @@ if __name__ == '__main__':
 
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
-    print("==============================configs==============================")
+    pprint("==============================configs==============================")
     for k,v in vars(args).items():
-        print(f"{k}:{v}")
-    print("===================================================================")
+        pprint(f"{k}:{v}")
+    pprint("===================================================================")
     pretrain(args)

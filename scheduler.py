@@ -90,12 +90,12 @@ class MultiStageOneCycleLR:
         if self.scheduler_type == 0 and (self.step_count >= self.steps_per_epoch * self.n_epochs_per_stage * (self.pct_start + self.summit_hold) or self.manual_cooldown):
             self._create_exp_scheduler()
             self.scheduler_type = 1
-            print('switch to exp scheduler')
+            # print('switch to exp scheduler')
 
         if self.scheduler_type == 1 and self.cooldown_started == False and self.step_count >= self.steps_per_epoch * self.n_epochs_per_stage * (1. - self.cooldown):
             self.scheduler.gamma = self.gamma ** 5
             self.cooldown_started = True
-            print('start cooldown')
+            # print('start cooldown')
 
         if self.step_count % self.steps_per_epoch == 0:
             self.epoch_count += 1
