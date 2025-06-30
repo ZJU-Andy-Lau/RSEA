@@ -123,7 +123,8 @@ class PretrainDataset(Dataset):
 
         residual1 = torch.from_numpy(np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
         residual2 = torch.from_numpy(np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0))
-
+        residual1[torch.isnan(residual1)] = -1
+        residual2[torch.isnan(residual2)] = -1
         # t2 = time.perf_counter()
 
         # print(t1 - t0, t2 - t1)

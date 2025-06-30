@@ -135,8 +135,8 @@ def conf_norm(conf):
 def residual2conf(residual,t = 6.):
     conf = torch.full(residual.shape,.5,device=residual.device,dtype=residual.dtype)
     conf[residual > t] = .1
-    conf[residual < t] = .9
-    conf[torch.isnan(residual)] = .5
+    conf[(residual < t) & (residual >= 0)] = .9
+    conf[residual < 0] = .5
     return conf
 
 def detect_nan(items:list):
@@ -167,17 +167,20 @@ class CriterionFinetuneNormal(nn.Module):
         # print("2:",detect_nan([feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P]))
 
         P = H*W
-        res_mid = torch.median(torch.cat([residual1_P,residual2_P])[~torch.isnan(torch.cat([residual1_P,residual2_P]))])
-        if not torch.isnan(res_mid):
-            self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
-        else:
+        robust_mask = (residual1_P <= self.residual_thresholds) & (residual2_P <= self.residual_thresholds)
+        if robust_mask.sum() == 0:
             print("all res nan")
+            exit()
+        res_mid = torch.median(torch.cat([residual1_P,residual2_P])[torch.cat([residual1_P,residual2_P]) >= 0])
+
+        self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
+
         conf1_gt_P = residual2conf(residual1_P,self.residual_thresholds)
         conf2_gt_P = residual2conf(residual2_P,self.residual_thresholds)
-        robust_mask = (residual1_P <= self.residual_thresholds) & (residual2_P <= self.residual_thresholds)
+        
 
-        conf_valid1 = ~torch.isnan(residual1_P)
-        conf_valid2 = ~torch.isnan(residual2_P)
+        conf_valid1 = residual1_P >= 0
+        conf_valid2 = residual2_P >= 0
         weights1_P = conf_norm(conf1_gt_P)
         weights2_P = conf_norm(conf2_gt_P)
 
