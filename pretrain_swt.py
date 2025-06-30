@@ -286,6 +286,7 @@ def pretrain(args):
             remain_step = args.max_epoch  * data_batch_num - curstep
             cost_time = curtime - start_time
             remain_time = remain_step * cost_time / curstep
+            conf_mean = .5 * conf1_P.mean() + .5 * conf2_P.mean()
 
             print(f"epoch:{epoch}  batch:{data_batch_idx}/{data_batch_num} \t loss:{loss.item():.2f} \t l_obj:{loss_obj.item():.2f} \t l_dis:{loss_dis.item():.2f} \t l_height:{loss_height.item():.2f} \t l_conf:{loss_conf.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_feat:{loss_feat.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{decoder_optimizer.param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
@@ -295,7 +296,7 @@ def pretrain(args):
                 scaler.step(optimizers[idx])
             scaler.update()
 
-            conf_mean = .5 * conf1_P.mean() + .5 * conf2_P.mean()
+            
 
             total_loss += loss.item()
             total_loss_obj += loss_obj.item()
