@@ -196,11 +196,11 @@ def pretrain(args):
             #     obj = obj.cuda()
             #     residual1 = residual1.cuda()
             #     residual2 = residual2.cuda()
-            img1 = img1.to(args.device)
-            img2 = img2.to(args.device)
-            obj = obj.to(args.device)
-            residual1 = residual1.to(args.device)
-            residual2 = residual2.to(args.device)
+            img1 = img1.cuda()
+            img2 = img2.cuda()
+            obj = obj.cuda()
+            residual1 = residual1.cuda()
+            residual2 = residual2.cuda()
             
             with autocast():
                 feat1,conf1 = encoder(img1)
