@@ -84,7 +84,7 @@ class PretrainDataset(Dataset):
             self.transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
-                transforms.RandomInvert(p=.3),
+                transforms.RandomInvert(p=.2),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
         else:
@@ -139,5 +139,5 @@ class PretrainDataset(Dataset):
 
         # print(t1 - t0, t2 - t1)
         
-        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index),torch.from_numpy(windows)
+        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index)
 
