@@ -457,9 +457,9 @@ if __name__ == '__main__':
         args.device=torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method='env://')
 
-    if args.batch_size % 4 != 0:
-        raise ValueError("Batch size must be divisible by 4")
-    args.batch_size = args.batch_size // 4
+    # if args.batch_size % 4 != 0:
+    #     raise ValueError("Batch size must be divisible by 4")
+    # args.batch_size = args.batch_size // 4
 
     pprint = partial(print_on_main, rank=dist.get_rank())
 

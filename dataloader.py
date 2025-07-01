@@ -100,13 +100,7 @@ class PretrainDataset(Dataset):
     def __getitem__(self, index):
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
-        windows = np.concatenate([
-            np.concatenate([rows,cols],axis=-1),
-            np.concatenate([self.img_size - rows - self.input_size,cols],axis=-1),
-            np.concatenate([rows,self.img_size - cols - self.input_size],axis=-1),
-            np.concatenate([self.img_size - rows - self.input_size,self.img_size - cols - self.input_size],axis=-1)
-        ],axis=0
-        )
+        windows = np.concatenate([rows,cols],axis=-1)
 
         key = self.database_keys[index]
         image_1_full = self.database[key]['image_1'][:]
