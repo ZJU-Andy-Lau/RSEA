@@ -10,6 +10,7 @@ from timm.models.vision_transformer import VisionTransformer
 from functools import partial
 from torchvision import transforms
 from typing import List
+import torch.distributed as dist
 
 def bnac(channels):
     return nn.Sequential(
@@ -202,11 +203,26 @@ class Decoder(nn.Module):
         # res = res / torch.norm(res,dim=1,keepdim=True)
         # if self.use_bn:
         #     res = self.bn(res)
+        rank = dist.get_rank()
+        if rank == 6:
+            print("===============================Inside Decoder===============================")
         for block in self.blocks:
+            if rank == 6:
+                print(f"1 \t res:{res.shape}")
             x = block(res)
+            if rank == 6:
+                print(f"2 \t x:{x.shape}")
             res = res + x
+            if rank == 6:
+                print(f"3 \t res:{res.shape}")
         xy_res = self.output_xy(res)
+        if rank == 6:
+            print(f"4 \t xy_res:{xy_res.shape}")
         height_res = self.output_height(res)
+        if rank == 6:
+            print(f"5 \t height_res:{height_res.shape}")
+        if rank == 6:
+            print("=========================================================================")
         return torch.cat([xy_res,height_res],dim=1)
 
 
