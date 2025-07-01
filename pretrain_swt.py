@@ -287,8 +287,8 @@ def pretrain(args):
                 loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
 
                 dummy_loss = 0.0
+                dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
                 for decoder in decoders:
-                    dummy_input = torch.zeros_like(feat_input1[:B],device=loss_normal.device,dtype=loss_normal.dtype)
                     dummy_output = decoder(dummy_input)
                     dummy_loss = dummy_loss + dummy_output.sum() * 0.0
                         
