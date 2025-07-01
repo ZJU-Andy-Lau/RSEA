@@ -196,8 +196,7 @@ def pretrain(args):
             img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
             img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,H,W,-1)
-            print(obj.shape)
-            print(obj)
+
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
 
@@ -272,6 +271,10 @@ def pretrain(args):
                 # decoder.requires_grad_(True)
                 
                 obj_bbox = dataset.obj_bboxs[idx]
+
+                print(obj.shape)
+                print("bbox:",obj_bbox)
+                print(obj)
 
                 pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
                 pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
