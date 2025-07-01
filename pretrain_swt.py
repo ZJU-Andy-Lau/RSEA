@@ -220,73 +220,73 @@ def pretrain(args):
                 decoder = decoders[idx]
                 decoder.train()
             # print(f"\n2---------debug:{dist.get_rank()}\n")
-            with autocast():
-                feat1,conf1 = encoder(img1)
-                feat2,conf2 = encoder(img2)
-                # dist.barrier()
+            # with autocast():
+            feat1,conf1 = encoder(img1)
+            feat2,conf2 = encoder(img2)
+            # dist.barrier()
 
-                patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
-                patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
+            patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
+            patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
 
-                project_feat1 = projector(patch_feat1)
-                project_feat2 = projector(patch_feat2)
+            project_feat1 = projector(patch_feat1)
+            project_feat2 = projector(patch_feat2)
 
-                patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.local_rank) * .3
-                patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.local_rank) * .3
-                global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.local_rank) * .8
-                global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.local_rank) * .8
-                patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp1
-                patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp2
-                global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.local_rank) * global_feat_noise_amp1
-                global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.local_rank) * global_feat_noise_amp2
+            patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.local_rank) * .3
+            patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.local_rank) * .3
+            global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.local_rank) * .8
+            global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.local_rank) * .8
+            patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp1
+            patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp2
+            global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.local_rank) * global_feat_noise_amp1
+            global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.local_rank) * global_feat_noise_amp2
 
-                feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
-                feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
-                # feat_input1 = feat1
-                # feat_input2 = feat2
+            feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
+            feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
+            # feat_input1 = feat1
+            # feat_input2 = feat2
 
-                pred1_P3 = []
-                pred2_P3 = []
-                pred_skip_1_P3 = []
-                pred_skip_2_P3 = []
+            pred1_P3 = []
+            pred2_P3 = []
+            pred_skip_1_P3 = []
+            pred_skip_2_P3 = []
+            
+            for n,idx in enumerate(dataset_idxs):
+                decoder = decoders[idx]
+                output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
+                output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
+                output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
+                output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
                 
-                for n,idx in enumerate(dataset_idxs):
-                    decoder = decoders[idx]
-                    output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
-                    output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
-                    output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
-                    output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
-                    
 
-                    decoder.requires_grad_(False)
-                    output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
-                    output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
-                    output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
-                    output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
-                    decoder.requires_grad_(True)
-                    
-                    obj_bbox = dataset.obj_bboxs[idx]
-
-                    pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
-                    pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
-                    pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
-                    pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+                decoder.requires_grad_(False)
+                output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
+                output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
+                output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
+                output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
+                decoder.requires_grad_(True)
                 
-                pred1_P3 = torch.concatenate(pred1_P3,dim=0)
-                pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-                pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
-                pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
+                obj_bbox = dataset.obj_bboxs[idx]
 
-                # print("1:",torch.isnan(pred1_P3).any() & torch.isnan(pred2_P3).any() & torch.isnan(pred_skip_1_P3).any() & torch.isnan(pred_skip_2_P3).any())
+                pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
+                pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
+                pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
+                pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+            
+            pred1_P3 = torch.concatenate(pred1_P3,dim=0)
+            pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+            pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
+            pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
-                project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
-                project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
-                conf1_P = conf1.permute(0,2,3,1).reshape(-1)
-                conf2_P = conf2.permute(0,2,3,1).reshape(-1)
-                obj_P3 = obj.flatten(0,2)
-                residual1_P = residual1.reshape(-1).detach()
-                residual2_P = residual2.reshape(-1).detach()
-                conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
+            # print("1:",torch.isnan(pred1_P3).any() & torch.isnan(pred2_P3).any() & torch.isnan(pred_skip_1_P3).any() & torch.isnan(pred_skip_2_P3).any())
+
+            project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
+            project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
+            conf1_P = conf1.permute(0,2,3,1).reshape(-1)
+            conf2_P = conf2.permute(0,2,3,1).reshape(-1)
+            obj_P3 = obj.flatten(0,2)
+            residual1_P = residual1.reshape(-1).detach()
+            residual2_P = residual2.reshape(-1).detach()
+            conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
                 # print(f"\n3---------debug:{dist.get_rank()}\n")
 
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
@@ -318,21 +318,19 @@ def pretrain(args):
             for optimizer in optimizers:
                 optimizer.zero_grad()
             dist.barrier()
-            # for idx in dataset_idxs:
-            #     decoder_optimizer = optimizers[idx]
-            #     decoder_optimizer.zero_grad()
-            # loss.backward()
-            # encoder_optimizer.step()
-            # for idx in dataset_idxs:
-            #     optimizers[idx].step()
             
-            scaler.scale(loss).backward()
+            loss.backward()
+            # scaler.scale(loss).backward()
+
             dist.barrier()
-            # print(f"\n5---------debug:{dist.get_rank()}\n")
-            scaler.step(encoder_optimizer)
+
+            encoder_optimizer.step()
             for idx in dataset_idxs:
-                scaler.step(optimizers[idx])
-            scaler.update()
+                optimizers[idx].step()
+            # scaler.step(encoder_optimizer)
+            # for idx in dataset_idxs:
+            #     scaler.step(optimizers[idx])
+            # scaler.update()
 
             encoder_scheduler.step()
             
