@@ -115,7 +115,7 @@ def pretrain(args):
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
                                              gamma=.63 ** (1. / (50 * data_batch_num)),
-                                             pct_start=30. / args.max_epoch)
+                                             pct_start=200. / args.max_epoch)
     
 
     patch_feature_channels = encoder.patch_feature_channels
@@ -156,7 +156,7 @@ def pretrain(args):
                                             n_epochs_per_stage=args.max_epoch,
                                             summit_hold=0,
                                             gamma=.63 ** (1. / 30),
-                                            pct_start=5. / args.max_epoch)
+                                            pct_start=50. / args.max_epoch)
         optimizers.append(optimizer)
         schedulers.append(scheduler)
         decoders.append(decoder)
