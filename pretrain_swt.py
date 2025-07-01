@@ -180,16 +180,21 @@ def pretrain(args):
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
             N,B,H,W = obj.shape[:4]
+            print("===========================================Debug Info===========================================")
+            print(f"rank:{rank}")
+            print(N,B,H,W)
+            print(dataset_idxs)
+            print("================================================================================================")
             img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
             img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,H,W,-1)
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
             
+            encoder_optimizer.zero_grad()
             for idx in dataset_idxs:
                 decoder = decoders[idx]
                 decoder.train()
-                encoder_optimizer.zero_grad()
                 decoder_optimizer = optimizers[idx]
                 decoder_optimizer.zero_grad()
             
@@ -208,7 +213,7 @@ def pretrain(args):
             with autocast():
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
-                dist.barrier()
+                # dist.barrier()
 
                 patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
                 patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
