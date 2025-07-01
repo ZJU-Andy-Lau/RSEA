@@ -75,6 +75,7 @@ def distibute_model(model:nn.Module,local_rank):
 def pretrain(args):
     pprint = partial(print_on_main, rank=dist.get_rank())
     pprint("Loading Dataset")
+    rank = dist.get_rank()
 
     dataset = PretrainDataset(root = args.dataset_path,
                               dataset_num = args.dataset_num,
@@ -164,7 +165,7 @@ def pretrain(args):
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
         pprint(f'Epoch:{epoch}')
-        print(f"\n1---------debug:{dist.get_rank()}\n")
+        # print(f"\n1---------debug:{dist.get_rank()}\n")
         sampler.set_epoch(epoch)
         # valid(epoch)
         total_loss = 0
@@ -202,16 +203,22 @@ def pretrain(args):
             obj = obj.cuda()
             residual1 = residual1.cuda()
             residual2 = residual2.cuda()
-            print(f"\n2---------debug:{dist.get_rank()}\n")
+            # print(f"\n2---------debug:{dist.get_rank()}\n")
             with autocast():
+                if rank == 6:
+                    print("debug-------------1")
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
+                if rank == 6:
+                    print("debug-------------2")
 
                 patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
                 patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
 
                 project_feat1 = projector(patch_feat1)
                 project_feat2 = projector(patch_feat2)
+                if rank == 6:
+                    print("debug-------------3")
 
                 patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).cuda() * .3
                 patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).cuda() * .3
@@ -224,6 +231,8 @@ def pretrain(args):
 
                 feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
                 feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
+                if rank == 6:
+                    print("debug-------------4")
                 # feat_input1 = feat1
                 # feat_input2 = feat2
 
@@ -238,6 +247,7 @@ def pretrain(args):
                     output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
                     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
+                    
 
                     # decoder.requires_grad_(False)
                     # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
@@ -249,12 +259,16 @@ def pretrain(args):
                     obj_bbox = dataset.obj_bboxs[idx]
 
                     pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
-                    pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox)) 
+                    pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
+                    if rank == 6:
+                        print(f"debug-------------5-{n}") 
                     # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
                     # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
                 
                 pred1_P3 = torch.concatenate(pred1_P3,dim=0)
                 pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+                if rank == 6:
+                    print(f"debug-------------6")
                 # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
                 # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
@@ -268,7 +282,7 @@ def pretrain(args):
                 residual1_P = residual1.reshape(-1).detach()
                 residual2_P = residual2.reshape(-1).detach()
                 conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
-                print(f"\n3---------debug:{dist.get_rank()}\n")
+                # print(f"\n3---------debug:{dist.get_rank()}\n")
 
                 loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                     project_feat1_PD,project_feat2_PD,
@@ -287,7 +301,7 @@ def pretrain(args):
                     exit()
 
                 loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
-                print(f"\n4---------debug:{dist.get_rank()}\n")
+                # print(f"\n4---------debug:{dist.get_rank()}\n")
 
             # loss.backward()
             # encoder_optimizer.step()
@@ -298,7 +312,7 @@ def pretrain(args):
                 print(f"loss of rank {dist.get_rank()} : {loss.item()}")
             
             scaler.scale(loss).backward()
-            print(f"\n5---------debug:{dist.get_rank()}\n")
+            # print(f"\n5---------debug:{dist.get_rank()}\n")
             scaler.step(encoder_optimizer)
             for idx in dataset_idxs:
                 scaler.step(optimizers[idx])
@@ -320,7 +334,7 @@ def pretrain(args):
             total_loss_conf += loss_conf_rec
             total_loss_feat += loss_feat_rec
             count += 1
-            print(f"\n6---------debug:{dist.get_rank()}\n")
+            # print(f"\n6---------debug:{dist.get_rank()}\n")
 
 
             dist.all_reduce(loss_rec,dist.ReduceOp.AVG)
@@ -344,7 +358,7 @@ def pretrain(args):
         for scheduler in schedulers:
             scheduler.step()            
         
-        print(f"\n7---------debug:{dist.get_rank()}\n")
+        # print(f"\n7---------debug:{dist.get_rank()}\n")
         total_loss /= count
         total_loss_obj /= count
         total_loss_dis /= count
@@ -365,7 +379,7 @@ def pretrain(args):
         total_loss_height = total_loss_height.item()
         total_loss_conf = total_loss_conf.item()
         total_loss_feat = total_loss_feat.item()
-        print(f"\n8---------debug:{dist.get_rank()}\n")
+        # print(f"\n8---------debug:{dist.get_rank()}\n")
 
 
         if dist.get_rank() == 0:
@@ -397,7 +411,7 @@ def pretrain(args):
                 'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
                 'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
             })
-        print(f"\n9---------debug:{dist.get_rank()}\n")
+        # print(f"\n9---------debug:{dist.get_rank()}\n")
         dist.barrier()
 
 if __name__ == '__main__':
