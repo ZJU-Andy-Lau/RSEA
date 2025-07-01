@@ -205,20 +205,14 @@ def pretrain(args):
             residual2 = residual2.cuda()
             # print(f"\n2---------debug:{dist.get_rank()}\n")
             with autocast():
-                if rank == 6:
-                    print("debug-------------1")
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
-                if rank == 6:
-                    print("debug-------------2")
 
                 patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
                 patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
 
                 project_feat1 = projector(patch_feat1)
                 project_feat2 = projector(patch_feat2)
-                if rank == 6:
-                    print("debug-------------3")
 
                 patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).cuda() * .3
                 patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).cuda() * .3
@@ -231,8 +225,6 @@ def pretrain(args):
 
                 feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
                 feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
-                if rank == 6:
-                    print("debug-------------4")
                 # feat_input1 = feat1
                 # feat_input2 = feat2
 
@@ -244,9 +236,15 @@ def pretrain(args):
                 for n,idx in enumerate(dataset_idxs):
                     decoder = decoders[idx]
                     output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
+                    if rank == 6:
+                        print(f"debug-------------1") 
                     output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
+                    if rank == 6:
+                        print(f"debug-------------2") 
                     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
+                    if rank == 6:
+                        print(f"debug-------------3") 
                     
 
                     # decoder.requires_grad_(False)
@@ -257,18 +255,20 @@ def pretrain(args):
                     # decoder.requires_grad_(True)
                     
                     obj_bbox = dataset.obj_bboxs[idx]
+                    if rank == 6:
+                        print(f"debug-------------4") 
 
                     pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
+                    if rank == 6:
+                        print(f"debug-------------5") 
                     pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
                     if rank == 6:
-                        print(f"debug-------------5-{n}") 
+                        print(f"debug-------------6") 
                     # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
                     # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
                 
                 pred1_P3 = torch.concatenate(pred1_P3,dim=0)
                 pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-                if rank == 6:
-                    print(f"debug-------------6")
                 # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
                 # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
