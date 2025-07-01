@@ -289,29 +289,29 @@ def pretrain(args):
                 conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
                 # print(f"\n3---------debug:{dist.get_rank()}\n")
 
-                loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
-                                                                                    project_feat1_PD,project_feat2_PD,
-                                                                                    pred1_P3,pred2_P3,
-                                                                                    conf1_P,conf2_P,
-                                                                                    obj_P3,
-                                                                                    residual1_P,residual2_P,
-                                                                                    H,W)
+            loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
+                                                                                project_feat1_PD,project_feat2_PD,
+                                                                                pred1_P3,pred2_P3,
+                                                                                conf1_P,conf2_P,
+                                                                                obj_P3,
+                                                                                residual1_P,residual2_P,
+                                                                                H,W)
 
+                
+            loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
+            # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+
+            dummy_loss = 0.0
+            dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
+            for decoder in decoders:
+                dummy_output = decoder(dummy_input)
+                dummy_loss = dummy_loss + dummy_output.sum() * 0.0
                     
-                loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
-                # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+            if torch.isnan(loss_feat):
+                print(f"nan feat loss in rank{dist.get_rank()},exit")
+                exit()
 
-                dummy_loss = 0.0
-                dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
-                for decoder in decoders:
-                    dummy_output = decoder(dummy_input)
-                    dummy_loss = dummy_loss + dummy_output.sum() * 0.0
-                        
-                if torch.isnan(loss_feat):
-                    print(f"nan feat loss in rank{dist.get_rank()},exit")
-                    exit()
-
-                loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) + dummy_loss
+            loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) + dummy_loss
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
             
             encoder_optimizer.zero_grad()
