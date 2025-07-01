@@ -234,21 +234,17 @@ def pretrain(args):
                 pred_skip_2_P3 = []
                 
                 for n,idx in enumerate(dataset_idxs):
-                    if rank == 6:
-                        print(f"debug-------------s") 
                     decoder = decoders[idx]
                     if rank == 6:
-                        print(f"debug-------------0") 
+                        print("=================================Debug Info=================================")
+                        print(f"n:{n} \t idx:{idx} \t dataset_idxs:{dataset_idxs.item()}")
+                        print(f"feat_input1.shape:{feat_input1.shape} \t isnan:{torch.isnan(feat_input1).any()} \t isinf:{torch.isinf(feat_input1).any()}")
+                        print(f"decoder: \n{decoder}")
+                        print("============================================================================")
                     output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
-                    if rank == 6:
-                        print(f"debug-------------1") 
                     output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
-                    if rank == 6:
-                        print(f"debug-------------2") 
                     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
                     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
-                    if rank == 6:
-                        print(f"debug-------------3") 
                     
 
                     # decoder.requires_grad_(False)
@@ -259,15 +255,9 @@ def pretrain(args):
                     # decoder.requires_grad_(True)
                     
                     obj_bbox = dataset.obj_bboxs[idx]
-                    if rank == 6:
-                        print(f"debug-------------4") 
 
                     pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
-                    if rank == 6:
-                        print(f"debug-------------5") 
                     pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
-                    if rank == 6:
-                        print(f"debug-------------6") 
                     # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
                     # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
                 
