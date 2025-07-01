@@ -76,8 +76,9 @@ def distibute_model(model:nn.Module,local_rank):
 def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
     os.makedirs(output_path,exist_ok=True)
     for idx,img in enumerate(imgs_raw):
-        img = img.permute(1,2,0).cpu().numpy()
-        cv2.imwrite(f'{output_path}/{name}_{idx}.png',img)
+        img = img.permute(1,2,0).cpu().numpy()[:,:,0]
+        img = 255 * (img - img.min()) / (img.max() - img.min())
+        cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
 def pretrain(args):
     pprint = partial(print_on_main, rank=dist.get_rank())
