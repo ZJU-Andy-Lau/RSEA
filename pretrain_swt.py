@@ -315,9 +315,12 @@ def pretrain(args):
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
             
             encoder_optimizer.zero_grad()
-            for idx in dataset_idxs:
-                decoder_optimizer = optimizers[idx]
-                decoder_optimizer.zero_grad()
+            for optimizer in optimizers:
+                optimizer.zero_grad()
+            dist.barrier()
+            # for idx in dataset_idxs:
+            #     decoder_optimizer = optimizers[idx]
+            #     decoder_optimizer.zero_grad()
             # loss.backward()
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
@@ -402,7 +405,7 @@ def pretrain(args):
                 print(f"total_loss:{total_loss} \t diff:{'+' if total_loss - last_loss > 0 else ''}{total_loss - last_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f}")
             last_loss = total_loss
 
-            torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'backbone_{epoch}.pth')))
+            # torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'backbone_{epoch}.pth')))
             
             if total_loss_obj < min_loss:
                 min_loss = total_loss_obj
