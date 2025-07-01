@@ -176,6 +176,7 @@ def pretrain(args):
         total_loss_feat = 0
         count = 0
         encoder.train()
+        dist.barrier()
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
             N,B,H,W = obj.shape[:4]
@@ -207,6 +208,7 @@ def pretrain(args):
             with autocast():
                 feat1,conf1 = encoder(img1)
                 feat2,conf2 = encoder(img2)
+                dist.barrier()
 
                 patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
                 patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
@@ -235,12 +237,6 @@ def pretrain(args):
                 
                 for n,idx in enumerate(dataset_idxs):
                     decoder = decoders[idx]
-                    if rank == 6:
-                        print("=================================Debug Info=================================")
-                        print(f"n:{n} \t idx:{idx} \t B:{B} \t dataset_idxs:{dataset_idxs.item()}")
-                        print(f"feat_input1.shape:{feat_input1.shape} \t isnan:{torch.isnan(feat_input1).any()} \t isinf:{torch.isinf(feat_input1).any()}")
-                        print(f"decoder: \n{decoder}")
-                        print("============================================================================")
                     output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
                     output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
                     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
@@ -301,9 +297,6 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
-
-            if dist.get_rank() == 6 or dist.get_rank() == 0:
-                print(f"loss of rank {dist.get_rank()} : {loss.item()}")
             
             scaler.scale(loss).backward()
             # print(f"\n5---------debug:{dist.get_rank()}\n")
