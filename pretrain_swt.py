@@ -184,7 +184,6 @@ def pretrain(args):
         total_loss_feat = 0
         count = 0
         encoder.train()
-        dist.barrier()
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
             N,B,H,W = obj.shape[:4]
@@ -325,6 +324,7 @@ def pretrain(args):
             #     optimizers[idx].step()
             
             scaler.scale(loss).backward()
+            dist.barrier()
             # print(f"\n5---------debug:{dist.get_rank()}\n")
             scaler.step(encoder_optimizer)
             for idx in dataset_idxs:
