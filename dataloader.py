@@ -82,14 +82,14 @@ class PretrainDataset(Dataset):
 
         if mode == 'train':
             self.transform = transforms.Compose([
-                # transforms.ToTensor(),
-                # transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
-                # transforms.RandomInvert(p=.3),
+                transforms.ToTensor(),
+                transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
+                transforms.RandomInvert(p=.3),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
         else:
             self.transform = transforms.Compose([
-                # transforms.ToTensor(),
+                transforms.ToTensor(),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
 
@@ -118,10 +118,12 @@ class PretrainDataset(Dataset):
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
 
-        imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
-        imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
-        imgs1 = self.transform(imgs1)
-        imgs2 = self.transform(imgs2)
+        # imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
+        # imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
+        # imgs1 = self.transform(imgs1)
+        # imgs2 = self.transform(imgs2)
+        imgs1 = torch.stack([self.transform(image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
+        imgs2 = torch.stack([self.transform(image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
 
 
         obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0)).to(torch.float32)
