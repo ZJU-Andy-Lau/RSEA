@@ -202,15 +202,8 @@ def pretrain(args):
 
             # print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
             
-            output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idxs[0].item()}')
-            output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idxs[0].item()}')
-            
-            encoder_optimizer.zero_grad()
-            for idx in dataset_idxs:
-                decoder = decoders[idx]
-                decoder.train()
-                decoder_optimizer = optimizers[idx]
-                decoder_optimizer.zero_grad()
+            # output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idxs[0].item()}')
+            # output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idxs[0].item()}')
             
             # if args.use_gpu:
             #     img1 = img1.cuda().contiguous()
@@ -223,6 +216,10 @@ def pretrain(args):
             obj = obj.cuda()
             residual1 = residual1.cuda()
             residual2 = residual2.cuda()
+
+            for idx in dataset_idxs:
+                decoder = decoders[idx]
+                decoder.train()
             # print(f"\n2---------debug:{dist.get_rank()}\n")
             with autocast():
                 feat1,conf1 = encoder(img1)
@@ -317,7 +314,11 @@ def pretrain(args):
 
                 loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) + dummy_loss
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
-
+            
+            encoder_optimizer.zero_grad()
+            for idx in dataset_idxs:
+                decoder_optimizer = optimizers[idx]
+                decoder_optimizer.zero_grad()
             # loss.backward()
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
