@@ -196,6 +196,8 @@ def pretrain(args):
             img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
             img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,H,W,-1)
+            print(obj.shape)
+            print(obj)
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
 
