@@ -200,10 +200,10 @@ def pretrain(args):
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
 
-            print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows_{windows}")
+            print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
             
-            output_img(img1,'./img_check',f'img1_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
-            output_img(img2,'./img_check',f'img2_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
+            output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idxs[0].item()}')
+            output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idxs[0].item()}')
             
             encoder_optimizer.zero_grad()
             for idx in dataset_idxs:
