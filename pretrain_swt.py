@@ -234,7 +234,11 @@ def pretrain(args):
                 pred_skip_2_P3 = []
                 
                 for n,idx in enumerate(dataset_idxs):
+                    if rank == 6:
+                        print(f"debug-------------s") 
                     decoder = decoders[idx]
+                    if rank == 6:
+                        print(f"debug-------------0") 
                     output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
                     if rank == 6:
                         print(f"debug-------------1") 
