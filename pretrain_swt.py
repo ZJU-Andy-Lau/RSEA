@@ -185,8 +185,8 @@ def pretrain(args):
         count = 0
         encoder.train()
         dist.barrier()
-        for data_batch_idx,data,windows in enumerate(dataloader):
-            img1,img2,obj,residual1,residual2,dataset_idxs = data
+        for data_batch_idx,data in enumerate(dataloader):
+            img1,img2,obj,residual1,residual2,dataset_idxs,windows = data
             N,B,H,W = obj.shape[:4]
             # print("===========================================Debug Info===========================================")
             # print(f"rank:{rank}")
