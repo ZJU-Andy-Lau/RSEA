@@ -441,7 +441,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_decoder_max',type=float,default=1e-2) #1e-3
+    parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
