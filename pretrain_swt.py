@@ -294,7 +294,7 @@ def pretrain(args):
                 # print(f"\n3---------debug:{dist.get_rank()}\n")
 
             if rank == 0:
-                print(torch.stack([pred1_P3,pred2_P3,obj],dim=-2))
+                print(torch.stack([pred1_P3,pred2_P3,obj_P3],dim=1))
 
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
