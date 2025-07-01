@@ -360,7 +360,8 @@ def pretrain(args):
             dist.all_reduce(loss_conf_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_feat_rec,dist.ReduceOp.AVG)
             dist.all_reduce(conf_mean,dist.ReduceOp.AVG)
-            
+            dist.barrier()
+
             if dist.get_rank() == 0:
                 curtime = time.perf_counter()
                 curstep = epoch * data_batch_num + count
@@ -445,7 +446,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_decoder_max',type=float,default=1e-4) #1e-3
+    parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
