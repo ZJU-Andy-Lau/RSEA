@@ -26,6 +26,7 @@ warnings.filterwarnings("ignore")
 from scheduler import MultiStageOneCycleLR
 
 from functools import partial
+import cv2
 
 def print_on_main(msg, rank):
     if rank == 0:
@@ -71,6 +72,12 @@ def warp_by_bbox(raw,bbox):
 def distibute_model(model:nn.Module,local_rank):
     model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False)
     return model
+
+def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
+    os.makedirs(output_path,exist_ok=True)
+    for idx,img in enumerate(imgs_raw):
+        img = img.permute(1,2,0).cpu().numpy()
+        cv2.imwrite(f'{output_path}/{name}_{idx}.png',img)
 
 def pretrain(args):
     pprint = partial(print_on_main, rank=dist.get_rank())
@@ -180,16 +187,20 @@ def pretrain(args):
         for data_batch_idx,data in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
             N,B,H,W = obj.shape[:4]
-            print("===========================================Debug Info===========================================")
-            print(f"rank:{rank}")
-            print(N,B,H,W)
-            print(dataset_idxs)
-            print("================================================================================================")
+            # print("===========================================Debug Info===========================================")
+            # print(f"rank:{rank}")
+            # print(N,B,H,W)
+            # print(dataset_idxs)
+            # print("================================================================================================")
+            
             img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
             img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
             obj = obj.reshape(N*B,H,W,-1)
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
+            
+            output_img(img1,'./img_check',f'img1_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
+            output_img(img2,'./img_check',f'img2_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
             
             encoder_optimizer.zero_grad()
             for idx in dataset_idxs:
