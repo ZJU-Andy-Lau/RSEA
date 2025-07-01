@@ -92,7 +92,7 @@ def pretrain(args):
                               input_size = 1024,
                               mode='train')
     sampler = DistributedSampler(dataset)
-    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=4,drop_last=False,pin_memory=True)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=16,drop_last=False,pin_memory=True)
     dataset_num = dataset.dataset_num
     data_batch_num = len(dataloader)
     pprint("Building Encoder")
@@ -114,7 +114,7 @@ def pretrain(args):
                                              steps_per_epoch=data_batch_num,
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
-                                             gamma=.63 ** (1. / (50 * data_batch_num)),
+                                             gamma=.63 ** (1. / (100 * data_batch_num)),
                                              pct_start=200. / args.max_epoch)
     
 
@@ -155,7 +155,7 @@ def pretrain(args):
                                             steps_per_epoch=1,
                                             n_epochs_per_stage=args.max_epoch,
                                             summit_hold=0,
-                                            gamma=.63 ** (1. / 30),
+                                            gamma=.63 ** (1. / 100),
                                             pct_start=50. / args.max_epoch)
         optimizers.append(optimizer)
         schedulers.append(scheduler)
@@ -443,9 +443,9 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu',type=bool,default=True)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_encoder_max',type=float,default=1e-4)
+    parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
+    parser.add_argument('--lr_decoder_max',type=float,default=1e-4) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
