@@ -137,5 +137,5 @@ class PretrainDataset(Dataset):
 
         # print(t1 - t0, t2 - t1)
         
-        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index)
+        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index),torch.from_numpy(windows)
 

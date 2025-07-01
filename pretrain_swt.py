@@ -185,7 +185,7 @@ def pretrain(args):
         count = 0
         encoder.train()
         dist.barrier()
-        for data_batch_idx,data in enumerate(dataloader):
+        for data_batch_idx,data,windows in enumerate(dataloader):
             img1,img2,obj,residual1,residual2,dataset_idxs = data
             N,B,H,W = obj.shape[:4]
             # print("===========================================Debug Info===========================================")
@@ -199,6 +199,8 @@ def pretrain(args):
             obj = obj.reshape(N*B,H,W,-1)
             residual1 = residual1.reshape(N*B,H,W)
             residual2 = residual2.reshape(N*B,H,W)
+
+            print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows_{windows}")
             
             output_img(img1,'./img_check',f'img1_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
             output_img(img2,'./img_check',f'img2_epoch_{epoch}_rank_{rank}_idx_{dataset_idxs[0].item()}')
