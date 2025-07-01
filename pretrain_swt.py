@@ -237,7 +237,7 @@ def pretrain(args):
                     decoder = decoders[idx]
                     if rank == 6:
                         print("=================================Debug Info=================================")
-                        print(f"n:{n} \t idx:{idx} \t dataset_idxs:{dataset_idxs.item()}")
+                        print(f"n:{n} \t idx:{idx} \t B:{B} \t dataset_idxs:{dataset_idxs.item()}")
                         print(f"feat_input1.shape:{feat_input1.shape} \t isnan:{torch.isnan(feat_input1).any()} \t isinf:{torch.isinf(feat_input1).any()}")
                         print(f"decoder: \n{decoder}")
                         print("============================================================================")
