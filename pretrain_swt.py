@@ -293,6 +293,9 @@ def pretrain(args):
             conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
                 # print(f"\n3---------debug:{dist.get_rank()}\n")
 
+            if rank == 0:
+                print(torch.stack([pred1_P3,pred2_P3,obj],dim=-2))
+
             loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
                                                                                 pred1_P3,pred2_P3,
