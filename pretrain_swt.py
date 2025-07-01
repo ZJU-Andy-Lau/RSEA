@@ -210,11 +210,11 @@ def pretrain(args):
             #     obj = obj.cuda()
             #     residual1 = residual1.cuda()
             #     residual2 = residual2.cuda()
-            img1 = img1.cuda()
-            img2 = img2.cuda()
-            obj = obj.cuda()
-            residual1 = residual1.cuda()
-            residual2 = residual2.cuda()
+            img1 = img1.to(args.local_rank)
+            img2 = img2.to(args.local_rank)
+            obj = obj.to(args.local_rank)
+            residual1 = residual1.to(args.local_rank)
+            residual2 = residual2.to(args.local_rank)
 
             for idx in dataset_idxs:
                 decoder = decoders[idx]
@@ -231,14 +231,14 @@ def pretrain(args):
                 project_feat1 = projector(patch_feat1)
                 project_feat2 = projector(patch_feat2)
 
-                patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).cuda() * .3
-                patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).cuda() * .3
-                global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).cuda() * .8
-                global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).cuda() * .8
-                patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).cuda() * patch_feat_noise_amp1
-                patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).cuda() * patch_feat_noise_amp2
-                global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).cuda() * global_feat_noise_amp1
-                global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).cuda() * global_feat_noise_amp2
+                patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.local_rank) * .3
+                patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.local_rank) * .3
+                global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.local_rank) * .8
+                global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.local_rank) * .8
+                patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp1
+                patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp2
+                global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.local_rank) * global_feat_noise_amp1
+                global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.local_rank) * global_feat_noise_amp2
 
                 feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
                 feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
@@ -258,24 +258,24 @@ def pretrain(args):
                     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
                     
 
-                    # decoder.requires_grad_(False)
-                    # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
-                    # output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
-                    # output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
-                    # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
-                    # decoder.requires_grad_(True)
+                    decoder.requires_grad_(False)
+                    output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
+                    output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
+                    output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
+                    output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
+                    decoder.requires_grad_(True)
                     
                     obj_bbox = dataset.obj_bboxs[idx]
 
                     pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
                     pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
-                    # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
-                    # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+                    pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
+                    pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
                 
                 pred1_P3 = torch.concatenate(pred1_P3,dim=0)
                 pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-                # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
-                # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
+                pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
+                pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
                 # print("1:",torch.isnan(pred1_P3).any() & torch.isnan(pred2_P3).any() & torch.isnan(pred_skip_1_P3).any() & torch.isnan(pred_skip_2_P3).any())
 
@@ -298,8 +298,8 @@ def pretrain(args):
                                                                                     H,W)
 
                     
-                # loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
-                loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+                loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
+                # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
 
                 dummy_loss = 0.0
                 dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
