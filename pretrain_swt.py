@@ -283,8 +283,8 @@ def pretrain(args):
                 loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
                         
                 if torch.isnan(loss_feat):
-                    pprint("nan feat loss,continue")
-                    continue
+                    print(f"nan feat loss in rank{dist.get_rank()},exit")
+                    exit()
 
                 loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.)
                 print(f"\n4---------debug:{dist.get_rank()}\n")
@@ -293,6 +293,9 @@ def pretrain(args):
             # encoder_optimizer.step()
             # for idx in dataset_idxs:
             #     optimizers[idx].step()
+
+            if dist.get_rank() == 6 or dist.get_rank() == 0:
+                print(f"loss of rank {dist.get_rank()} : {loss.item()}")
             
             scaler.scale(loss).backward()
             print(f"\n5---------debug:{dist.get_rank()}\n")
