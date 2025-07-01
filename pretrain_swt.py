@@ -164,7 +164,7 @@ def pretrain(args):
     
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
-        pprint(f'Epoch:{epoch}')
+        pprint(f'\nEpoch:{epoch}')
         # print(f"\n1---------debug:{dist.get_rank()}\n")
         sampler.set_epoch(epoch)
         # valid(epoch)
