@@ -420,7 +420,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu',type=bool,default=True)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_encoder_max',type=float,default=1e-4)
+    parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
