@@ -204,6 +204,7 @@ class Decoder(nn.Module):
         # if self.use_bn:
         #     res = self.bn(res)
         rank = dist.get_rank()
+        print(f"decoder rank = {rank}")
         if rank == 6:
             print("===============================Inside Decoder===============================")
         for block in self.blocks:
