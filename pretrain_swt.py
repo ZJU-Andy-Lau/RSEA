@@ -70,7 +70,7 @@ def warp_by_bbox(raw,bbox):
     return warped
 
 def distibute_model(model:nn.Module,local_rank):
-    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False)
+    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False,find_unused_parameters=True)
     return model
 
 def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
@@ -91,8 +91,8 @@ def pretrain(args):
                               downsample = 16,
                               input_size = 1024,
                               mode='train')
-    sampler = DistributedSampler(dataset)
-    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=16,drop_last=False,pin_memory=True)
+    sampler = DistributedSampler(dataset,shuffle=True)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=16,drop_last=False,pin_memory=True,shuffle=False)
     dataset_num = dataset.dataset_num
     data_batch_num = len(dataloader)
     pprint("Building Encoder")
@@ -210,11 +210,15 @@ def pretrain(args):
             #     obj = obj.cuda()
             #     residual1 = residual1.cuda()
             #     residual2 = residual2.cuda()
-            img1 = img1.to(args.local_rank)
-            img2 = img2.to(args.local_rank)
-            obj = obj.to(args.local_rank)
-            residual1 = residual1.to(args.local_rank)
-            residual2 = residual2.to(args.local_rank)
+            img1 = img1.to(args.device)
+            img2 = img2.to(args.device)
+            obj = obj.to(args.device)
+            residual1 = residual1.to(args.device)
+            residual2 = residual2.to(args.device)
+
+            encoder_optimizer.zero_grad()
+            for optimizer in optimizers:
+                optimizer.zero_grad()
 
             for idx in dataset_idxs:
                 decoder = decoders[idx]
@@ -231,14 +235,14 @@ def pretrain(args):
             project_feat1 = projector(patch_feat1)
             project_feat2 = projector(patch_feat2)
 
-            patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.local_rank) * .3
-            patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.local_rank) * .3
-            global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.local_rank) * .8
-            global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.local_rank) * .8
-            patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp1
-            patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.local_rank) * patch_feat_noise_amp2
-            global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.local_rank) * global_feat_noise_amp1
-            global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.local_rank) * global_feat_noise_amp2
+            patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
+            patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
+            global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
+            global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
+            patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
+            patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
+            global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
+            global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
 
             feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
             feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
@@ -301,28 +305,21 @@ def pretrain(args):
             loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
             # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
 
-            dummy_loss = 0.0
-            dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
-            for decoder in decoders:
-                dummy_output = decoder(dummy_input)
-                dummy_loss = dummy_loss + dummy_output.sum() * 0.0
+            # dummy_loss = 0.0
+            # dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
+            # for decoder in decoders:
+            #     dummy_output = decoder(dummy_input)
+            #     dummy_loss = dummy_loss + dummy_output.sum() * 0.0
                     
             if torch.isnan(loss_feat):
                 print(f"nan feat loss in rank{dist.get_rank()},exit")
                 exit()
 
-            loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) + dummy_loss
+            loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) #+ dummy_loss
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
-            
-            encoder_optimizer.zero_grad()
-            for optimizer in optimizers:
-                optimizer.zero_grad()
-            dist.barrier()
             
             loss.backward()
             # scaler.scale(loss).backward()
-
-            dist.barrier()
 
             encoder_optimizer.step()
             for idx in dataset_idxs:
@@ -444,7 +441,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
+    parser.add_argument('--lr_decoder_max',type=float,default=1e-2) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
@@ -468,6 +465,10 @@ if __name__ == '__main__':
 
     if not os.path.exists(args.decoder_output_path):
         os.mkdir(args.decoder_output_path)
+
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
 
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
