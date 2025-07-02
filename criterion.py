@@ -148,8 +148,6 @@ def detect_nan(items:list):
 class CriterionFinetuneNormal(nn.Module):
     def __init__(self):
         super().__init__()
-        self.residual_thresholds = 5.
-        self.gamma = .05
         self.bce = nn.BCELoss()
 
     def forward(self,epoch,
@@ -169,16 +167,11 @@ class CriterionFinetuneNormal(nn.Module):
         # print("2-2:",detect_nan([feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P]))
 
         P = H*W
-        robust_mask = (residual1_P <= self.residual_thresholds) & (residual2_P <= self.residual_thresholds)
-        if robust_mask.sum() == 0:
-            print("all res nan")
-            exit()
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[torch.cat([residual1_P,residual2_P]) >= 0])
-
-        self.residual_thresholds = (1. - self.gamma) * self.residual_thresholds + self.gamma * res_mid
-
-        conf1_gt_P = residual2conf(residual1_P,self.residual_thresholds)
-        conf2_gt_P = residual2conf(residual2_P,self.residual_thresholds)
+        residual_threshold = res_mid
+        robust_mask = (residual1_P <= residual_threshold) & (residual2_P <= residual_threshold)
+        conf1_gt_P = residual2conf(residual1_P,residual_threshold)
+        conf2_gt_P = residual2conf(residual2_P,residual_threshold)
         
 
         conf_valid1 = residual1_P >= 0
@@ -208,7 +201,7 @@ class CriterionFinetuneNormal(nn.Module):
 
         loss = loss_obj + loss_height + loss_conf + loss_feat
 
-        return loss,loss_obj,loss_height,loss_conf,loss_feat,self.residual_thresholds 
+        return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold
         
 class CriterionFinetuneDis(nn.Module):
     def __init__(self):
@@ -217,12 +210,12 @@ class CriterionFinetuneDis(nn.Module):
     def forward(self,
                 pred1_P3,pred2_P3,
                 residual1_P,residual2_P,
-                residual_thresholds,
+                residual_threshold,
                 ):
         # print("5-1:",detect_nan([pred1_P3,pred2_P3,residual1_P,residual2_P]))
         pred1_P3,pred2_P3,residual1_P,residual2_P = \
            pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
-        robust_mask = (residual1_P <= residual_thresholds) & (residual2_P <= residual_thresholds)
+        robust_mask = (residual1_P <= residual_threshold) & (residual2_P <= residual_threshold)
 
         dis_obj = torch.norm(pred1_P3[robust_mask,:2] - pred2_P3[robust_mask,:2],dim=-1)
         dis_height = torch.abs(pred1_P3[robust_mask,2] - pred2_P3[robust_mask,2]) * 100
