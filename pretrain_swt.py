@@ -274,7 +274,6 @@ def pretrain(args):
 
                 print(obj.shape)
                 print("bbox:",obj_bbox)
-                print(obj)
 
                 pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
                 pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
@@ -283,6 +282,7 @@ def pretrain(args):
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+            print(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1))
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 

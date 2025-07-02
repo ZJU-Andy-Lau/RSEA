@@ -163,7 +163,7 @@ class ProjectHead(nn.Module):
             nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
         )
     def forward(self,x):
-        return self.head(x)
+        return F.normalize(self.head(x),p=2,dim=1)
 
 
 class Decoder(nn.Module):
