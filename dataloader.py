@@ -49,6 +49,14 @@ def centerize_obj(obj:np.ndarray):
     y = y - (y.max() + y.min()) * .5
     return np.stack([x,y,h],axis=-1)
 
+def get_map_coef(target:np.ndarray,bins=1000,deg=20):
+    src = np.linspace(0,1,bins)
+    tgt = np.quantile(target,src)
+    src = 2. * src - 1. # (0,1) -> (-1,1)
+    coefs = np.polyfit(src,tgt,deg = deg)
+    return coefs
+
+
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
         super().__init__()
@@ -68,19 +76,16 @@ class PretrainDataset(Dataset):
         self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
         self.batch_size = batch_size
-        self.obj_bboxs = []
+        self.obj_map_coefs = []
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
         for key in tqdm(self.database_keys):
             obj = centerize_obj(self.database[key]['obj'][:])
-            self.obj_bboxs.append({
-                'x_min':obj[:,:,0].min(),
-                'x_max':obj[:,:,0].max(),
-                'y_min':obj[:,:,1].min(),
-                'y_max':obj[:,:,1].max(),
-                'h_min':obj[:,:,2].mean() - obj[:,:,2].std(),
-                'h_max':obj[:,:,2].mean() + obj[:,:,2].std(),
+            self.obj_map_coefs.append({
+                'x':get_map_coef(obj[:,:,0]),
+                'y':get_map_coef(obj[:,:,1]),
+                'h':get_map_coef(obj[:,:,2])
             })
 
         if mode == 'train':

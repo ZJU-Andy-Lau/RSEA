@@ -58,14 +58,19 @@ cfg_large = {
         'pretrain_window_size':[12, 12, 12],
         'unfreeze_backbone_modules':['head','norm','layers.2.blocks.14','layers.2.blocks.15','layers.2.blocks.16','layers.2.blocks.17']
     }
+def apply_polynomial(x, coefs):
+    y = torch.zeros_like(x)
+    for i, c in enumerate(coefs):
+        y = y + c * (x ** (len(coefs) - 1 - i))
+    return y
 
-def warp_by_bbox(raw,bbox):
+def warp_by_poly(raw,coefs):
     # raw[:,0] = .5 * (raw[:,0] + 1.) * (bbox['x_max'] - bbox['x_min']) + bbox['x_min']
     # raw[:,1] = .5 * (raw[:,1] + 1.) * (bbox['y_max'] - bbox['y_min']) + bbox['y_min']
     # raw[:,2] = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
-    x = .5 * (raw[:,0] + 1.) * (bbox['x_max'] - bbox['x_min']) + bbox['x_min']
-    y = .5 * (raw[:,1] + 1.) * (bbox['y_max'] - bbox['y_min']) + bbox['y_min']
-    h = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
+    x = apply_polynomial(raw[:,0],coefs['x'])
+    y = apply_polynomial(raw[:,1],coefs['y'])
+    h = apply_polynomial(raw[:,2],coefs['h'])
     warped = torch.stack([x,y,h],dim=-1)
     return warped
 
@@ -173,7 +178,7 @@ def pretrain(args):
                                              steps_per_epoch=dataset_num,
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
-                                             gamma=.63 ** (1. / (100 * dataset_num)),
+                                             gamma=.63 ** (1. / (200 * dataset_num)),
                                              pct_start=200. / args.max_epoch)
     
 
@@ -214,8 +219,8 @@ def pretrain(args):
                                             steps_per_epoch=1,
                                             n_epochs_per_stage=args.max_epoch,
                                             summit_hold=0,
-                                            gamma=.63 ** (1. / 100),
-                                            pct_start=50. / args.max_epoch)
+                                            gamma=.63 ** (1. / 200),
+                                            pct_start=100. / args.max_epoch)
         optimizers.append(optimizer)
         schedulers.append(scheduler)
         decoders.append(decoder)
@@ -289,19 +294,19 @@ def pretrain(args):
             project_feat1 = projector(patch_feat1)
             project_feat2 = projector(patch_feat2)
 
-            # patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
-            # patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
-            # global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
-            # global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
-            # patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
-            # patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
-            # global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
-            # global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
+            patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
+            patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
+            global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
+            global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
+            patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
+            patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
+            global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
+            global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
 
-            # feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
-            # feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
-            feat_input1 = feat1
-            feat_input2 = feat2
+            feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
+            feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
+            # feat_input1 = feat1
+            # feat_input2 = feat2
 
             pred1_P3 = []
             pred2_P3 = []
@@ -320,13 +325,13 @@ def pretrain(args):
             # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
             # decoder.requires_grad_(True)
             
-            obj_bbox = dataset.obj_bboxs[dataset_idx]
+            obj_map_coef = dataset.obj_map_coefs[dataset_idx]
 
             # print(obj.shape)
             # print("bbox:",obj_bbox)
 
-            pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
-            pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
+            pred1_P3.append(warp_by_poly(output1_P3,obj_map_coef))
+            pred2_P3.append(warp_by_poly(output2_P3,obj_map_coef))
             # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
             # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
             
@@ -498,7 +503,7 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu',type=bool,default=True)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
-    parser.add_argument('--lr_encoder_max',type=float,default=1e-5)
+    parser.add_argument('--lr_encoder_max',type=float,default=1e-4)
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
