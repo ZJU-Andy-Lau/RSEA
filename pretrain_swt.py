@@ -253,16 +253,16 @@ def pretrain(args):
             residual2 = residual2.squeeze(0).to(args.device)
             B,H,W = obj.shape[:3]
 
-            Info = ""
-            Info += "\n===========================DEBUG INFO===========================\n"
-            Info += f"Rank{dist.get_rank()}\n"
-            Info += f"img shape:{img1.shape}\n"
-            Info += f"obj shape:{obj.shape}\n"
-            Info += f"residual shape:{residual1.shape}\n"
-            Info += f"dataset idx:{dataset_idx}\n"
-            Info += "================================================================\n"
+            # Info = ""
+            # Info += "\n===========================DEBUG INFO===========================\n"
+            # Info += f"Rank{dist.get_rank()}\n"
+            # Info += f"img shape:{img1.shape}\n"
+            # Info += f"obj shape:{obj.shape}\n"
+            # Info += f"residual shape:{residual1.shape}\n"
+            # Info += f"dataset idx:{dataset_idx}\n"
+            # Info += "================================================================\n"
 
-            print(Info)
+            # print(Info)
 
 
             # print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
@@ -332,9 +332,9 @@ def pretrain(args):
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-            print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].detach().cpu().numpy(),2)
-            print_hwc_matrix(obj[0,28:36,28:36].detach().cpu().numpy(),2)
-            print_hwc_matrix(pred1_P3.reshape(obj.shape)[0,28:36,28:36].detach().cpu().numpy(),2)
+            # print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].detach().cpu().numpy(),2)
+            # print_hwc_matrix(obj[0,28:36,28:36].detach().cpu().numpy(),2)
+            # print_hwc_matrix(pred1_P3.reshape(obj.shape)[0,28:36,28:36].detach().cpu().numpy(),2)
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
@@ -423,7 +423,7 @@ def pretrain(args):
                 cost_time = curtime - start_time
                 remain_time = remain_step * cost_time / curstep
 
-                print(f"epoch:{epoch} iter:{iter_idx}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+                print(f"epoch:{epoch} iter:{iter_idx+1}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
 
         for scheduler in schedulers:
