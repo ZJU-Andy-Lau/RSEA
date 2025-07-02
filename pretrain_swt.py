@@ -167,7 +167,7 @@ def pretrain(args):
     encoder = Encoder(cfg)
     projector = ProjectHead(encoder.patch_feature_channels,128)
     if not args.encoder_path is None:
-        encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth')).items()},strict=True)
+        encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth'),map_location='cpu').items()},strict=True)
         pprint('Encoder Loaded')
     os.makedirs(os.path.dirname(args.encoder_output_path),exist_ok=True)
 
@@ -469,7 +469,8 @@ def pretrain(args):
             
             if total_loss_obj < min_loss:
                 min_loss = total_loss_obj
-                torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
+                encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
+                torch.save(encoder_state_dict,os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
                 # torch.save(encoder.state_dict(),args.encoder_output_path)
                 # if not args.freeze_decoder:
                 for dataset_idx in range(dataset_num):
@@ -515,6 +516,7 @@ if __name__ == '__main__':
 
     if args.local_rank != -1:
         torch.cuda.set_device(args.local_rank)
+        torch.cuda.empty_cache()
         args.device=torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend="nccl", init_method='env://')
 
