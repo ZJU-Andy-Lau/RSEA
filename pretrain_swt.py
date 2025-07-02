@@ -322,8 +322,8 @@ def pretrain(args):
             
             obj_bbox = dataset.obj_bboxs[dataset_idx]
 
-            print(obj.shape)
-            print("bbox:",obj_bbox)
+            # print(obj.shape)
+            # print("bbox:",obj_bbox)
 
             pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
             pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
