@@ -194,7 +194,8 @@ class Decoder(nn.Module):
         self.output_height = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
-            nn.Conv2d(in_channels // 16,1,1,1,0)
+            nn.Conv2d(in_channels // 16,1,1,1,0),
+            nn.Tanh()
         )
         # self.bn = bnac(in_channels)
 
@@ -206,8 +207,8 @@ class Decoder(nn.Module):
         for block in self.blocks:
             x = block(res)
             res = res + x
-        xy_res = self.output_xy(res)
-        height_res = self.output_height(res)
+        xy_res = self.output_xy(res) * 1.1
+        height_res = self.output_height(res) * 1.1
         return torch.cat([xy_res,height_res],dim=1)
 
 
