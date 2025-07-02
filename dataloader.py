@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from torch.utils.data import Dataset,DataLoader
+from torch.utils.data import Dataset,DataLoader,Sampler
 import os
 import cv2
 from tqdm import tqdm,trange
@@ -13,6 +13,7 @@ import math
 import time
 import h5py
 import json
+import torch.distributed as dist
    
     
 def residual_average(arr, a):
@@ -68,6 +69,8 @@ class PretrainDataset(Dataset):
         self.input_size = input_size
         self.batch_size = batch_size
         self.obj_bboxs = []
+        self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
 
         for key in tqdm(self.database_keys):
             obj = centerize_obj(self.database[key]['obj'][:])
@@ -98,6 +101,11 @@ class PretrainDataset(Dataset):
         return self.dataset_num
     
     def __getitem__(self, index):
+        seed = index * self.world_size + self.rank
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
         windows = np.concatenate([rows,cols],axis=-1)
@@ -135,3 +143,32 @@ class PretrainDataset(Dataset):
         
         return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index)
 
+
+class ImageSampler(Sampler):
+    """
+    为所有rank提供相同的大图索引序列。
+    确保在每个iteration，所有GPU都在处理同一张大图。
+    """
+    def __init__(self, data_source, shuffle=True):
+        self.data_source = data_source
+        self.shuffle = shuffle
+        self.epoch = 0
+
+    def __iter__(self):
+        n = len(self.data_source)
+        indices = list(range(n))
+        
+        if self.shuffle:
+            # 使用epoch作为种子，确保每个epoch的shuffle顺序不同，
+            # 但在所有进程中给定epoch的shuffle顺序是相同的。
+            g = torch.Generator()
+            g.manual_seed(self.epoch)
+            indices = torch.randperm(n, generator=g).tolist()
+            
+        return iter(indices)
+
+    def __len__(self):
+        return len(self.data_source)
+
+    def set_epoch(self, epoch):
+        self.epoch = epoch

@@ -18,7 +18,7 @@ from tqdm import tqdm,trange
 from skimage.transform import AffineTransform
 from skimage.measure import ransac
 from torch.cuda.amp import autocast, GradScaler
-from dataloader import PretrainDataset
+from dataloader import PretrainDataset,ImageSampler
 from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend
 import random
 import warnings
@@ -128,13 +128,6 @@ def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
 
     # 找到所有字符串化后的元素中的最大长度，用于对齐
     max_len = max([len(s) for row in string_elements for s in row] or [0])
-    
-    # 构造提示信息
-    info = f"一个 {H}x{W} 的矩阵 (每个元素是一个长度为 {C} 的向量"
-    if precision is not None:
-        info += f", 保留{precision}位小数"
-    info += "):"
-    print(info)
 
     # 打印带边框的矩阵
     print("┌" + "─" * (W * (max_len + 2) - 2) + "┐")
@@ -158,10 +151,9 @@ def pretrain(args):
                               downsample = 16,
                               input_size = 1024,
                               mode='train')
-    sampler = DistributedSampler(dataset,shuffle=True)
-    dataloader = DataLoader(dataset,sampler=sampler,batch_size=args.data_batch_size,num_workers=16,drop_last=False,pin_memory=True,shuffle=False)
+    sampler = ImageSampler(dataset,shuffle=True)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
     dataset_num = dataset.dataset_num
-    data_batch_num = len(dataloader)
     pprint("Building Encoder")
 
     cfg = cfg_large
@@ -178,10 +170,10 @@ def pretrain(args):
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
                                              max_lr=args.lr_encoder_max,
-                                             steps_per_epoch=data_batch_num,
+                                             steps_per_epoch=dataset_num,
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
-                                             gamma=.63 ** (1. / (100 * data_batch_num)),
+                                             gamma=.63 ** (1. / (100 * dataset_num)),
                                              pct_start=200. / args.max_epoch)
     
 
@@ -191,7 +183,7 @@ def pretrain(args):
 
     encoder = encoder.to(args.device)
     projector = projector.to(args.device)
-    num_gpus = torch.cuda.device_count()
+    num_gpus = dist.get_world_size()
     pprint(f"Using {num_gpus} GPUS")
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
@@ -251,46 +243,38 @@ def pretrain(args):
         total_loss_feat = 0
         count = 0
         encoder.train()
-        for data_batch_idx,data in enumerate(dataloader):
-            img1,img2,obj,residual1,residual2,dataset_idxs = data
-            N,B,H,W = obj.shape[:4]
-            # print("===========================================Debug Info===========================================")
-            # print(f"rank:{rank}")
-            # print(N,B,H,W)
-            # print(dataset_idxs)
-            # print("================================================================================================")
-            
-            img1 = img1.reshape(N*B,-1,img1.shape[-2],img1.shape[-1])
-            img2 = img2.reshape(N*B,-1,img2.shape[-2],img2.shape[-1])
-            obj = obj.reshape(N*B,H,W,-1)
+        for iter_idx,data in enumerate(dataloader):
+            img1,img2,obj,residual1,residual2,dataset_idx = data
+            dataset_idx = dataset_idx.item()
+            img1 = img1.squeeze(0).to(args.device)
+            img2 = img2.squeeze(0).to(args.device)
+            obj = obj.squeeze(0).to(args.device)
+            residual1 = residual1.squeeze(0).to(args.device)
+            residual2 = residual2.squeeze(0).to(args.device)
+            B,H,W = obj.shape[:3]
 
-            residual1 = residual1.reshape(N*B,H,W)
-            residual2 = residual2.reshape(N*B,H,W)
+            Info = ""
+            Info += "\n===========================DEBUG INFO===========================\n"
+            Info += f"Rank{dist.get_rank()}\n"
+            Info += f"img shape:{img1.shape}\n"
+            Info += f"obj shape:{obj.shape}\n"
+            Info += f"residual shape:{residual1.shape}\n"
+            Info += f"dataset idx:{dataset_idx}\n"
+            Info += "================================================================\n"
+
 
             # print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
             
             # output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idxs[0].item()}')
             # output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idxs[0].item()}')
             
-            # if args.use_gpu:
-            #     img1 = img1.cuda().contiguous()
-            #     img2 = img2.cuda().contiguous()
-            #     obj = obj.cuda()
-            #     residual1 = residual1.cuda()
-            #     residual2 = residual2.cuda()
-            img1 = img1.to(args.device)
-            img2 = img2.to(args.device)
-            obj = obj.to(args.device)
-            residual1 = residual1.to(args.device)
-            residual2 = residual2.to(args.device)
 
+            decoder = decoders[dataset_idx]
+            decoder_optimizer = optimizers[dataset_idx]
+            decoder.train()
             encoder_optimizer.zero_grad()
-            for optimizer in optimizers:
-                optimizer.zero_grad()
+            decoder_optimizer.zero_grad()
 
-            for idx in dataset_idxs:
-                decoder = decoders[idx]
-                decoder.train()
             # print(f"\n2---------debug:{dist.get_rank()}\n")
             # with autocast():
             feat1,conf1 = encoder(img1)
@@ -322,34 +306,33 @@ def pretrain(args):
             pred_skip_1_P3 = []
             pred_skip_2_P3 = []
             
-            for n,idx in enumerate(dataset_idxs):
-                decoder = decoders[idx]
-                output1_B3hw = decoder(feat_input1[n * B : (n+1) * B])
-                output2_B3hw = decoder(feat_input2[n * B : (n+1) * B])
-                output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
-                output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
-                
+            output1_B3hw = decoder(feat_input1)
+            output2_B3hw = decoder(feat_input2)
+            output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
+            output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
 
-                # decoder.requires_grad_(False)
-                # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
-                # output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
-                # output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
-                # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
-                # decoder.requires_grad_(True)
-                
-                obj_bbox = dataset.obj_bboxs[idx]
+            # decoder.requires_grad_(False)
+            # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
+            # output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
+            # output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
+            # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
+            # decoder.requires_grad_(True)
+            
+            obj_bbox = dataset.obj_bboxs[dataset_idx]
 
-                print(obj.shape)
-                print("bbox:",obj_bbox)
+            print(obj.shape)
+            print("bbox:",obj_bbox)
 
-                pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
-                pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
-                # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
-                # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
+            pred1_P3.append(warp_by_bbox(output1_P3,obj_bbox))
+            pred2_P3.append(warp_by_bbox(output2_P3,obj_bbox))
+            # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
+            # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
             print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].detach().cpu().numpy(),2)
+            print_hwc_matrix(obj[0,28:36,28:36].detach().cpu().numpy(),2)
+            print_hwc_matrix(pred1_P3.reshape(obj.shape)[0,28:36,28:36].detach().cpu().numpy(),2)
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
@@ -397,8 +380,7 @@ def pretrain(args):
             # scaler.scale(loss).backward()
 
             encoder_optimizer.step()
-            for idx in dataset_idxs:
-                optimizers[idx].step()
+            decoder_optimizer.step()
             # scaler.step(encoder_optimizer)
             # for idx in dataset_idxs:
             #     scaler.step(optimizers[idx])
@@ -434,12 +416,12 @@ def pretrain(args):
 
             if dist.get_rank() == 0:
                 curtime = time.perf_counter()
-                curstep = epoch * data_batch_num + count
-                remain_step = args.max_epoch  * data_batch_num - curstep
+                curstep = epoch * dataset_num + count
+                remain_step = args.max_epoch  * dataset_num - curstep
                 cost_time = curtime - start_time
                 remain_time = remain_step * cost_time / curstep
 
-                print(f"epoch:{epoch} batch:{data_batch_idx}/{data_batch_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+                print(f"epoch:{epoch} iter:{iter_idx}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
 
         for scheduler in schedulers:
