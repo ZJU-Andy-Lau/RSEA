@@ -262,6 +262,8 @@ def pretrain(args):
             Info += f"dataset idx:{dataset_idx}\n"
             Info += "================================================================\n"
 
+            print(Info)
+
 
             # print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
             
