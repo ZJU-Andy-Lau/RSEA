@@ -349,7 +349,7 @@ def pretrain(args):
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-            print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].cpu().numpy(),2)
+            print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].detach().cpu().numpy(),2)
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
