@@ -282,7 +282,7 @@ def pretrain(args):
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-            print(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1))
+            print(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36])
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
