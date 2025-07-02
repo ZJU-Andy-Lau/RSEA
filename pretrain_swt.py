@@ -80,6 +80,73 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         img = 255 * (img - img.min()) / (img.max() - img.min())
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
+def print_hwc_matrix(matrix: np.ndarray, precision: Optional[int] = None):
+    """
+    将一个形状为 (H, W, C) 的 NumPy 数组在终端中以 H*W 矩阵的格式打印出来。
+    增加了对浮点数格式化的支持。
+
+    Args:
+        matrix (np.ndarray): 一个三维的 NumPy 数组，形状为 (H, W, C)。
+        precision (Optional[int], optional): 
+            当数组是浮点类型时，指定要保留的小数位数。
+            如果为 None，则使用默认的字符串表示。默认为 None。
+    """
+    # 检查输入是否为三维 NumPy 数组
+    if not isinstance(matrix, np.ndarray) or matrix.ndim != 3:
+        print("错误：输入必须是一个三维的 NumPy 数组 (H, W, C)。")
+        return
+
+    # 获取数组的维度
+    H, W, C = matrix.shape
+
+    # 如果数组为空，则不打印
+    if H == 0 or W == 0:
+        print("[]")
+        return
+    
+    string_elements = []
+    for h in range(H):
+        row_elements = []
+        for w in range(W):
+            vector = matrix[h, w]
+            string_element = ""
+            if precision is not None:
+                # 如果指定了精度，对向量中的每个数字进行格式化
+                try:
+                    # 使用 f-string 的嵌套格式化功能
+                    formatted_numbers = [f"{num:.{precision}f}" for num in vector]
+                    string_element = f"[{' '.join(formatted_numbers)}]"
+                except (ValueError, TypeError):
+                    # 如果格式化失败（例如，数组不是数字类型），则退回默认方式
+                    string_element = str(vector)
+            else:
+                # 未指定精度，使用 NumPy 默认的字符串转换
+                string_element = str(vector)
+            
+            row_elements.append(string_element)
+        string_elements.append(row_elements)
+
+    # 找到所有字符串化后的元素中的最大长度，用于对齐
+    max_len = max([len(s) for row in string_elements for s in row] or [0])
+    
+    # 构造提示信息
+    info = f"一个 {H}x{W} 的矩阵 (每个元素是一个长度为 {C} 的向量"
+    if precision is not None:
+        info += f", 保留{precision}位小数"
+    info += "):"
+    print(info)
+
+    # 打印带边框的矩阵
+    print("┌" + "─" * (W * (max_len + 2) - 2) + "┐")
+    for row in string_elements:
+        print("│", end="")
+        for element in row:
+            # 使用 ljust 方法填充空格，使每个元素占据相同的宽度
+            print(f"{element:<{max_len}}", end="  ")
+        print("│")
+    print("└" + "─" * (W * (max_len + 2) - 2) + "┘")
+
+
 def pretrain(args):
     pprint = partial(print_on_main, rank=dist.get_rank())
     pprint("Loading Dataset")
@@ -282,7 +349,7 @@ def pretrain(args):
             
             pred1_P3 = torch.concatenate(pred1_P3,dim=0)
             pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-            print(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36])
+            print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].cpu().numpy(),2)
             # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
             # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
 
