@@ -80,7 +80,7 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         img = 255 * (img - img.min()) / (img.max() - img.min())
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
-def print_hwc_matrix(matrix: np.ndarray, precision: Optional[int] = None):
+def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
     """
     将一个形状为 (H, W, C) 的 NumPy 数组在终端中以 H*W 矩阵的格式打印出来。
     增加了对浮点数格式化的支持。
