@@ -191,9 +191,11 @@ class CriterionFinetune(nn.Module):
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
 
         # print("3:",detect_nan([loss_obj,loss_height]))
-        if overlap1_p.max() > feat1_PD.shape[0] or overlap2_p.max() > feat2_PD.shape[0]:
-            print(f"{overlap1_p.max().item()} \t {overlap2_p.max().item()} \t {feat1_PD.shape[0]} \t {feat2_PD.shape[0]}")
-            exit()
+
+        dis_obj = torch.norm(obj1_P3[overlap1_p] - obj2_P3[overlap2_p],dim=-1)
+        overlap1_p = overlap1_p[dis_obj < 8.]
+        overlap2_p = overlap2_p[dis_obj < 8.]
+        
         feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
         feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
         anchor_robust_mask = robust_mask1[overlap1_p] & robust_mask2[overlap2_p]
