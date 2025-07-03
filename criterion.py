@@ -145,12 +145,6 @@ def detect_nan(items:list):
             return True
     return False
 
-def get_item(src:torch.Tensor,idxs:torch.Tensor,H,W):
-    B = idxs.shape[0]
-    rows = idxs[:,:,0]
-    cols = idxs[:,:,1]
-    indices = torch.arange(B,dtype=torch.long,device=src.device).view(B,1) * H * W + rows * W + cols
-    return src[indices].flatten(0,1)
 
 
 
@@ -165,7 +159,7 @@ class CriterionFinetune(nn.Module):
                 conf1_P,conf2_P,
                 obj1_P3,obj2_P3,
                 residual1_P,residual2_P,
-                overlap1_Bp2,overlap2_Bp2,
+                overlap1_p,overlap2_p,
                 H,W
                 ):
         
@@ -198,14 +192,14 @@ class CriterionFinetune(nn.Module):
 
         # print("3:",detect_nan([loss_obj,loss_height]))
 
-        feat1_anchor = get_item(F.normalize(feat1_PD,dim=1),overlap1_Bp2,H,W)
-        feat2_anchor = get_item(F.normalize(feat2_PD,dim=1),overlap2_Bp2,H,W)
-        anchor_robust_mask1 = get_item(robust_mask1,overlap1_Bp2,H,W)
-        anchor_robust_mask2 = get_item(robust_mask2,overlap2_Bp2,H,W)
-        pred1_anchor = get_item(pred1_P3,overlap1_Bp2,H,W)
-        pred2_anchor = get_item(pred2_P3,overlap2_Bp2,H,W)
-        obj1_anchor = get_item(obj1_P3,overlap1_Bp2,H,W)
-        obj2_anchor = get_item(obj2_P3,overlap2_Bp2,H,W)
+        feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
+        feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
+        anchor_robust_mask1 = robust_mask1[overlap1_p]
+        anchor_robust_mask2 = robust_mask2[overlap2_p]
+        pred1_anchor = pred1_P3[overlap1_p]
+        pred2_anchor = pred2_P3[overlap2_p]
+        obj1_anchor = obj1_P3[overlap1_p]
+        obj2_anchor = obj2_P3[overlap2_p]
 
         shift_amount1 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
         shift_amount2 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()

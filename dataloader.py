@@ -154,6 +154,7 @@ class PretrainDataset(Dataset):
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
+        ds_size = self.input_size // self.DOWNSAMPLE
 
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
@@ -162,17 +163,21 @@ class PretrainDataset(Dataset):
         overlaps_1 = []
         overlaps_2 = []
 
-        for window in windows_1:
+        for b,window in enumerate(windows_1):
             row = np.random.randint(low = max(window[0] - self.input_size // 2,0),high = min(window[0] + self.input_size // 2, self.img_size - self.input_size))
             col = np.random.randint(low = max(window[1] - self.input_size // 2,0),high = min(window[1] + self.input_size // 2, self.img_size - self.input_size))
             windows_2.append(np.array([row,col]))
             overlap_1,overlap_2 = get_overlap(window,(row,col),self.input_size,16)
-            overlaps_1.append(overlap_1.reshape(-1,2))
-            overlaps_2.append(overlap_2.reshape(-1,2))
+            overlap_1 = overlap_1.reshape(-1,2)
+            overlap_2 = overlap_2.reshape(-1,2)
+            indices_1 = b * ds_size * ds_size + overlap_1[:,0] * ds_size + overlap_1[:,1]
+            indices_2 = b * ds_size * ds_size + overlap_2[:,0] * ds_size + overlap_2[:,1]
+            overlaps_1.append(indices_1)
+            overlaps_2.append(indices_2)
         
         windows_2 = np.stack(windows_2,axis=0)
-        overlaps_1 = np.stack(overlaps_1,axis=0) # B,h*w,2
-        overlaps_2 = np.stack(overlaps_2,axis=0)
+        overlaps_1 = np.concatenate(overlaps_1,axis=0) # N
+        overlaps_2 = np.concatenate(overlaps_2,axis=0)
 
         key = self.database_keys[index]
         image_1_full = self.database[key]['image_1'][:]
