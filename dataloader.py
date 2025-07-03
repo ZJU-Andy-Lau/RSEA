@@ -78,10 +78,10 @@ def get_overlap(tl1,tl2,size,ds = 16):
     local_overlap_bottom = overlap_bottom - tl1_row
     local_overlap_right = overlap_right - tl1_col
     
-    p1_row_start = int(np.round(local_overlap_top / ds))
-    p1_row_end = int(np.round((local_overlap_bottom - 1) / ds))
-    p1_col_start = int(np.round(local_overlap_left / ds))
-    p1_col_end = int(np.round((local_overlap_right - 1) / ds))
+    p1_row_start = int(local_overlap_top / ds)
+    p1_row_end = int((local_overlap_bottom - 1) / ds)
+    p1_col_start = int(local_overlap_left / ds)
+    p1_col_end = int((local_overlap_right - 1) / ds)
 
     if p1_row_start > p1_row_end or p1_col_start > p1_col_end:
          return np.empty((0, 0, 2), dtype=int), np.empty((0, 0, 2), dtype=int)
