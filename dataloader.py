@@ -59,7 +59,7 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
     return coefs
 
 def get_overlap(tl1,tl2,size,ds = 16):
-    max_idx = int(np.round((size - 1) / ds))
+    max_idx = size // ds
 
     tl1_row, tl1_col = tl1
     tl2_row, tl2_col = tl2
@@ -98,11 +98,11 @@ def get_overlap(tl1,tl2,size,ds = 16):
     cols2 = np.round((cols1 * ds + offset_col) / ds).astype(int)
     candidate_overlap_2 = np.stack((rows2, cols2), axis=-1)
     
-    mask1 = (candidate_overlap_1[..., 0] >= 0) & (candidate_overlap_1[..., 0] <= max_idx) & \
-            (candidate_overlap_1[..., 1] >= 0) & (candidate_overlap_1[..., 1] <= max_idx)
+    mask1 = (candidate_overlap_1[..., 0] >= 0) & (candidate_overlap_1[..., 0] < max_idx) & \
+            (candidate_overlap_1[..., 1] >= 0) & (candidate_overlap_1[..., 1] < max_idx)
 
-    mask2 = (candidate_overlap_2[..., 0] >= 0) & (candidate_overlap_2[..., 0] <= max_idx) & \
-            (candidate_overlap_2[..., 1] >= 0) & (candidate_overlap_2[..., 1] <= max_idx)
+    mask2 = (candidate_overlap_2[..., 0] >= 0) & (candidate_overlap_2[..., 0] < max_idx) & \
+            (candidate_overlap_2[..., 1] >= 0) & (candidate_overlap_2[..., 1] < max_idx)
 
     valid_mask = mask1 & mask2
 
