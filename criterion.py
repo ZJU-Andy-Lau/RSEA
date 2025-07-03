@@ -193,8 +193,7 @@ class CriterionFinetune(nn.Module):
         # print("3:",detect_nan([loss_obj,loss_height]))
         feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
         feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
-        anchor_robust_mask1 = robust_mask1[overlap1_p]
-        anchor_robust_mask2 = robust_mask2[overlap2_p]
+        anchor_robust_mask = robust_mask1[overlap1_p] & robust_mask2[overlap2_p]
         pred1_anchor = pred1_P3[overlap1_p]
         pred2_anchor = pred2_P3[overlap2_p]
         obj1_anchor = obj1_P3[overlap1_p]
@@ -205,18 +204,18 @@ class CriterionFinetune(nn.Module):
         feat1_negative = torch.roll(feat1_PD,shift_amount1)[:feat1_anchor.shape[0]]
         feat2_negative = torch.roll(feat2_PD,shift_amount2)[:feat2_anchor.shape[0]]
 
-        simi_positive = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask1] * feat2_anchor[anchor_robust_mask2],dim=1),
-                                           torch.sum(feat2_anchor[anchor_robust_mask2] * feat1_anchor[anchor_robust_mask1],dim=1)])
-        simi_negative = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask1] * feat1_negative[anchor_robust_mask1],dim=1),
-                                           torch.sum(feat2_anchor[anchor_robust_mask2] * feat2_negative[anchor_robust_mask2],dim=1)])
+        simi_positive = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask] * feat2_anchor[anchor_robust_mask],dim=1),
+                                           torch.sum(feat2_anchor[anchor_robust_mask] * feat1_anchor[anchor_robust_mask],dim=1)])
+        simi_negative = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask] * feat1_negative[anchor_robust_mask],dim=1),
+                                           torch.sum(feat2_anchor[anchor_robust_mask] * feat2_negative[anchor_robust_mask],dim=1)])
         
         # print("4:",detect_nan([simi_positive,simi_negative]))
         loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - 7.,min=0).mean() * 10000.
 
-        dis_obj_gt = torch.norm(obj1_anchor[anchor_robust_mask1,:2] - obj2_anchor[anchor_robust_mask2,:2],dim=-1)
-        dis_height_gt = torch.abs(obj1_anchor[anchor_robust_mask1,2] - obj2_anchor[anchor_robust_mask2,2])
-        dis_obj_pred = torch.norm(pred1_anchor[anchor_robust_mask1,:2] - pred2_anchor[anchor_robust_mask2,:2],dim=-1)
-        dis_height_pred = torch.abs(pred1_anchor[anchor_robust_mask1,2] - pred2_anchor[anchor_robust_mask2,2]) * 100.
+        dis_obj_gt = torch.norm(obj1_anchor[anchor_robust_mask,:2] - obj2_anchor[anchor_robust_mask,:2],dim=-1)
+        dis_height_gt = torch.abs(obj1_anchor[anchor_robust_mask,2] - obj2_anchor[anchor_robust_mask,2])
+        dis_obj_pred = torch.norm(pred1_anchor[anchor_robust_mask,:2] - pred2_anchor[anchor_robust_mask,:2],dim=-1)
+        dis_height_pred = torch.abs(pred1_anchor[anchor_robust_mask,2] - pred2_anchor[anchor_robust_mask,2]) * 100.
         loss_dis = torch.abs(dis_obj_pred - dis_obj_gt).mean() + torch.abs(dis_height_pred - dis_height_gt).mean()
 
         print(f"dis_obj_gt:{dis_obj_gt.min().item()} \t {dis_obj_gt.max().item()} \t {dis_obj_gt.mean().item()}")

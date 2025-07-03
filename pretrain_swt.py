@@ -75,7 +75,7 @@ def warp_by_poly(raw,coefs):
     return warped
 
 def distibute_model(model:nn.Module,local_rank):
-    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False,find_unused_parameters=True)
+    model = DistributedDataParallel(model,device_ids=[local_rank],output_device=local_rank,broadcast_buffers=False)
     return model
 
 def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
