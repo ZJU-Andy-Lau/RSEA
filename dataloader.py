@@ -50,12 +50,56 @@ def centerize_obj(obj:np.ndarray):
     return np.stack([x,y,h],axis=-1)
 
 def get_map_coef(target:np.ndarray,bins=1000,deg=20):
+    extend_bins = int(bins * 0.1)
     src = np.linspace(0,1,bins)
     tgt = np.quantile(target,src)
-    src = 2. * src - 1. # (0,1) -> (-1,1)
+    tgt = np.concatenate([2 * tgt[0] - tgt[:extend_bins][::-1],tgt,2 * tgt[-1] - tgt[-extend_bins:][::-1]],axis=0)
+    src = np.linspace(-1,1,bins + 2 * extend_bins)
     coefs = np.polyfit(src,tgt,deg = deg)
     return coefs
 
+def get_overlap(tl1,tl2,size,ds = 16):
+    tl1_row, tl1_col = tl1
+    tl2_row, tl2_col = tl2
+
+    br1_row, br1_col = tl1_row + size, tl1_col + size
+    br2_row, br2_col = tl2_row + size, tl2_col + size
+
+    overlap_top = max(tl1_row, tl2_row)
+    overlap_left = max(tl1_col, tl2_col)
+    overlap_bottom = min(br1_row, br2_row)
+    overlap_right = min(br1_col, br2_col)
+
+    if overlap_top >= overlap_bottom or overlap_left >= overlap_right:
+        return np.empty((0, 0, 2), dtype=int), np.empty((0, 0, 2), dtype=int)
+
+    local_overlap_top = overlap_top - tl1_row
+    local_overlap_left = overlap_left - tl1_col
+    local_overlap_bottom = overlap_bottom - tl1_row
+    local_overlap_right = overlap_right - tl1_col
+    
+    p1_row_start = int(np.round(local_overlap_top / ds))
+    p1_row_end = int(np.round((local_overlap_bottom - 1) / ds))
+    p1_col_start = int(np.round(local_overlap_left / ds))
+    p1_col_end = int(np.round((local_overlap_right - 1) / ds))
+
+    if p1_row_start > p1_row_end or p1_col_start > p1_col_end:
+         return np.empty((0, 0, 2), dtype=int), np.empty((0, 0, 2), dtype=int)
+
+    rows1, cols1 = np.mgrid[p1_row_start : p1_row_end + 1, 
+                            p1_col_start : p1_col_end + 1]
+    
+    overlap_1 = np.stack((rows1, cols1), axis=-1)
+
+    offset_row = tl1_row - tl2_row
+    offset_col = tl1_col - tl2_col
+
+    rows2 = np.round((rows1 * ds + offset_row) / ds).astype(int)
+    cols2 = np.round((cols1 * ds + offset_col) / ds).astype(int)
+
+    overlap_2 = np.stack((rows2, cols2), axis=-1)
+
+    return overlap_1, overlap_2
 
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
@@ -113,7 +157,22 @@ class PretrainDataset(Dataset):
 
         rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
         cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
-        windows = np.concatenate([rows,cols],axis=-1)
+        windows_1 = np.concatenate([rows,cols],axis=-1)
+        windows_2 = []
+        overlaps_1 = []
+        overlaps_2 = []
+
+        for window in windows_1:
+            row = np.random.randint(low = max(window[0] - self.input_size // 2,0),high = min(window[0] + self.input_size // 2, self.img_size - self.input_size))
+            col = np.random.randint(low = max(window[1] - self.input_size // 2,0),high = min(window[1] + self.input_size // 2, self.img_size - self.input_size))
+            windows_2.append(np.array([row,col]))
+            overlap_1,overlap_2 = get_overlap(window,(row,col),self.input_size,16)
+            overlaps_1.append(overlap_1.reshape(-1,2))
+            overlaps_2.append(overlap_2.reshape(-1,2))
+        
+        windows_2 = np.stack(windows_2,axis=0)
+        overlaps_1 = np.stack(overlaps_1,axis=0) # B,h*w,2
+        overlaps_2 = np.stack(overlaps_2,axis=0)
 
         key = self.database_keys[index]
         image_1_full = self.database[key]['image_1'][:]
@@ -129,24 +188,27 @@ class PretrainDataset(Dataset):
         # imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
         # imgs1 = self.transform(imgs1)
         # imgs2 = self.transform(imgs2)
-        imgs1 = torch.stack([self.transform(image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
-        imgs2 = torch.stack([self.transform(image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows],dim=0)
+        imgs1 = torch.stack([self.transform(image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows_1],dim=0)
+        imgs2 = torch.stack([self.transform(image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows_2],dim=0)
 
 
-        obj = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0)).to(torch.float32)
+        obj1 = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_1],axis=0)).to(torch.float32)
+        obj2 = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_2],axis=0)).to(torch.float32)
 
-
-        residual1 = np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0)
-        residual2 = np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows],axis=0)
+        residual1 = np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_1],axis=0)
+        residual2 = np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_2],axis=0)
         residual1[np.isnan(residual1)] = -1
         residual2[np.isnan(residual2)] = -1
         residual1 = torch.from_numpy(residual1)
         residual2 = torch.from_numpy(residual2)
+
+        overlaps_1 = torch.from_numpy(overlaps_1)
+        overlaps_2 = torch.from_numpy(overlaps_2)
         # t2 = time.perf_counter()
 
         # print(t1 - t0, t2 - t1)
         
-        return imgs1,imgs2,obj,residual1,residual2,torch.tensor(index)
+        return imgs1,imgs2,obj1,obj2,residual1,residual2,overlaps_1,overlaps_2,torch.tensor(index)
 
 
 class ImageSampler(Sampler):

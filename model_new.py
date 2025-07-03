@@ -207,8 +207,8 @@ class Decoder(nn.Module):
         for block in self.blocks:
             x = block(res)
             res = res + x
-        xy_res = self.output_xy(res) * 1.1
-        height_res = self.output_height(res) * 1.1
+        xy_res = self.output_xy(res)
+        height_res = self.output_height(res)
         return torch.cat([xy_res,height_res],dim=1)
 
 

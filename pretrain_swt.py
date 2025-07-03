@@ -9,7 +9,7 @@ from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
-from criterion import CriterionFinetuneNormal,CriterionFinetuneDis
+from criterion import CriterionFinetune
 from model_new import Encoder,ProjectHead,Decoder
 
 import datetime
@@ -228,16 +228,13 @@ def pretrain(args):
     min_loss = args.min_loss
     last_loss = None
     start_time = time.perf_counter()
-    criterion_normal = CriterionFinetuneNormal()
-    criterion_dis = CriterionFinetuneDis()
-    scaler = GradScaler()
+    criterion = CriterionFinetune()
     os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
     
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
         pprint(f'\nEpoch:{epoch}')
-        # print(f"\n1---------debug:{dist.get_rank()}\n")
         sampler.set_epoch(epoch)
         # valid(epoch)
         total_loss = 0
@@ -249,14 +246,17 @@ def pretrain(args):
         count = 0
         encoder.train()
         for iter_idx,data in enumerate(dataloader):
-            img1,img2,obj,residual1,residual2,dataset_idx = data
+            img1,img2,obj1,obj2,residual1,residual2,overlap1,overlap2,dataset_idx = data
             dataset_idx = dataset_idx.item()
             img1 = img1.squeeze(0).to(args.device)
             img2 = img2.squeeze(0).to(args.device)
-            obj = obj.squeeze(0).to(args.device)
+            obj1 = obj1.squeeze(0).to(args.device)
+            obj2 = obj2.squeeze(0).to(args.device)
             residual1 = residual1.squeeze(0).to(args.device)
             residual2 = residual2.squeeze(0).to(args.device)
-            B,H,W = obj.shape[:3]
+            overlap1 = overlap1.squeeze(0).to(args.device)
+            overlap2 = overlap2.squeeze(0).to(args.device)
+            B,H,W = obj1.shape[:3]
 
             # Info = ""
             # Info += "\n===========================DEBUG INFO===========================\n"
@@ -268,12 +268,6 @@ def pretrain(args):
             # Info += "================================================================\n"
 
             # print(Info)
-
-
-            # print(f"rank_{rank}_idx_{dataset_idxs[0].item()}_windows:\n{windows}\nimg1:\n{img1[0,0]}\nimg2:{img2[0,0]}\n")
-            
-            # output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idxs[0].item()}')
-            # output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idxs[0].item()}')
             
 
             decoder = decoders[dataset_idx]
@@ -349,7 +343,8 @@ def pretrain(args):
             project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
             conf1_P = conf1.permute(0,2,3,1).reshape(-1)
             conf2_P = conf2.permute(0,2,3,1).reshape(-1)
-            obj_P3 = obj.flatten(0,2)
+            obj1_P3 = obj1.flatten(0,2)
+            obj2_P3 = obj2.flatten(0,2)
             residual1_P = residual1.reshape(-1).detach()
             residual2_P = residual2.reshape(-1).detach()
             conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
@@ -358,17 +353,18 @@ def pretrain(args):
             # if rank == 0:
             #     print(torch.stack([pred1_P3,pred2_P3,obj_P3],dim=1))
 
-            loss_normal,loss_obj,loss_height,loss_conf,loss_feat,k = criterion_normal(epoch,
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k = criterion(epoch,
                                                                                 project_feat1_PD,project_feat2_PD,
                                                                                 pred1_P3,pred2_P3,
                                                                                 conf1_P,conf2_P,
-                                                                                obj_P3,
+                                                                                obj1_P3,obj2_P3,
                                                                                 residual1_P,residual2_P,
+                                                                                overlap1,overlap2,
                                                                                 H,W)
 
                 
             # loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
-            loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+            # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
 
             # dummy_loss = 0.0
             # dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
@@ -380,7 +376,6 @@ def pretrain(args):
                 print(f"nan feat loss in rank{dist.get_rank()},exit")
                 exit()
 
-            loss = loss_normal + loss_dis * max(min(1.,epoch / 20. - 1.),0.) #+ dummy_loss
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
             
             loss.backward()
