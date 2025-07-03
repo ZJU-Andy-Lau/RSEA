@@ -191,7 +191,7 @@ class CriterionFinetune(nn.Module):
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
 
         # print("3:",detect_nan([loss_obj,loss_height]))
-        print(f"feat1 shape:{feat1_anchor.shape} \t overlap1:{overlap1_p.min().item()}\t{overlap1_p.max().item()} \t feat2 shape:{feat2_anchor.shape} \t overlap2:{overlap2_p.min().item()}\t{overlap2_p.max().item()}")
+        print(f"feat1 shape:{feat1_PD.shape} \t overlap1:{overlap1_p.min().item()}\t{overlap1_p.max().item()} \t feat2 shape:{feat2_PD.shape} \t overlap2:{overlap2_p.min().item()}\t{overlap2_p.max().item()}")
         feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
         feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
         anchor_robust_mask1 = robust_mask1[overlap1_p]
