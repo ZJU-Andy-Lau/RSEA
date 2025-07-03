@@ -195,7 +195,7 @@ class CriterionFinetune(nn.Module):
         dis_obj = torch.norm(obj1_P3[overlap1_p] - obj2_P3[overlap2_p],dim=-1)
         overlap1_p = overlap1_p[dis_obj < 8.]
         overlap2_p = overlap2_p[dis_obj < 8.]
-        
+
         feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
         feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
         anchor_robust_mask = robust_mask1[overlap1_p] & robust_mask2[overlap2_p]
@@ -223,7 +223,7 @@ class CriterionFinetune(nn.Module):
         dis_height_pred = torch.abs(pred1_anchor[anchor_robust_mask,2] - pred2_anchor[anchor_robust_mask,2]) * 100.
         loss_dis = torch.abs(dis_obj_pred - dis_obj_gt).mean() + torch.abs(dis_height_pred - dis_height_gt).mean()
 
-        print(f"dis_obj_gt:{dis_obj_gt.min().item()} \t {dis_obj_gt.max().item()} \t {dis_obj_gt.mean().item()}")
+        # print(f"dis_obj_gt:{dis_obj_gt.min().item()} \t {dis_obj_gt.max().item()} \t {dis_obj_gt.mean().item()}")
 
         loss = loss_obj + loss_height + loss_conf + loss_feat + loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
