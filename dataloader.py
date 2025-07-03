@@ -59,9 +59,10 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
     return coefs
 
 def get_overlap(tl1,tl2,size,ds = 16):
+    max_idx = int(np.round((size - 1) / ds))
+
     tl1_row, tl1_col = tl1
     tl2_row, tl2_col = tl2
-
     br1_row, br1_col = tl1_row + size, tl1_col + size
     br2_row, br2_col = tl2_row + size, tl2_col + size
 
@@ -71,35 +72,44 @@ def get_overlap(tl1,tl2,size,ds = 16):
     overlap_right = min(br1_col, br2_col)
 
     if overlap_top >= overlap_bottom or overlap_left >= overlap_right:
-        return np.empty((0, 0, 2), dtype=int), np.empty((0, 0, 2), dtype=int)
+        return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=int)
 
     local_overlap_top = overlap_top - tl1_row
     local_overlap_left = overlap_left - tl1_col
     local_overlap_bottom = overlap_bottom - tl1_row
     local_overlap_right = overlap_right - tl1_col
     
-    p1_row_start = int(local_overlap_top / ds)
-    p1_row_end = int((local_overlap_bottom - 1) / ds)
-    p1_col_start = int(local_overlap_left / ds)
-    p1_col_end = int((local_overlap_right - 1) / ds)
+    p1_row_start = int(np.round(local_overlap_top / ds))
+    p1_row_end = int(np.round((local_overlap_bottom - 1) / ds))
+    p1_col_start = int(np.round(local_overlap_left / ds))
+    p1_col_end = int(np.round((local_overlap_right - 1) / ds))
 
     if p1_row_start > p1_row_end or p1_col_start > p1_col_end:
-         return np.empty((0, 0, 2), dtype=int), np.empty((0, 0, 2), dtype=int)
+         return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=int)
 
     rows1, cols1 = np.mgrid[p1_row_start : p1_row_end + 1, 
                             p1_col_start : p1_col_end + 1]
-    
-    overlap_1 = np.stack((rows1, cols1), axis=-1)
+
+    candidate_overlap_1 = np.stack((rows1, cols1), axis=-1)
 
     offset_row = tl1_row - tl2_row
     offset_col = tl1_col - tl2_col
-
     rows2 = np.round((rows1 * ds + offset_row) / ds).astype(int)
     cols2 = np.round((cols1 * ds + offset_col) / ds).astype(int)
+    candidate_overlap_2 = np.stack((rows2, cols2), axis=-1)
+    
+    mask1 = (candidate_overlap_1[..., 0] >= 0) & (candidate_overlap_1[..., 0] <= max_idx) & \
+            (candidate_overlap_1[..., 1] >= 0) & (candidate_overlap_1[..., 1] <= max_idx)
 
-    overlap_2 = np.stack((rows2, cols2), axis=-1)
+    mask2 = (candidate_overlap_2[..., 0] >= 0) & (candidate_overlap_2[..., 0] <= max_idx) & \
+            (candidate_overlap_2[..., 1] >= 0) & (candidate_overlap_2[..., 1] <= max_idx)
 
-    return overlap_1, overlap_2
+    valid_mask = mask1 & mask2
+
+    valid_coords_1 = candidate_overlap_1[valid_mask]
+    valid_coords_2 = candidate_overlap_2[valid_mask]
+
+    return valid_coords_1,valid_coords_2
 
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
