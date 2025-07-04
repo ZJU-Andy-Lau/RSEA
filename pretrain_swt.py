@@ -368,13 +368,24 @@ def pretrain(args):
 
             if rank == 1 and epoch == 1:
                 loss = torch.tensor(torch.nan,device=loss.device)
-                    
-            if torch.isnan(loss):
-                print(f"nan loss in rank{dist.get_rank()}, use dummy loss")
-                dummy_input = torch.zeros_like(img1,device=img1.device,dtype=img1.dtype)
-                dummy_feat,_ = encoder(dummy_input)
-                dummy_output = decoder(dummy_feat)
-                loss = dummy_output.sum() * 0.0
+            
+            # 1. 检查当前进程的 loss 是否为 NaN 或 inf
+            loss_is_nan = not torch.isfinite(loss).all()
+            
+            # 2. 将此状态（0为正常，1为异常）封装为tensor
+            loss_status_tensor = torch.tensor([loss_is_nan], dtype=torch.float32, device=rank)
+            
+            # 3. 使用 all_reduce 将所有进程的状态相加。
+            #    只要有一个进程的loss是NaN(值为1)，总和就会大于0。
+            dist.all_reduce(loss_status_tensor, op=dist.ReduceOp.SUM)
+
+            # 4. 检查聚合后的状态
+            #    如果 loss_status_tensor > 0，说明至少有一个进程出现了问题
+            if loss_status_tensor.item() > 0:
+                print(f"--- [Rank {rank}] 检测到 NaN！Epoch {epoch}, iter {iter_idx}. 所有进程将一起跳过此次更新。---")
+                encoder_scheduler.step()
+                continue 
+
                 # encoder_scheduler.step()
                 # continue
 
