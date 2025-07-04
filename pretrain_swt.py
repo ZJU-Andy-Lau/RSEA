@@ -373,8 +373,9 @@ def pretrain(args):
             #     dummy_loss = dummy_loss + dummy_output.sum() * 0.0
                     
             if torch.isnan(loss_feat):
-                print(f"nan feat loss in rank{dist.get_rank()},exit")
-                exit()
+                print(f"nan feat loss in rank{dist.get_rank()}, continue")
+                encoder_scheduler.step()
+                continue
 
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
             
