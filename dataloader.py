@@ -122,7 +122,7 @@ class PretrainDataset(Dataset):
         else:
             raise ValueError("mode should be either train or test")
 
-        if dataset_num is None:
+        if dataset_num is None or dataset_num <= 0:
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
         self.database_keys = list(self.database.keys())[:dataset_num]

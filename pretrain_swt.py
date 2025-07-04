@@ -178,7 +178,7 @@ def pretrain(args):
                                              steps_per_epoch=dataset_num,
                                              n_epochs_per_stage=args.max_epoch,
                                              summit_hold=0,
-                                             gamma=.63 ** (1. / (200 * dataset_num)),
+                                             gamma=.63 ** (1. / (300 * dataset_num)),
                                              pct_start=200. / args.max_epoch)
     
 
@@ -219,7 +219,7 @@ def pretrain(args):
                                             steps_per_epoch=1,
                                             n_epochs_per_stage=args.max_epoch,
                                             summit_hold=0,
-                                            gamma=.63 ** (1. / 200),
+                                            gamma=.63 ** (1. / 300),
                                             pct_start=100. / args.max_epoch)
         optimizers.append(optimizer)
         schedulers.append(scheduler)
