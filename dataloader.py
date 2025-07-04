@@ -230,7 +230,7 @@ class PretrainDataset(Dataset):
         if dataset_num is None or dataset_num <= 0:
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
-        self.database_keys = [list(self.database.keys())[i] for i in IDXS]
+        self.database_keys = [list(self.database.keys())[i] for i in IDXS[:dataset_num]]
         self.DOWNSAMPLE=downsample
         self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
