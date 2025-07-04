@@ -383,6 +383,7 @@ def pretrain(args):
             #    如果 loss_status_tensor > 0，说明至少有一个进程出现了问题
             if loss_status_tensor.item() > 0:
                 print(f"--- [Rank {rank}] 检测到 NaN！Epoch {epoch}, iter {iter_idx}. 所有进程将一起跳过此次更新。---")
+                del loss
                 encoder_scheduler.step()
                 continue 
 
