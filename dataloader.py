@@ -294,11 +294,11 @@ class PretrainDataset(Dataset):
         imgs2 = torch.stack([self.transform(img) for img in imgs2],dim=0)
 
 
-        obj1 = torch.from_numpy(np.stack([downsample(obj) for obj in obj1],axis=0)).to(torch.float32)
-        obj2 = torch.from_numpy(np.stack([downsample(obj) for obj in obj2],axis=0)).to(torch.float32)
+        obj1 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj1],axis=0)).to(torch.float32)
+        obj2 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj2],axis=0)).to(torch.float32)
 
-        residual1 = np.stack([residual_average(residual) for residual in residual1],axis=0)
-        residual2 = np.stack([residual_average(residual) for residual in residual2],axis=0)
+        residual1 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual1],axis=0)
+        residual2 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual2],axis=0)
         residual1[np.isnan(residual1)] = -1
         residual2[np.isnan(residual2)] = -1
         residual1 = torch.from_numpy(residual1)
