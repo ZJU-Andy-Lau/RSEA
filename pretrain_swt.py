@@ -144,6 +144,76 @@ def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
         print("│")
     print("└" + "─" * (W * (max_len + 2) - 2) + "┘")
 
+def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:ProjectHead,criterion:nn.Module):
+    img1 = data['img1'].squeeze(0).to(args.device)
+    img2 = data['img2'].squeeze(0).to(args.device)
+    obj1 = data['obj1'].squeeze(0).to(args.device)
+    obj2 = data['obj2'].squeeze(0).to(args.device)
+    residual1 = data['residual1'].squeeze(0).to(args.device)
+    residual2 = data['residual2'].squeeze(0).to(args.device)
+    overlap1 = data['overlap1'].squeeze(0).to(args.device)
+    overlap2 = data['overlap2'].squeeze(0).to(args.device)
+    obj_map_coef = data['obj_map_coef']
+    B,H,W = obj1.shape[:3]
+
+    feat1,conf1 = encoder(img1)
+    feat2,conf2 = encoder(img2)
+
+    patch_feat1,global_feat1 = feat1[:,:encoder.patch_feature_channels],feat1[:,encoder.patch_feature_channels:]
+    patch_feat2,global_feat2 = feat2[:,:encoder.patch_feature_channels],feat2[:,encoder.patch_feature_channels:]
+
+    project_feat1 = projector(patch_feat1)
+    project_feat2 = projector(patch_feat2)
+
+    patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
+    patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
+    global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
+    global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
+    patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
+    patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
+    global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
+    global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
+
+    feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
+    feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
+    # feat_input1 = feat1
+    # feat_input2 = feat2
+
+    pred1_P3 = []
+    pred2_P3 = []
+    
+    output1_B3hw = decoder(feat_input1)
+    output2_B3hw = decoder(feat_input2)
+    output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
+    output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
+
+
+    pred1_P3.append(warp_by_poly(output1_P3,obj_map_coef))
+    pred2_P3.append(warp_by_poly(output2_P3,obj_map_coef))
+
+    
+    pred1_P3 = torch.concatenate(pred1_P3,dim=0)
+    pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+
+    project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
+    project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
+    conf1_P = conf1.permute(0,2,3,1).reshape(-1)
+    conf2_P = conf2.permute(0,2,3,1).reshape(-1)
+    obj1_P3 = obj1.flatten(0,2)
+    obj2_P3 = obj2.flatten(0,2)
+    residual1_P = residual1.reshape(-1).detach()
+    residual2_P = residual2.reshape(-1).detach()
+    conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
+
+    loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k = criterion(epoch,
+                                                                        project_feat1_PD,project_feat2_PD,
+                                                                        pred1_P3,pred2_P3,
+                                                                        conf1_P,conf2_P,
+                                                                        obj1_P3,obj2_P3,
+                                                                        residual1_P,residual2_P,
+                                                                        overlap1,overlap2,
+                                                                        H,W)
+    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean
 
 def pretrain(args):
     pprint = partial(print_on_main, rank=dist.get_rank())
@@ -181,8 +251,6 @@ def pretrain(args):
                                              gamma=.63 ** (1. / (300 * dataset_num)),
                                              pct_start=200. / args.max_epoch)
     
-
-    patch_feature_channels = encoder.patch_feature_channels
     output_channels = encoder.output_channels
 
 
@@ -248,149 +316,41 @@ def pretrain(args):
         for iter_idx,data in enumerate(dataloader):
             img1,img2,obj1,obj2,residual1,residual2,overlap1,overlap2,dataset_idx = data
             dataset_idx = dataset_idx.item()
-            img1 = img1.squeeze(0).to(args.device)
-            img2 = img2.squeeze(0).to(args.device)
-            obj1 = obj1.squeeze(0).to(args.device)
-            obj2 = obj2.squeeze(0).to(args.device)
-            residual1 = residual1.squeeze(0).to(args.device)
-            residual2 = residual2.squeeze(0).to(args.device)
-            overlap1 = overlap1.squeeze(0).to(args.device)
-            overlap2 = overlap2.squeeze(0).to(args.device)
-            B,H,W = obj1.shape[:3]
-
-            # Info = ""
-            # Info += "\n===========================DEBUG INFO===========================\n"
-            # Info += f"Rank{dist.get_rank()}\n"
-            # Info += f"img shape:{img1.shape}\n"
-            # Info += f"obj shape:{obj.shape}\n"
-            # Info += f"residual shape:{residual1.shape}\n"
-            # Info += f"dataset idx:{dataset_idx}\n"
-            # Info += "================================================================\n"
-
-            # print(Info)
-            
-
             decoder = decoders[dataset_idx]
             decoder_optimizer = optimizers[dataset_idx]
             decoder.train()
             encoder_optimizer.zero_grad()
             decoder_optimizer.zero_grad()
-
-            # print(f"\n2---------debug:{dist.get_rank()}\n")
-            # with autocast():
-            feat1,conf1 = encoder(img1)
-            feat2,conf2 = encoder(img2)
-            # dist.barrier()
-
-            patch_feat1,global_feat1 = feat1[:,:patch_feature_channels],feat1[:,patch_feature_channels:]
-            patch_feat2,global_feat2 = feat2[:,:patch_feature_channels],feat2[:,patch_feature_channels:]
-
-            project_feat1 = projector(patch_feat1)
-            project_feat2 = projector(patch_feat2)
-
-            patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
-            patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
-            global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
-            global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
-            patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
-            patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
-            global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
-            global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
-
-            feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
-            feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
-            # feat_input1 = feat1
-            # feat_input2 = feat2
-
-            pred1_P3 = []
-            pred2_P3 = []
-            pred_skip_1_P3 = []
-            pred_skip_2_P3 = []
             
-            output1_B3hw = decoder(feat_input1)
-            output2_B3hw = decoder(feat_input2)
-            output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
-            output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
+            compose_data = {
+                "img1":img1,
+                'img2':img2,
+                "obj1":obj1,
+                "obj2":obj2,
+                "residual1":residual1,
+                "residual2":residual2,
+                "overlap1":overlap1,
+                "overlap2":overlap2,
+                "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
+            }
 
-            # decoder.requires_grad_(False)
-            # output_skip_1_B3hw = decoder(feat1[n * B : (n+1) * B])
-            # output_skip_2_B3hw = decoder(feat2[n * B : (n+1) * B])
-            # output_skip_1_P3 = output_skip_1_B3hw.permute(0,2,3,1).flatten(0,2)
-            # output_skip_2_P3 = output_skip_2_B3hw.permute(0,2,3,1).flatten(0,2)
-            # decoder.requires_grad_(True)
-            
-            obj_map_coef = dataset.obj_map_coefs[dataset_idx]
-
-            # print(obj.shape)
-            # print("bbox:",obj_bbox)
-
-            pred1_P3.append(warp_by_poly(output1_P3,obj_map_coef))
-            pred2_P3.append(warp_by_poly(output2_P3,obj_map_coef))
-            # pred_skip_1_P3.append(warp_by_bbox(output_skip_1_P3,obj_bbox))
-            # pred_skip_2_P3.append(warp_by_bbox(output_skip_2_P3,obj_bbox))
-            
-            pred1_P3 = torch.concatenate(pred1_P3,dim=0)
-            pred2_P3 = torch.concatenate(pred2_P3,dim=0)
-            # print_hwc_matrix(torch.concatenate([obj,pred1_P3.reshape(obj.shape)],dim=-1)[0,28:36,28:36].detach().cpu().numpy(),2)
-            # print_hwc_matrix(obj[0,28:36,28:36].detach().cpu().numpy(),2)
-            # print_hwc_matrix(pred1_P3.reshape(obj.shape)[0,28:36,28:36].detach().cpu().numpy(),2)
-            # pred_skip_1_P3 = torch.concatenate(pred_skip_1_P3,dim=0)
-            # pred_skip_2_P3 = torch.concatenate(pred_skip_2_P3,dim=0)
-
-            # print("1:",torch.isnan(pred1_P3).any() & torch.isnan(pred2_P3).any() & torch.isnan(pred_skip_1_P3).any() & torch.isnan(pred_skip_2_P3).any())
-
-            project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
-            project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
-            conf1_P = conf1.permute(0,2,3,1).reshape(-1)
-            conf2_P = conf2.permute(0,2,3,1).reshape(-1)
-            obj1_P3 = obj1.flatten(0,2)
-            obj2_P3 = obj2.flatten(0,2)
-            residual1_P = residual1.reshape(-1).detach()
-            residual2_P = residual2.reshape(-1).detach()
-            conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
-                # print(f"\n3---------debug:{dist.get_rank()}\n")
-
-            # if rank == 0:
-            #     print(torch.stack([pred1_P3,pred2_P3,obj_P3],dim=1))
-
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k = criterion(epoch,
-                                                                                project_feat1_PD,project_feat2_PD,
-                                                                                pred1_P3,pred2_P3,
-                                                                                conf1_P,conf2_P,
-                                                                                obj1_P3,obj2_P3,
-                                                                                residual1_P,residual2_P,
-                                                                                overlap1,overlap2,
-                                                                                H,W)
-
-                
-            # loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
-            # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean = compute_loss(args,epoch,compose_data,encoder,decoder,projector,criterion)
 
             if rank == 1 and epoch == 1:
                 loss = torch.tensor(torch.nan,device=loss.device)
             
-            # 1. 检查当前进程的 loss 是否为 NaN 或 inf
+
             loss_is_nan = not torch.isfinite(loss).all()
-            
-            # 2. 将此状态（0为正常，1为异常）封装为tensor
+
             loss_status_tensor = torch.tensor([loss_is_nan], dtype=torch.float32, device=rank)
-            
-            # 3. 使用 all_reduce 将所有进程的状态相加。
-            #    只要有一个进程的loss是NaN(值为1)，总和就会大于0。
+
             dist.all_reduce(loss_status_tensor, op=dist.ReduceOp.SUM)
 
-            # 4. 检查聚合后的状态
-            #    如果 loss_status_tensor > 0，说明至少有一个进程出现了问题
             if loss_status_tensor.item() > 0:
                 print(f"--- [Rank {rank}] 检测到 NaN！Epoch {epoch}, iter {iter_idx}. 所有进程将一起跳过此次更新。---")
-                del loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis
+                del loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,conf_mean
                 encoder_scheduler.step()
                 continue 
-
-                # encoder_scheduler.step()
-                # continue
-
-                # print(f"\n4---------debug:{dist.get_rank()}\n")
             
             loss.backward()
             # scaler.scale(loss).backward()
