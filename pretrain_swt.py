@@ -318,6 +318,9 @@ def pretrain(args):
         for iter_idx,data in enumerate(dataloader):
             img1,img2,obj1,obj2,residual1,residual2,overlap1,overlap2,dataset_idx = data
             dataset_idx = dataset_idx.item()
+            output_img(img1,'./img_check',f'epoch_{epoch}_img1_rank_{rank}_idx_{dataset_idx}')
+            output_img(img2,'./img_check',f'epoch_{epoch}_img2_rank_{rank}_idx_{dataset_idx}')
+
             decoder = decoders[dataset_idx]
             decoder_optimizer = optimizers[dataset_idx]
             decoder.train()

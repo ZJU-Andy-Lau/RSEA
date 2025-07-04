@@ -14,6 +14,7 @@ import time
 import h5py
 import json
 import torch.distributed as dist
+from typing import List, Tuple
    
     
 def residual_average(arr, a):
@@ -58,58 +59,157 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
     coefs = np.polyfit(src,tgt,deg = deg)
     return coefs
 
-def get_overlap(tl1,tl2,size,ds = 16):
-    max_idx = size // ds
-
-    tl1_row, tl1_col = tl1
-    tl2_row, tl2_col = tl2
-    br1_row, br1_col = tl1_row + size, tl1_col + size
-    br2_row, br2_col = tl2_row + size, tl2_col + size
-
-    overlap_top = max(tl1_row, tl2_row)
-    overlap_left = max(tl1_col, tl2_col)
-    overlap_bottom = min(br1_row, br2_row)
-    overlap_right = min(br1_col, br2_col)
-
-    if overlap_top >= overlap_bottom or overlap_left >= overlap_right:
-        return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=int)
-
-    local_overlap_top = overlap_top - tl1_row
-    local_overlap_left = overlap_left - tl1_col
-    local_overlap_bottom = overlap_bottom - tl1_row
-    local_overlap_right = overlap_right - tl1_col
+def get_random_overlapping_crops(
+    image_height: int,
+    image_width: int,
+    min_crop_side: int = 500,
+) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
+    max_crop_side = min(image_height, image_width)
+    if min_crop_side > max_crop_side:
+        raise ValueError("min_crop_side cannot be larger than the smallest image dimension.")
+    s1 = np.random.randint(min_crop_side, max_crop_side + 1)
+    s2 = np.random.randint(min_crop_side, max_crop_side + 1)
     
-    p1_row_start = int(np.round(local_overlap_top / ds))
-    p1_row_end = int(np.round((local_overlap_bottom - 1) / ds))
-    p1_col_start = int(np.round(local_overlap_left / ds))
-    p1_col_end = int(np.round((local_overlap_right - 1) / ds))
+    s_small = min(s1, s2)
+    s_o_min = math.ceil(s_small / 2.0)
+    s_o_max = s_small
+    s_o = np.random.randint(s_o_min, s_o_max + 1)
 
-    if p1_row_start > p1_row_end or p1_col_start > p1_col_end:
-         return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=int)
+    x1 = np.clip(np.random.randint(-s1 // 2, image_width - s1 // 2),a_min=0,a_max=image_width - s1)
+    y1 = np.clip(np.random.randint(-s1 // 2, image_height - s1 // 2),a_min=0,a_max=image_height - s1)
 
-    rows1, cols1 = np.mgrid[p1_row_start : p1_row_end + 1, 
-                            p1_col_start : p1_col_end + 1]
+    dx_o1 = np.random.randint(0, s1 - s_o + 1)
+    dy_o1 = np.random.randint(0, s1 - s_o + 1)
+    x_o, y_o = x1 + dx_o1, y1 + dy_o1
 
-    candidate_overlap_1 = np.stack((rows1, cols1), axis=-1)
+    x2_min_ideal = x_o + s_o - s2
+    x2_max_ideal = x_o
+    y2_min_ideal = y_o + s_o - s2
+    y2_max_ideal = y_o
 
-    offset_row = tl1_row - tl2_row
-    offset_col = tl1_col - tl2_col
-    rows2 = np.round((rows1 * ds + offset_row) / ds).astype(int)
-    cols2 = np.round((cols1 * ds + offset_col) / ds).astype(int)
-    candidate_overlap_2 = np.stack((rows2, cols2), axis=-1)
+    x2_min_final = max(0, x2_min_ideal)
+    x2_max_final = min(image_width - s2, x2_max_ideal)
+    y2_min_final = max(0, y2_min_ideal)
+    y2_max_final = min(image_height - s2, y2_max_ideal)
     
-    mask1 = (candidate_overlap_1[..., 0] >= 0) & (candidate_overlap_1[..., 0] < max_idx) & \
-            (candidate_overlap_1[..., 1] >= 0) & (candidate_overlap_1[..., 1] < max_idx)
+    x2 = np.random.randint(x2_min_final, x2_max_final + 1)
+    y2 = np.random.randint(y2_min_final, y2_max_final + 1)
 
-    mask2 = (candidate_overlap_2[..., 0] >= 0) & (candidate_overlap_2[..., 0] < max_idx) & \
-            (candidate_overlap_2[..., 1] >= 0) & (candidate_overlap_2[..., 1] < max_idx)
+    return (x1, y1, s1), (x2, y2, s2)
 
-    valid_mask = mask1 & mask2
 
-    valid_coords_1 = candidate_overlap_1[valid_mask]
-    valid_coords_2 = candidate_overlap_2[valid_mask]
+def process_image(
+    img1_full: np.ndarray,
+    img2_full: np.ndarray,
+    obj_full:np.ndarray,
+    residual1_full:np.ndarray,
+    residual2_full:np.ndarray,
+    K: int,
+    min_crop_side: int = 500,
+    output_size: int = 1024,
+    downsample_ratio: int = 16
+) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray], np.ndarray, np.ndarray]:
+    H, W, _ = img1_full.shape
+    
+    imgs1 = np.zeros((K, output_size, output_size, 3), dtype=np.uint8)
+    imgs2 = np.zeros((K, output_size, output_size, 3), dtype=np.uint8)
 
-    return valid_coords_1,valid_coords_2
+    obj1 = np.zeros((K, output_size, output_size, 3), dtype=np.float32)
+    obj2 = np.zeros((K, output_size, output_size, 3), dtype=np.float32)
+
+    residual1 = np.zeros((K, output_size, output_size), dtype=np.float32)
+    residual2 = np.zeros((K, output_size, output_size), dtype=np.float32)
+
+    corr_idxs1_list, corr_idxs2_list = [], []
+    
+    feature_map_size = output_size // downsample_ratio
+
+    bboxes1 = []
+    bboxes2 = []
+
+    # 为K对图像生成数据
+    for k in range(K):
+        # 1. 获取一对有效的随机裁切框
+        bbox1, bbox2 = get_random_overlapping_crops(H, W, min_crop_side)
+        bboxes1.append(bbox1)
+        bboxes2.append(bbox2)
+        
+        x1, y1, s1 = bbox1
+        x2, y2, s2 = bbox2
+        
+        # 2. 裁切和缩放图像
+        
+        imgs1[k] = cv2.resize(img1_full[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+        imgs2[k] = cv2.resize(img2_full[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+
+        obj1[k] = cv2.resize(obj_full[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+        obj2[k] = cv2.resize(obj_full[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+
+        residual1[k] = cv2.resize(residual1_full[y1:y1+s1, x1:x1+s1], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
+        residual2[k] = cv2.resize(residual2_full[y2:y2+s2, x2:x2+s2], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
+        
+
+        # 4. 计算对应关系索引
+        scale1 = output_size / s1
+        scale2 = output_size / s2
+        
+        # 4.1 计算在原始大图坐标系下的重叠区域
+        overlap_x_orig = max(x1, x2)
+        overlap_y_orig = max(y1, y2)
+        overlap_x_end_orig = min(x1 + s1, x2 + s2)
+        overlap_y_end_orig = min(y1 + s1, y2 + s2)
+        
+        # 4.2 将重叠区域映射到feat1的坐标系下，并确定遍历范围
+        # (orig_coord - crop_origin) * scale / downsample_ratio
+        feat1_x_start = math.ceil(((overlap_x_orig - x1) * scale1) / downsample_ratio)
+        feat1_y_start = math.ceil(((overlap_y_orig - y1) * scale1) / downsample_ratio)
+        feat1_x_end = math.floor(((overlap_x_end_orig - x1) * scale1) / downsample_ratio)
+        feat1_y_end = math.floor(((overlap_y_end_orig - y1) * scale1) / downsample_ratio)
+
+        # 4.3 遍历feat1重叠区，计算feat2对应点
+        k_offset = k * (feature_map_size ** 2)
+
+        for fy1 in range(feat1_y_start, feat1_y_end):
+            for fx1 in range(feat1_x_start, feat1_x_end):
+                # a. feat1 -> resize1 (中心点)
+                px_resize1 = (fx1 + 0.5) * downsample_ratio
+                py_resize1 = (fy1 + 0.5) * downsample_ratio
+
+                # b. resize1 -> crop1
+                px_crop1 = px_resize1 / scale1
+                py_crop1 = py_resize1 / scale1
+
+                # c. crop1 -> original image
+                px_orig = px_crop1 + x1
+                py_orig = py_crop1 + y1
+
+                # d. original image -> crop2
+                px_crop2 = px_orig - x2
+                py_crop2 = py_orig - y2
+                
+                # 检查点是否在crop2的有效范围内
+                if not (0 <= px_crop2 < s2 and 0 <= py_crop2 < s2):
+                    continue
+
+                # e. crop2 -> resize2
+                px_resize2 = px_crop2 * scale2
+                py_resize2 = py_crop2 * scale2
+                
+                # f. resize2 -> feat2 (取整)
+                fx2 = math.floor(px_resize2 / downsample_ratio)
+                fy2 = math.floor(py_resize2 / downsample_ratio)
+
+                # 有效性检查：确保计算出的(fx2, fy2)在特征图范围内
+                if 0 <= fx2 < feature_map_size and 0 <= fy2 < feature_map_size:
+                    idx1 = k_offset + (fy1 * feature_map_size + fx1)
+                    idx2 = k_offset + (fy2 * feature_map_size + fx2)
+                    corr_idxs1_list.append(idx1)
+                    corr_idxs2_list.append(idx2)
+
+    corr_idxs1 = np.array(corr_idxs1_list, dtype=np.int64)
+    corr_idxs2 = np.array(corr_idxs2_list, dtype=np.int64)
+
+    return imgs1, imgs2, obj1, obj2, residual1, residual2, corr_idxs1, corr_idxs2
 
 class PretrainDataset(Dataset):
     def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
@@ -164,30 +264,6 @@ class PretrainDataset(Dataset):
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
-        ds_size = self.input_size // self.DOWNSAMPLE
-
-        rows = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
-        cols = np.clip(np.random.randint(low=-self.input_size // 2,high=self.img_size - self.input_size // 2,size=(self.batch_size,1)),0,self.img_size - self.input_size)
-        windows_1 = np.concatenate([rows,cols],axis=-1)
-        windows_2 = []
-        overlaps_1 = []
-        overlaps_2 = []
-
-        for b,window in enumerate(windows_1):
-            row = np.random.randint(low = max(window[0] - self.input_size // 2,0),high = min(window[0] + self.input_size // 2, self.img_size - self.input_size))
-            col = np.random.randint(low = max(window[1] - self.input_size // 2,0),high = min(window[1] + self.input_size // 2, self.img_size - self.input_size))
-            windows_2.append(np.array([row,col]))
-            overlap_1,overlap_2 = get_overlap(window,(row,col),self.input_size,16)
-            overlap_1 = overlap_1.reshape(-1,2)
-            overlap_2 = overlap_2.reshape(-1,2)
-            indices_1 = b * ds_size * ds_size + overlap_1[:,0] * ds_size + overlap_1[:,1]
-            indices_2 = b * ds_size * ds_size + overlap_2[:,0] * ds_size + overlap_2[:,1]
-            overlaps_1.append(indices_1)
-            overlaps_2.append(indices_2)
-        
-        windows_2 = np.stack(windows_2,axis=0)
-        overlaps_1 = np.concatenate(overlaps_1,axis=0) # N
-        overlaps_2 = np.concatenate(overlaps_2,axis=0)
 
         key = self.database_keys[index]
         image_1_full = self.database[key]['image_1'][:]
@@ -198,20 +274,31 @@ class PretrainDataset(Dataset):
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
+        imgs1, imgs2, obj1, obj2, residual1, residual2, overlaps_1, overlaps_2 = \
+            process_image(img1_full=image_1_full,
+                          img2_full=image_2_full,
+                          obj_full=obj_full,
+                          residual1_full=residual_1_full,
+                          residual2_full=residual_2_full,
+                          K=self.batch_size,
+                          min_crop_side=500,
+                          output_size=self.input_size,
+                          downsample_ratio=self.DOWNSAMPLE)
+
 
         # imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
         # imgs2 = torch.from_numpy(np.stack([image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32)
         # imgs1 = self.transform(imgs1)
         # imgs2 = self.transform(imgs2)
-        imgs1 = torch.stack([self.transform(image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows_1],dim=0)
-        imgs2 = torch.stack([self.transform(image_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size]) for tl in windows_2],dim=0)
+        imgs1 = torch.stack([self.transform(img) for img in imgs1],dim=0)
+        imgs2 = torch.stack([self.transform(img) for img in imgs2],dim=0)
 
 
-        obj1 = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_1],axis=0)).to(torch.float32)
-        obj2 = torch.from_numpy(np.stack([downsample(obj_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_2],axis=0)).to(torch.float32)
+        obj1 = torch.from_numpy(np.stack([downsample(obj) for obj in obj1],axis=0)).to(torch.float32)
+        obj2 = torch.from_numpy(np.stack([downsample(obj) for obj in obj2],axis=0)).to(torch.float32)
 
-        residual1 = np.stack([residual_average(residual_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_1],axis=0)
-        residual2 = np.stack([residual_average(residual_2_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size],self.DOWNSAMPLE) for tl in windows_2],axis=0)
+        residual1 = np.stack([residual_average(residual) for residual in residual1],axis=0)
+        residual2 = np.stack([residual_average(residual) for residual in residual2],axis=0)
         residual1[np.isnan(residual1)] = -1
         residual2[np.isnan(residual2)] = -1
         residual1 = torch.from_numpy(residual1)
