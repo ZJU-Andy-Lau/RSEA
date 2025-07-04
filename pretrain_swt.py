@@ -366,16 +366,17 @@ def pretrain(args):
             # loss_dis,dis_obj,dis_height = criterion_dis(pred_skip_1_P3,pred_skip_2_P3,residual1_P,residual2_P,k)    
             # loss_dis,dis_obj,dis_height = criterion_dis(pred1_P3,pred2_P3,residual1_P,residual2_P,k)
 
-            # dummy_loss = 0.0
-            # dummy_input = torch.zeros_like(feat_input1[:1],device=loss_normal.device,dtype=loss_normal.dtype)
-            # for decoder in decoders:
-            #     dummy_output = decoder(dummy_input)
-            #     dummy_loss = dummy_loss + dummy_output.sum() * 0.0
+            if rank == 1 and epoch == 1:
+                loss = torch.tensor(torch.nan,device=loss.device)
                     
-            if torch.isnan(loss_feat):
-                print(f"nan feat loss in rank{dist.get_rank()}, continue")
-                encoder_scheduler.step()
-                continue
+            if torch.isnan(loss):
+                print(f"nan loss in rank{dist.get_rank()}, use dummy loss")
+                dummy_input = torch.zeros_like(img1,device=img1.device,dtype=img1.dtype)
+                dummy_feat,_ = encoder(dummy_input)
+                dummy_output = decoder(dummy_feat)
+                loss = dummy_output.sum() * 0.0
+                # encoder_scheduler.step()
+                # continue
 
                 # print(f"\n4---------debug:{dist.get_rank()}\n")
             
