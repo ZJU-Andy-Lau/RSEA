@@ -159,8 +159,8 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
 
-    patch_feat1,global_feat1 = feat1[:,:encoder.patch_feature_channels],feat1[:,encoder.patch_feature_channels:]
-    patch_feat2,global_feat2 = feat2[:,:encoder.patch_feature_channels],feat2[:,encoder.patch_feature_channels:]
+    patch_feat1,global_feat1 = feat1[:,:args.patch_feature_channels],feat1[:,args.patch_feature_channels:]
+    patch_feat2,global_feat2 = feat2[:,:args.patch_feature_channels],feat2[:,args.patch_feature_channels:]
 
     project_feat1 = projector(patch_feat1)
     project_feat2 = projector(patch_feat2)
@@ -251,7 +251,9 @@ def pretrain(args):
                                              gamma=.63 ** (1. / (300 * dataset_num)),
                                              pct_start=200. / args.max_epoch)
     
-    output_channels = encoder.output_channels
+
+    args.patch_feature_channels = encoder.patch_feature_channels
+    args.output_channels = encoder.output_channels
 
 
     encoder = encoder.to(args.device)
@@ -271,7 +273,7 @@ def pretrain(args):
     optimizers = []
     schedulers = []
     for dataset_idx in trange(dataset_num):
-        decoder = Decoder(in_channels=output_channels,block_num=1,use_bn=False)
+        decoder = Decoder(in_channels=args.output_channels,block_num=1,use_bn=False)
 
         if not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})
