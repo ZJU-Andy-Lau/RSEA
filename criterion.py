@@ -193,6 +193,8 @@ class CriterionFinetune(nn.Module):
         # print("3:",detect_nan([loss_obj,loss_height]))
 
         dis_obj = torch.norm(obj1_P3[overlap1_p] - obj2_P3[overlap2_p],dim=-1)
+        if dis_obj.min() > 8.:
+            print(f"dis obj:{dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {dis_obj.median()}")
         overlap1_p = overlap1_p[dis_obj < 8.]
         overlap2_p = overlap2_p[dis_obj < 8.]
 
