@@ -223,6 +223,10 @@ class PretrainDataset(Dataset):
         else:
             raise ValueError("mode should be either train or test")
 
+        if dist.get_rank() == 0:
+            print("Selected dataset idxs:\n")
+            print(IDXS)
+
         if dataset_num is None or dataset_num <= 0:
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
