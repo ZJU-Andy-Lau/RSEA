@@ -15,7 +15,8 @@ import h5py
 import json
 import torch.distributed as dist
 from typing import List, Tuple
-   
+
+IDXS = [74, 205, 243, 245, 227, 204, 171, 225, 317, 280, 206, 96, 44, 95, 247, 194, 263, 299, 221, 154, 270, 111, 229, 112, 228, 46, 86, 5, 42, 89, 242, 212, 123, 191, 273, 102, 181, 135, 281, 134, 119, 137, 43, 53, 126, 149, 315, 202, 291, 244, 15, 92, 6, 151, 161, 282, 10, 328, 30, 224, 144, 312, 105, 139, 65, 97, 164, 230, 48, 207, 219, 249, 201, 146, 211, 323, 155, 330, 173, 88, 55, 216, 300, 93, 290, 27, 140, 182, 57, 160, 165, 163, 254, 142, 82, 14, 61, 60, 21, 278, 49, 156, 177, 302, 31, 62, 76, 265, 279, 220, 29]
     
 def residual_average(arr, a):
     is_2d = arr.ndim == 2
@@ -225,7 +226,7 @@ class PretrainDataset(Dataset):
         if dataset_num is None or dataset_num <= 0:
             dataset_num = len(self.database.keys())
         self.dataset_num = dataset_num
-        self.database_keys = [list(self.database.keys())[i] for i in torch.randperm(len(self.database.keys()))[:dataset_num]]
+        self.database_keys = [list(self.database.keys())[i] for i in IDXS]
         self.DOWNSAMPLE=downsample
         self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
