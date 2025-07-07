@@ -306,7 +306,7 @@ class PretrainDataset(Dataset):
 
         test_obj1 = sample_bilinear(obj1,overlaps_1)
         test_obj2 = sample_bilinear(obj2,overlaps_2)
-        obj_dis = torch.norm(test_obj1 - test_obj2,dim=-1).reshape(-1)
+        obj_dis = torch.norm(test_obj1[:,:2] - test_obj2[:,:2],dim=-1).reshape(-1)
         print(f"dis:{obj_dis.min().item()} \t {obj_dis.max().item()} \t {obj_dis.mean().item()} \t {obj_dis.median().item()}\n")
 
         residual1 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual1],axis=0)

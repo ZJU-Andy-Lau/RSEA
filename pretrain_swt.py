@@ -83,7 +83,7 @@ def sample_features(features: torch.Tensor, coords: torch.Tensor) -> torch.Tenso
         grid_for_sampling,
         mode='bilinear',
         padding_mode='border',
-        align_corners=True
+        align_corners=False
     )
     
     final_output = sampled_features.squeeze(2)
