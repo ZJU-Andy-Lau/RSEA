@@ -198,8 +198,8 @@ def process_image(
         corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
         corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
 
-    corr_idxs1 = np.stack(corr_idxs1_list, dtype=np.float32)
-    corr_idxs2 = np.stack(corr_idxs2_list, dtype=np.float32)
+    corr_idxs1 = np.stack(corr_idxs1_list).astype(np.float32)
+    corr_idxs2 = np.stack(corr_idxs2_list).astype(np.float32)
 
     return imgs1, imgs2, obj1, obj2, residual1, residual2, corr_idxs1, corr_idxs2
 
