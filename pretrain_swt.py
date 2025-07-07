@@ -492,9 +492,9 @@ if __name__ == '__main__':
     if not os.path.exists(args.decoder_output_path):
         os.mkdir(args.decoder_output_path)
 
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+    # torch.manual_seed(42)
+    # np.random.seed(42)
+    # random.seed(42)
 
     warnings.filterwarnings("ignore", category=UserWarning)
     warnings.filterwarnings("ignore", category=FutureWarning)
