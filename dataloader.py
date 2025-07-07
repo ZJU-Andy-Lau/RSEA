@@ -196,12 +196,17 @@ def process_image(
         
         local_selected = local_total[select_idx[:10000]]
 
-        test_idx1 = (local_selected - np.array([y1,x1])).astype(int)
-        test_idx2 = (local_selected - np.array([y2,x2])).astype(int)
-        test_obj1 = obj1[k][test_idx1[:,0],test_idx1[:,1]]
-        test_obj2 = obj2[k][test_idx2[:,0],test_idx2[:,1]]
-        dis_obj = np.linalg.norm(test_obj1 - test_obj2,axis=-1)
-        print(f"dis_obj: \t {dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {np.median(dis_obj)}")
+        if dist.get_rank() == 0:
+            print(f"(y1,x1): {(y1,x1)} \t (y2,x2): {(y2,x2)}")
+            print(f"local_selected: \t {local_selected[:,0].min()} {local_selected[:,1].min()} \t {local_selected[:,0].max()} {local_selected[:,1].max()}")
+            test_idx1 = (local_selected - np.array([y1,x1])).astype(int)
+            test_idx2 = (local_selected - np.array([y2,x2])).astype(int)
+            print(f"test_idx1: \t {test_idx1[:,0].min()} {test_idx1[:,1].min()} \t {test_idx1[:,0].max()} {test_idx1[:,1].max()}")
+            print(f"test_idx2: \t {test_idx2[:,0].min()} {test_idx2[:,1].min()} \t {test_idx2[:,0].max()} {test_idx2[:,1].max()}")
+            test_obj1 = obj1[k][test_idx1[:,0],test_idx1[:,1]]
+            test_obj2 = obj2[k][test_idx2[:,0],test_idx2[:,1]]
+            dis_obj = np.linalg.norm(test_obj1 - test_obj2,axis=-1)
+            print(f"dis_obj: \t {dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {np.median(dis_obj)}")
 
         corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
         corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
