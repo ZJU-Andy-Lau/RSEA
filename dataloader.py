@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,Sampler
 import os
@@ -41,6 +42,31 @@ def downsample(arr,ds):
     arr_ds = bilinear_interpolate(arr,sample_idxs)
     arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
     return arr_ds
+
+def sample_bilinear(A: torch.Tensor, idx: np.ndarray) -> torch.Tensor:
+    if not isinstance(A, torch.Tensor):
+        raise TypeError(f"输入 A 必须是 torch.Tensor, 但得到的是 {type(A)}")
+    if not isinstance(idx, np.ndarray):
+        raise TypeError(f"输入 idx 必须是 np.ndarray, 但得到的是 {type(idx)}")
+    B, H, W, _ = A.shape
+    grid = torch.from_numpy(idx).to(device=A.device, dtype=A.dtype)
+    A_permuted = A.permute(0, 3, 1, 2)
+    normalized_grid = torch.zeros_like(grid)
+    normalized_grid[..., 0] = 2.0 * grid[..., 1] / (W - 1) - 1.0
+    normalized_grid[..., 1] = 2.0 * grid[..., 0] / (H - 1) - 1.0
+    grid_reshaped = normalized_grid.unsqueeze(2)
+    sampled_output = F.grid_sample(
+        A_permuted, 
+        grid_reshaped, 
+        mode='bilinear', 
+        padding_mode='border', 
+        align_corners=False
+    )
+
+    result = sampled_output.permute(0, 2, 3, 1).squeeze(2)
+
+    return result
+
 
 def centerize_obj(obj:np.ndarray):
     x = obj[...,0]
@@ -164,9 +190,9 @@ def process_image(
         sorted_idx = np.argsort(residual_total)
         local_total = local_total[sorted_idx]
         
-        select_idx = np.array([])
+        select_idx = np.array([],dtype=np.int64)
         while(len(select_idx) < 1e5):
-            select_idx = np.concatenate([select_idx,np.arange(1e5 - len(select_idx))[:len(local_total)]],axis=0)
+            select_idx = np.concatenate([select_idx,np.arange(1e5 - len(select_idx),dtype=np.int64)[:len(local_total)]],axis=0,dtype=np.int64)
         
         local_selected = local_total[select_idx[:1e5]]
         corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) / downsample_ratio - np.array([.5,.5]),a_min=0.))
@@ -265,6 +291,11 @@ class PretrainDataset(Dataset):
 
         obj1 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj1],axis=0)).to(torch.float32)
         obj2 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj2],axis=0)).to(torch.float32)
+
+        test_obj1 = sample_bilinear(obj1,overlaps_1)
+        test_obj2 = sample_bilinear(obj2,overlaps_2)
+        obj_dis = torch.norm(test_obj1 - test_obj2,dim=-1).reshape(-1)
+        print(f"dis:{obj_dis.min().item()} \t {obj_dis.max().item()} \t {obj_dis.mean().item()} \t {obj_dis.median().item()}\n")
 
         residual1 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual1],axis=0)
         residual2 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual2],axis=0)
