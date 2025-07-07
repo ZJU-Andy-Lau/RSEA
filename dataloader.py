@@ -300,10 +300,10 @@ class PretrainDataset(Dataset):
         obj1 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj1],axis=0)).to(torch.float32)
         obj2 = torch.from_numpy(np.stack([downsample(obj,self.DOWNSAMPLE) for obj in obj2],axis=0)).to(torch.float32)
 
-        test_obj1 = sample_bilinear(obj1,overlaps_1)
-        test_obj2 = sample_bilinear(obj2,overlaps_2)
-        obj_dis = torch.norm(test_obj1[:,:2] - test_obj2[:,:2],dim=-1).reshape(-1)
-        print(f"dis:{obj_dis.min().item()} \t {obj_dis.max().item()} \t {obj_dis.mean().item()} \t {obj_dis.median().item()}\n")
+        # test_obj1 = sample_bilinear(obj1,overlaps_1)
+        # test_obj2 = sample_bilinear(obj2,overlaps_2)
+        # obj_dis = torch.norm(test_obj1[:,:2] - test_obj2[:,:2],dim=-1).reshape(-1)
+        # print(f"dis:{obj_dis.min().item()} \t {obj_dis.max().item()} \t {obj_dis.mean().item()} \t {obj_dis.median().item()}\n")
 
         residual1 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual1],axis=0)
         residual2 = np.stack([residual_average(residual,self.DOWNSAMPLE) for residual in residual2],axis=0)

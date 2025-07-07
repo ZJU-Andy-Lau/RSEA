@@ -71,8 +71,8 @@ def sample_features(features: torch.Tensor, coords: torch.Tensor) -> torch.Tenso
     y_coords = coords[:, :, 0]
     x_coords = coords[:, :, 1]
 
-    x_normalized = 2.0 * x_coords / (W - 1) - 1.0
-    y_normalized = 2.0 * y_coords / (H - 1) - 1.0
+    x_normalized = 2.0 * x_coords / W - 1.0
+    y_normalized = 2.0 * y_coords / H - 1.0
     
     normalized_grid = torch.stack([x_normalized, y_normalized], dim=2)
 
@@ -83,7 +83,7 @@ def sample_features(features: torch.Tensor, coords: torch.Tensor) -> torch.Tenso
         grid_for_sampling,
         mode='bilinear',
         padding_mode='border',
-        align_corners=False
+        align_corners=True
     )
     
     final_output = sampled_features.squeeze(2)
@@ -128,9 +128,8 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
     patch_feat1,global_feat1 = feat1[:,:args.patch_feature_channels],feat1[:,args.patch_feature_channels:]
     patch_feat2,global_feat2 = feat2[:,:args.patch_feature_channels],feat2[:,args.patch_feature_channels:]
 
-    feat1_sample = sample_features(feat1,overlap1)
-    feat2_sample = sample_features(feat2,overlap2)
-    print(f"feat1 shape:{feat1.shape} \t feat1_sample shape:{feat1_sample.shape}")
+    feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
+    feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 
     project_feat1 = projector(feat1_sample[:,:args.patch_feature_channels])
     project_feat2 = projector(feat2_sample[:,:args.patch_feature_channels])
