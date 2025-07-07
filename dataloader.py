@@ -190,11 +190,11 @@ def process_image(
         sorted_idx = np.argsort(residual_total)
         local_total = local_total[sorted_idx]
         
-        select_idx = np.array([],dtype=np.int64)
-        while(len(select_idx) < 1e5):
-            select_idx = np.concatenate([select_idx,np.arange(1e5 - len(select_idx),dtype=np.int64)[:len(local_total)]],axis=0,dtype=np.int64)
+        select_idx = np.array([],dtype=int)
+        while(len(select_idx) < 10000):
+            select_idx = np.concatenate([select_idx,np.arange(10000 - len(select_idx),dtype=int)[:len(local_total)]],axis=0,dtype=int)
         
-        local_selected = local_total[select_idx[:1e5]]
+        local_selected = local_total[select_idx[:10000]]
         corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) / downsample_ratio - np.array([.5,.5]),a_min=0.))
         corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) / downsample_ratio - np.array([.5,.5]),a_min=0.))
 
