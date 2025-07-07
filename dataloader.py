@@ -165,8 +165,8 @@ def process_image(
         x1, y1, s1 = bbox1
         x2, y2, s2 = bbox2
 
-        r1 = 1. * s1 / output_size
-        r2 = 1. * s2 / output_size
+        r1 = 1. * output_size / s1
+        r2 = 1. * output_size / s2
         
         # 2. 裁切和缩放图像
         
