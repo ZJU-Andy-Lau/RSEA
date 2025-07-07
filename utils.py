@@ -361,3 +361,62 @@ def downsample(arr:torch.Tensor,ds):
         arr_ds.append(a.reshape(len(lines),len(samps),-1).squeeze())
     arr_ds = torch.stack(arr_ds,dim=0)
     return arr_ds
+
+def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
+    """
+    将一个形状为 (H, W, C) 的 NumPy 数组在终端中以 H*W 矩阵的格式打印出来。
+    增加了对浮点数格式化的支持。
+
+    Args:
+        matrix (np.ndarray): 一个三维的 NumPy 数组，形状为 (H, W, C)。
+        precision (Optional[int], optional): 
+            当数组是浮点类型时，指定要保留的小数位数。
+            如果为 None，则使用默认的字符串表示。默认为 None。
+    """
+    # 检查输入是否为三维 NumPy 数组
+    if not isinstance(matrix, np.ndarray) or matrix.ndim != 3:
+        print("错误：输入必须是一个三维的 NumPy 数组 (H, W, C)。")
+        return
+
+    # 获取数组的维度
+    H, W, C = matrix.shape
+
+    # 如果数组为空，则不打印
+    if H == 0 or W == 0:
+        print("[]")
+        return
+    
+    string_elements = []
+    for h in range(H):
+        row_elements = []
+        for w in range(W):
+            vector = matrix[h, w]
+            string_element = ""
+            if precision is not None:
+                # 如果指定了精度，对向量中的每个数字进行格式化
+                try:
+                    # 使用 f-string 的嵌套格式化功能
+                    formatted_numbers = [f"{num:.{precision}f}" for num in vector]
+                    string_element = f"[{' '.join(formatted_numbers)}]"
+                except (ValueError, TypeError):
+                    # 如果格式化失败（例如，数组不是数字类型），则退回默认方式
+                    string_element = str(vector)
+            else:
+                # 未指定精度，使用 NumPy 默认的字符串转换
+                string_element = str(vector)
+            
+            row_elements.append(string_element)
+        string_elements.append(row_elements)
+
+    # 找到所有字符串化后的元素中的最大长度，用于对齐
+    max_len = max([len(s) for row in string_elements for s in row] or [0])
+
+    # 打印带边框的矩阵
+    print("┌" + "─" * (W * (max_len + 2) - 2) + "┐")
+    for row in string_elements:
+        print("│", end="")
+        for element in row:
+            # 使用 ljust 方法填充空格，使每个元素占据相同的宽度
+            print(f"{element:<{max_len}}", end="  ")
+        print("│")
+    print("└" + "─" * (W * (max_len + 2) - 2) + "┘")

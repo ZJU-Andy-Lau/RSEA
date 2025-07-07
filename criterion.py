@@ -159,26 +159,19 @@ class CriterionFinetune(nn.Module):
                 conf1_P,conf2_P,
                 obj1_P3,obj2_P3,
                 residual1_P,residual2_P,
-                overlap1_p,overlap2_p,
                 H,W
                 ):
         
-        # print("2-1:",detect_nan([feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P]))
 
         feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj1_P3,obj2_P3,residual1_P,residual2_P = \
             feat1_PD.to(torch.float32),feat2_PD.to(torch.float32),pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),conf1_P.to(torch.float32),conf2_P.to(torch.float32),obj1_P3.to(torch.float32),obj2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
 
-        # print("2-2:",detect_nan([feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj_P3,residual1_P,residual2_P]))
-
         P = H*W
         res_mid = torch.median(torch.cat([residual1_P,residual2_P])[torch.cat([residual1_P,residual2_P]) >= 0])
         residual_threshold = res_mid
-        robust_mask1 = residual1_P <= max(residual_threshold,5.)
-        robust_mask2 = residual2_P <= max(residual_threshold,5.)
         conf1_gt_P = residual2conf(residual1_P,residual_threshold)
         conf2_gt_P = residual2conf(residual2_P,residual_threshold)
         
-
         conf_valid1 = residual1_P >= 0
         conf_valid2 = residual2_P >= 0
         weights1_P = conf_norm(conf1_gt_P)
@@ -190,46 +183,23 @@ class CriterionFinetune(nn.Module):
         loss_conf = .5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]).mean() + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2]).mean()
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
 
-        # print("3:",detect_nan([loss_obj,loss_height]))
-
-        # dis_obj = torch.norm(obj1_P3[overlap1_p] - obj2_P3[overlap2_p],dim=-1)
-        # if dis_obj.min() > 8.:
-        #     print(f"dis obj:{dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {dis_obj.median()}")
-        # overlap1_p = overlap1_p[dis_obj < 8.]
-        # overlap2_p = overlap2_p[dis_obj < 8.]
-
-        feat1_anchor = F.normalize(feat1_PD,dim=1)[overlap1_p]
-        feat2_anchor = F.normalize(feat2_PD,dim=1)[overlap2_p]
-        anchor_robust_mask = robust_mask1[overlap1_p] & robust_mask2[overlap2_p]
-        pred1_anchor = pred1_P3[overlap1_p]
-        pred2_anchor = pred2_P3[overlap2_p]
-        obj1_anchor = obj1_P3[overlap1_p]
-        obj2_anchor = obj2_P3[overlap2_p]
 
         shift_amount1 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
         shift_amount2 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
-        feat1_negative = torch.roll(feat1_PD,shift_amount1)[:feat1_anchor.shape[0]]
-        feat2_negative = torch.roll(feat2_PD,shift_amount2)[:feat2_anchor.shape[0]]
+        feat1_negative = torch.roll(feat1_PD,shift_amount1)
+        feat2_negative = torch.roll(feat2_PD,shift_amount2)
 
-        simi_positive = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask] * feat2_anchor[anchor_robust_mask],dim=1),
-                                           torch.sum(feat2_anchor[anchor_robust_mask] * feat1_anchor[anchor_robust_mask],dim=1)])
-        simi_negative = torch.concatenate([torch.sum(feat1_anchor[anchor_robust_mask] * feat1_negative[anchor_robust_mask],dim=1),
-                                           torch.sum(feat2_anchor[anchor_robust_mask] * feat2_negative[anchor_robust_mask],dim=1)])
+        simi_positive = torch.concatenate([torch.sum(feat1_PD * feat2_PD,dim=1),
+                                           torch.sum(feat2_PD * feat1_PD,dim=1)])
+        simi_negative = torch.concatenate([torch.sum(feat1_PD * feat1_negative,dim=1),
+                                           torch.sum(feat2_PD * feat2_negative,dim=1)])
         
-        # print("4:",detect_nan([simi_positive,simi_negative]))
         loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - 7.,min=0).mean() * 10000.
 
-        dis_obj_gt = torch.norm(obj1_anchor[anchor_robust_mask,:2] - obj2_anchor[anchor_robust_mask,:2],dim=-1)
-        dis_height_gt = torch.abs(obj1_anchor[anchor_robust_mask,2] - obj2_anchor[anchor_robust_mask,2])
-        dis_obj_pred = torch.norm(pred1_anchor[anchor_robust_mask,:2] - pred2_anchor[anchor_robust_mask,:2],dim=-1)
-        dis_height_pred = torch.abs(pred1_anchor[anchor_robust_mask,2] - pred2_anchor[anchor_robust_mask,2]) * 100.
-        loss_dis = torch.abs(dis_obj_pred - dis_obj_gt).mean() + torch.abs(dis_height_pred - dis_height_gt).mean()
 
-        # print(f"dis_obj_gt:{dis_obj_gt.min().item()} \t {dis_obj_gt.max().item()} \t {dis_obj_gt.mean().item()}")
+        loss = loss_obj + loss_height + loss_conf + loss_feat #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
-        loss = loss_obj + loss_height + loss_conf + loss_feat + loss_dis * max(min(1.,epoch / 5. - 1.),0.)
-
-        return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,residual_threshold
+        return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold
         
 class CriterionFinetuneDis(nn.Module):
     def __init__(self):

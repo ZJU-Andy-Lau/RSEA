@@ -11,7 +11,7 @@ import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
 from criterion import CriterionFinetune
 from model_new import Encoder,ProjectHead,Decoder
-
+import h5py
 import datetime
 import time
 from tqdm import tqdm,trange
@@ -27,6 +27,7 @@ from scheduler import MultiStageOneCycleLR
 
 from functools import partial
 import cv2
+from copy import deepcopy
 
 def print_on_main(msg, rank):
     if rank == 0:
@@ -64,6 +65,30 @@ def apply_polynomial(x, coefs):
         y = y + c * (x ** (len(coefs) - 1 - i))
     return y
 
+def sample_features(features: torch.Tensor, coords: torch.Tensor) -> torch.Tensor:
+    H, W = features.shape[-2:]
+    
+    y_coords = coords[:, :, 0]
+    x_coords = coords[:, :, 1]
+
+    x_normalized = 2.0 * x_coords / (W - 1) - 1.0
+    y_normalized = 2.0 * y_coords / (H - 1) - 1.0
+    
+    normalized_grid = torch.stack([x_normalized, y_normalized], dim=2)
+
+    grid_for_sampling = normalized_grid.unsqueeze(1)
+
+    sampled_features = F.grid_sample(
+        features,
+        grid_for_sampling,
+        mode='bilinear',
+        padding_mode='border',
+        align_corners=True
+    )
+    
+    final_output = sampled_features.squeeze(2)
+    return final_output
+
 def warp_by_poly(raw,coefs):
     # raw[:,0] = .5 * (raw[:,0] + 1.) * (bbox['x_max'] - bbox['x_min']) + bbox['x_min']
     # raw[:,1] = .5 * (raw[:,1] + 1.) * (bbox['y_max'] - bbox['y_min']) + bbox['y_min']
@@ -85,65 +110,6 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         img = 255 * (img - img.min()) / (img.max() - img.min())
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
-def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
-    """
-    将一个形状为 (H, W, C) 的 NumPy 数组在终端中以 H*W 矩阵的格式打印出来。
-    增加了对浮点数格式化的支持。
-
-    Args:
-        matrix (np.ndarray): 一个三维的 NumPy 数组，形状为 (H, W, C)。
-        precision (Optional[int], optional): 
-            当数组是浮点类型时，指定要保留的小数位数。
-            如果为 None，则使用默认的字符串表示。默认为 None。
-    """
-    # 检查输入是否为三维 NumPy 数组
-    if not isinstance(matrix, np.ndarray) or matrix.ndim != 3:
-        print("错误：输入必须是一个三维的 NumPy 数组 (H, W, C)。")
-        return
-
-    # 获取数组的维度
-    H, W, C = matrix.shape
-
-    # 如果数组为空，则不打印
-    if H == 0 or W == 0:
-        print("[]")
-        return
-    
-    string_elements = []
-    for h in range(H):
-        row_elements = []
-        for w in range(W):
-            vector = matrix[h, w]
-            string_element = ""
-            if precision is not None:
-                # 如果指定了精度，对向量中的每个数字进行格式化
-                try:
-                    # 使用 f-string 的嵌套格式化功能
-                    formatted_numbers = [f"{num:.{precision}f}" for num in vector]
-                    string_element = f"[{' '.join(formatted_numbers)}]"
-                except (ValueError, TypeError):
-                    # 如果格式化失败（例如，数组不是数字类型），则退回默认方式
-                    string_element = str(vector)
-            else:
-                # 未指定精度，使用 NumPy 默认的字符串转换
-                string_element = str(vector)
-            
-            row_elements.append(string_element)
-        string_elements.append(row_elements)
-
-    # 找到所有字符串化后的元素中的最大长度，用于对齐
-    max_len = max([len(s) for row in string_elements for s in row] or [0])
-
-    # 打印带边框的矩阵
-    print("┌" + "─" * (W * (max_len + 2) - 2) + "┐")
-    for row in string_elements:
-        print("│", end="")
-        for element in row:
-            # 使用 ljust 方法填充空格，使每个元素占据相同的宽度
-            print(f"{element:<{max_len}}", end="  ")
-        print("│")
-    print("└" + "─" * (W * (max_len + 2) - 2) + "┘")
-
 def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:ProjectHead,criterion:nn.Module):
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
@@ -162,8 +128,11 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
     patch_feat1,global_feat1 = feat1[:,:args.patch_feature_channels],feat1[:,args.patch_feature_channels:]
     patch_feat2,global_feat2 = feat2[:,:args.patch_feature_channels],feat2[:,args.patch_feature_channels:]
 
-    project_feat1 = projector(patch_feat1)
-    project_feat2 = projector(patch_feat2)
+    feat1_sample = sample_features(feat1,overlap1)
+    feat2_sample = sample_features(feat2,overlap2)
+
+    project_feat1 = projector(feat1_sample[:,:args.patch_feature_channels])
+    project_feat2 = projector(feat2_sample[:,:args.patch_feature_channels])
 
     patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
     patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
@@ -178,22 +147,24 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
     feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
     # feat_input1 = feat1
     # feat_input2 = feat2
-
-    pred1_P3 = []
-    pred2_P3 = []
     
     output1_B3hw = decoder(feat_input1)
     output2_B3hw = decoder(feat_input2)
     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
+    pred1_P3 = warp_by_poly(output1_P3,obj_map_coef)
+    pred2_P3 = warp_by_poly(output2_P3,obj_map_coef)
 
-
-    pred1_P3.append(warp_by_poly(output1_P3,obj_map_coef))
-    pred2_P3.append(warp_by_poly(output2_P3,obj_map_coef))
-
-    
-    pred1_P3 = torch.concatenate(pred1_P3,dim=0)
-    pred2_P3 = torch.concatenate(pred2_P3,dim=0)
+    decoder_freeze = deepcopy(decoder)
+    for params in decoder_freeze.parameters():
+        params.requires_grad_ = False
+    decoder_freeze.eval()
+    output1_freeze_B3hw = decoder_freeze(feat1_sample)
+    output2_freeze_B3hw = decoder_freeze(feat2_sample)
+    output1_freeze_P3 = output1_freeze_B3hw.permute(0,2,3,1).flatten(0,2)
+    output2_freeze_P3 = output2_freeze_B3hw.permute(0,2,3,1).flatten(0,2)
+    pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
+    pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
 
     project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
     project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
@@ -205,23 +176,43 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
     residual2_P = residual2.reshape(-1).detach()
     conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
 
-    loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k = criterion(epoch,
-                                                                        project_feat1_PD,project_feat2_PD,
-                                                                        pred1_P3,pred2_P3,
-                                                                        conf1_P,conf2_P,
-                                                                        obj1_P3,obj2_P3,
-                                                                        residual1_P,residual2_P,
-                                                                        overlap1,overlap2,
-                                                                        H,W)
+    loss,loss_obj,loss_height,loss_conf,loss_feat,k = criterion(epoch,
+                                                                project_feat1_PD,project_feat2_PD,
+                                                                pred1_P3,pred2_P3,
+                                                                conf1_P,conf2_P,
+                                                                obj1_P3,obj2_P3,
+                                                                residual1_P,residual2_P,
+                                                                H,W)
+    
+    loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
+    loss = loss + loss_dis * max(min(1.,epoch / 5. - 1.),0.)
+
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean
 
 def pretrain(args):
+    os.makedirs('./log',exist_ok=True)
+    os.makedirs(os.path.dirname(args.encoder_output_path),exist_ok=True)
+    os.makedirs(args.decoder_output_path,exist_ok=True)
     pprint = partial(print_on_main, rank=dist.get_rank())
     pprint("Loading Dataset")
     rank = dist.get_rank()
+    
+    dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
+    if rank == 0:
+        with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
+            total_num = len(f.keys())
+        dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
+        indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
+        indices_str = " ".join(indices_str)
+        with open(os.path.join('./log','dataset_idxs_log.txt'),'a') as f:
+            f.write(f"{indices_str}\n")
+
+    dist.barrier()
+    dist.broadcast(dataset_indices,src=0)
+    dataset_indices = dataset_indices.cpu().numpy()
 
     dataset = PretrainDataset(root = args.dataset_path,
-                              dataset_num = args.dataset_num,
+                              dataset_idxs=dataset_indices,
                               batch_size = args.batch_size,
                               downsample = 16,
                               input_size = 1024,
@@ -239,7 +230,6 @@ def pretrain(args):
     if not args.encoder_path is None:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth'),map_location='cpu').items()},strict=True)
         pprint('Encoder Loaded')
-    os.makedirs(os.path.dirname(args.encoder_output_path),exist_ok=True)
 
     encoder_optimizer = optim.AdamW(params=list(encoder.get_unfreeze_parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
 
@@ -264,10 +254,7 @@ def pretrain(args):
         encoder = distibute_model(encoder,args.local_rank)
         projector = distibute_model(projector,args.local_rank)
     
-    pprint("Building Decoders")
-
-    if args.decoder_output_path is not None:
-        os.makedirs(args.decoder_output_path,exist_ok=True)
+    pprint("Building Decoders")     
 
     decoders = []
     optimizers = []
@@ -299,7 +286,6 @@ def pretrain(args):
     last_loss = None
     start_time = time.perf_counter()
     criterion = CriterionFinetune()
-    os.makedirs('./log',exist_ok=True)
     logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
     
     # torch.autograd.set_detect_anomaly(True)

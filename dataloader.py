@@ -16,8 +16,7 @@ import json
 import torch.distributed as dist
 from typing import List, Tuple
 
-IDXS = [74, 205, 243, 245, 227, 204, 171, 225, 317, 280, 206, 96, 44, 95, 247, 194, 263, 299, 221, 154, 270, 111, 229, 112, 228, 46, 86, 5, 42, 89, 242, 212, 123, 191, 273, 102, 181, 135, 281, 134, 119, 137, 43, 53, 126, 149, 315, 202, 291, 244, 15, 92, 6, 151, 161, 282, 10, 328, 30, 224, 144, 312, 105, 139, 65, 97, 164, 230, 48, 207, 219, 249, 201, 146, 211, 323, 155, 330, 173, 88, 55, 216, 300, 93, 290, 27, 140, 182, 57, 160, 165, 163, 254, 142, 82, 14, 61, 60, 21, 278, 49, 156, 177, 302, 31, 62, 76, 265, 279, 220, 29]
-    
+   
 def residual_average(arr, a):
     is_2d = arr.ndim == 2
     if is_2d:
@@ -128,6 +127,8 @@ def process_image(
     bboxes1 = []
     bboxes2 = []
 
+    local = get_coord_mat(H,W).astype(np.float32)
+
     # 为K对图像生成数据
     for k in range(K):
         # 1. 获取一对有效的随机裁切框
@@ -149,71 +150,35 @@ def process_image(
         residual1[k] = cv2.resize(residual1_full[y1:y1+s1, x1:x1+s1], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
         residual2[k] = cv2.resize(residual2_full[y2:y2+s2, x2:x2+s2], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
         
+        local1 = cv2.resize(local[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+        local2 = cv2.resize(local[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
 
-        # 4. 计算对应关系索引
-        scale1 = output_size / s1
-        scale2 = output_size / s2
+        residual_total = np.concatenate([residual1[k].reshape(-1),residual2[k].reshape(-1)],axis=0)
+        local_total = np.concatenate([local1.reshape(-1,2),local2.reshape(-1,2)],axis=0)
+        overlap_mask = (local_total[:,0] - y1 >= 0) & (local_total[:,0] - y2 >= 0) & (local_total[:,0] - y1 < s1) & (local_total[:,0] - y2 < s2) & \
+                       (local_total[:,1] - x1 >= 0) & (local_total[:,1] - x2 >= 0) & (local_total[:,1] - x1 < s1) & (local_total[:,1] - x2 < s2)
+        valid_mask = ~np.isnan(residual_total)
+        residual_total = residual_total[overlap_mask & valid_mask]
+        local_total = local_total[overlap_mask & valid_mask]
+
+        sorted_idx = np.argsort(residual_total)
+        local_total = local_total[sorted_idx]
         
-        # 4.1 计算在原始大图坐标系下的重叠区域
-        overlap_x_orig = max(x1, x2)
-        overlap_y_orig = max(y1, y2)
-        overlap_x_end_orig = min(x1 + s1, x2 + s2)
-        overlap_y_end_orig = min(y1 + s1, y2 + s2)
+        select_idx = np.array([])
+        while(len(select_idx) < 1e5):
+            select_idx = np.concatenate([select_idx,np.arange(1e5 - len(select_idx))[:len(local_total)]],axis=0)
         
-        # 4.2 将重叠区域映射到feat1的坐标系下，并确定遍历范围
-        # (orig_coord - crop_origin) * scale / downsample_ratio
-        feat1_x_start = math.ceil(((overlap_x_orig - x1) * scale1) / downsample_ratio)
-        feat1_y_start = math.ceil(((overlap_y_orig - y1) * scale1) / downsample_ratio)
-        feat1_x_end = math.floor(((overlap_x_end_orig - x1) * scale1) / downsample_ratio)
-        feat1_y_end = math.floor(((overlap_y_end_orig - y1) * scale1) / downsample_ratio)
+        local_selected = local_total[select_idx[:1e5]]
+        corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) / downsample_ratio - np.array([.5,.5]),a_min=0.))
+        corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) / downsample_ratio - np.array([.5,.5]),a_min=0.))
 
-        # 4.3 遍历feat1重叠区，计算feat2对应点
-        k_offset = k * (feature_map_size ** 2)
-
-        for fy1 in range(feat1_y_start, feat1_y_end):
-            for fx1 in range(feat1_x_start, feat1_x_end):
-                # a. feat1 -> resize1 (中心点)
-                px_resize1 = (fx1 + 0.5) * downsample_ratio
-                py_resize1 = (fy1 + 0.5) * downsample_ratio
-
-                # b. resize1 -> crop1
-                px_crop1 = px_resize1 / scale1
-                py_crop1 = py_resize1 / scale1
-
-                # c. crop1 -> original image
-                px_orig = px_crop1 + x1
-                py_orig = py_crop1 + y1
-
-                # d. original image -> crop2
-                px_crop2 = px_orig - x2
-                py_crop2 = py_orig - y2
-                
-                # 检查点是否在crop2的有效范围内
-                if not (0 <= px_crop2 < s2 and 0 <= py_crop2 < s2):
-                    continue
-
-                # e. crop2 -> resize2
-                px_resize2 = px_crop2 * scale2
-                py_resize2 = py_crop2 * scale2
-                
-                # f. resize2 -> feat2 (取整)
-                fx2 = math.floor(px_resize2 / downsample_ratio)
-                fy2 = math.floor(py_resize2 / downsample_ratio)
-
-                # 有效性检查：确保计算出的(fx2, fy2)在特征图范围内
-                if 0 <= fx2 < feature_map_size and 0 <= fy2 < feature_map_size:
-                    idx1 = k_offset + (fy1 * feature_map_size + fx1)
-                    idx2 = k_offset + (fy2 * feature_map_size + fx2)
-                    corr_idxs1_list.append(idx1)
-                    corr_idxs2_list.append(idx2)
-
-    corr_idxs1 = np.array(corr_idxs1_list, dtype=np.int64)
-    corr_idxs2 = np.array(corr_idxs2_list, dtype=np.int64)
+    corr_idxs1 = np.stack(corr_idxs1_list, dtype=np.float32)
+    corr_idxs2 = np.stack(corr_idxs2_list, dtype=np.float32)
 
     return imgs1, imgs2, obj1, obj2, residual1, residual2, corr_idxs1, corr_idxs2
 
 class PretrainDataset(Dataset):
-    def __init__(self,root,dataset_num = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
+    def __init__(self,root,dataset_idxs = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
         super().__init__()
         self.root = root
         if mode == 'train':
@@ -223,14 +188,13 @@ class PretrainDataset(Dataset):
         else:
             raise ValueError("mode should be either train or test")
 
-        if dist.get_rank() == 0:
-            print("Selected dataset idxs:\n")
-            print(IDXS)
-
-        if dataset_num is None or dataset_num <= 0:
-            dataset_num = len(self.database.keys())
-        self.dataset_num = dataset_num
-        self.database_keys = [list(self.database.keys())[i] for i in IDXS[:dataset_num]]
+        # if dataset_num is None or dataset_num <= 0:
+        #     dataset_num = len(self.database.keys())
+        if dataset_idxs is None:
+            self.dataset_num = len(self.database.keys())
+        else:
+            self.dataset_num = len(dataset_idxs)
+        self.database_keys = [list(self.database.keys())[i] for i in dataset_idxs]
         self.DOWNSAMPLE=downsample
         self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
         self.input_size = input_size
@@ -251,7 +215,7 @@ class PretrainDataset(Dataset):
             self.transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
-                # transforms.RandomInvert(p=.2),
+                transforms.RandomInvert(p=.2),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
         else:
