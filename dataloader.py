@@ -52,8 +52,8 @@ def sample_bilinear(A: torch.Tensor, idx: np.ndarray) -> torch.Tensor:
     grid = torch.from_numpy(idx).to(device=A.device, dtype=A.dtype)
     A_permuted = A.permute(0, 3, 1, 2)
     normalized_grid = torch.zeros_like(grid)
-    normalized_grid[..., 0] = 2.0 * grid[..., 1] / (W - 1) - 1.0
-    normalized_grid[..., 1] = 2.0 * grid[..., 0] / (H - 1) - 1.0
+    normalized_grid[..., 0] = 2.0 * grid[..., 0] / (H - 1) - 1.0
+    normalized_grid[..., 1] = 2.0 * grid[..., 1] / (W - 1) - 1.0
     grid_reshaped = normalized_grid.unsqueeze(2)
     sampled_output = F.grid_sample(
         A_permuted, 
