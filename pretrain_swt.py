@@ -130,6 +130,7 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:Proje
 
     feat1_sample = sample_features(feat1,overlap1)
     feat2_sample = sample_features(feat2,overlap2)
+    print(f"feat1 shape:{feat1.shape} \t feat1_sample shape:{feat1_sample.shape}")
 
     project_feat1 = projector(feat1_sample[:,:args.patch_feature_channels])
     project_feat2 = projector(feat2_sample[:,:args.patch_feature_channels])

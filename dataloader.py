@@ -44,23 +44,19 @@ def downsample(arr,ds):
     return arr_ds
 
 def sample_bilinear(A: torch.Tensor, idx: np.ndarray) -> torch.Tensor:
-    if not isinstance(A, torch.Tensor):
-        raise TypeError(f"输入 A 必须是 torch.Tensor, 但得到的是 {type(A)}")
-    if not isinstance(idx, np.ndarray):
-        raise TypeError(f"输入 idx 必须是 np.ndarray, 但得到的是 {type(idx)}")
     B, H, W, _ = A.shape
     grid = torch.from_numpy(idx).to(device=A.device, dtype=A.dtype)
     A_permuted = A.permute(0, 3, 1, 2)
     normalized_grid = torch.zeros_like(grid)
-    normalized_grid[..., 0] = 2.0 * grid[..., 1] / (W - 1) - 1.0
-    normalized_grid[..., 1] = 2.0 * grid[..., 0] / (H - 1) - 1.0
+    normalized_grid[..., 0] = 2.0 * grid[..., 1] / W - 1.0
+    normalized_grid[..., 1] = 2.0 * grid[..., 0] / H - 1.0
     grid_reshaped = normalized_grid.unsqueeze(2)
     sampled_output = F.grid_sample(
         A_permuted, 
         grid_reshaped, 
         mode='bilinear', 
         padding_mode='border', 
-        align_corners=False
+        align_corners=True
     )
 
     result = sampled_output.permute(0, 2, 3, 1).squeeze(2)
@@ -207,8 +203,8 @@ def process_image(
         #     dis_obj = np.linalg.norm(test_obj1 - test_obj2,axis=-1)
         #     print(f"dis_obj: \t {dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {np.median(dis_obj)}")
 
-        corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) * r1 / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
-        corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) * r2 / downsample_ratio - np.array([.5,.5]),a_min=0.,a_max=output_size / downsample_ratio - 1.))
+        corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) * r1 / downsample_ratio, a_min=0.,a_max=(output_size - 1) / downsample_ratio))
+        corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) * r2 / downsample_ratio, a_min=0.,a_max=(output_size - 1) / downsample_ratio))
 
     corr_idxs1 = np.stack(corr_idxs1_list).astype(np.float32)
     corr_idxs2 = np.stack(corr_idxs2_list).astype(np.float32)
