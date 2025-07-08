@@ -142,7 +142,7 @@ if __name__ == '__main__':
     root = args.root
 
     start_time = time.time()
-    names = [i.split('.tif')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
     for name in names:
         get_elevation(os.path.join(root,f'{name}.tiff'),os.path.join(root,'dem.tif'),os.path.join(root,f'{name}_dem.tif'))
     end_time = time.time()
