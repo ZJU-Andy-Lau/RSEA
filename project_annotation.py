@@ -44,7 +44,7 @@ if __name__ == '__main__':
     tie_points1 = load_points(os.path.join(root,'img1.txt'))
     heights = dem[tie_points1[:,0],tie_points1[:,1]]
     lats,lons = rpc1.RPC_PHOTO2OBJ(tie_points1[:,1],tie_points1[:,0],heights,'numpy')
-    tie_points2 = np.stack(rpc2.RPC_OBJ2PHOTO(lats,lons,heights,'numpy'),axis=-1,dtype=int)[:,[1,0]]
+    tie_points2 = np.stack(rpc2.RPC_OBJ2PHOTO(lats,lons,heights,'numpy'),axis=-1)[:,[1,0]].astype(int)
 
     save_points(os.path.join(root,'img2.txt'),tie_points2)
 
