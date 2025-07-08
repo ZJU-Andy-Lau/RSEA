@@ -113,6 +113,6 @@ if __name__ == '__main__':
         rpc = RPCModelParameterTorch()
         rpc.load_from_file(os.path.join(root,f'{name}.rpc'))
         rpc.to_gpu()
-        get_elevation(os.path.join(root,f'{name}.tiff'),os.path.join(root,'dem.tif'),os.path.join(root,f'{name}_dem.tif'),rpc)
+        get_elevation(os.path.join(root,f'{name}.tiff'),os.path.join(root,'dem_egm.tif'),os.path.join(root,f'{name}_dem.tif'),rpc)
     end_time = time.time()
     print(f"总耗时: {end_time - start_time:.2f} 秒")
