@@ -90,7 +90,7 @@ def stretch_array_to_uint8(image_array: np.ndarray,
 def read_tif(tif_path):
     with rasterio.open(tif_path) as src:
         data = src.read()
-        pan_data = np.mean(data,axis=0).astype(src.profile('dtype'))
+        pan_data = np.mean(data,axis=0)
         return pan_data
 
 def find_intersection(rect1: np.ndarray, rect2: np.ndarray) -> np.ndarray:
