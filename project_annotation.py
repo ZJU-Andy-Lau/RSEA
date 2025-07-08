@@ -19,7 +19,7 @@ def save_points(txt_path,points:np.ndarray):
     with open(txt_path,'w') as f:
         output = ""
         for point in points:
-            output += f"{int(point[0])},{int(points[1])}\n"
+            output += f"{int(point[0])},{int(point[1])}\n"
         f.write(output)
 
 if __name__ == '__main__':
