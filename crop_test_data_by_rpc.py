@@ -172,15 +172,18 @@ if __name__ == '__main__':
     intersection_samps1,intersection_lines1 = rpc1.RPC_OBJ2PHOTO(intersection_latlons[:,0],intersection_latlons[:,1],intersection_heights,'numpy')
     intersection_samps2,intersection_lines2 = rpc2.RPC_OBJ2PHOTO(intersection_latlons[:,0],intersection_latlons[:,1],intersection_heights,'numpy')
 
-    line_min1,line_max1,samp_min1,samp_max1 = max(0,intersection_lines1.min()), \
-                                              min(H1-1,intersection_lines1.max()),\
-                                              max(0,intersection_samps1.min()),\
-                                              min(W1-1,intersection_samps1.max())
+    line_min1,line_max1,samp_min1,samp_max1 = int(max(0,intersection_lines1.min())), \
+                                              int(min(H1-1,intersection_lines1.max())),\
+                                              int(max(0,intersection_samps1.min())),\
+                                              int(min(W1-1,intersection_samps1.max()))
     
-    line_min2,line_max2,samp_min2,samp_max2 = max(0,intersection_lines2.min()), \
-                                              min(H2-1,intersection_lines2.max()),\
-                                              max(0,intersection_samps2.min()),\
-                                              min(W2-1,intersection_samps2.max())
+    line_min2,line_max2,samp_min2,samp_max2 = int(max(0,intersection_lines2.min())), \
+                                              int(min(H2-1,intersection_lines2.max())),\
+                                              int(max(0,intersection_samps2.min())),\
+                                              int(min(W2-1,intersection_samps2.max()))
+    
+    print("img1 crop range:",(line_min1,samp_min1),(line_max1,samp_max1))
+    print("img2 crop range:",(line_min2,samp_min2),(line_max2,samp_max2))
     
     img1_output = stretch_array_to_uint8(img1[line_min1:line_max1,samp_min1:samp_max1])
     img2_output = stretch_array_to_uint8(img2[line_min2:line_max2,samp_min2:samp_max2])
