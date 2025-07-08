@@ -86,7 +86,7 @@ def get_elevation(image_path: str, dem_path: str, output_path: str, rpc:RPCModel
                             elevations.flat[final_valid_mask] = new_elevations[final_valid_mask]
 
                         window = Window(x_offset, y_offset, current_block_x, current_block_y)
-                        output_ds.write(elevations.astype(np.float32), window=window)
+                        output_ds.write(elevations.astype(np.float32),1, window=window)
                         pbar.update(current_block_x * current_block_y)
 
                 pbar.close()
