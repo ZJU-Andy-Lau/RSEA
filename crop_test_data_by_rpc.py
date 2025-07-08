@@ -14,7 +14,7 @@ from shapely.errors import GEOSException
 def stretch_array_to_uint8(image_array: np.ndarray, 
                            lower_percent: int = 2, 
                            upper_percent: int = 98, 
-                           nodata_value: int | float | None = None) -> np.ndarray:
+                           nodata_value = None) -> np.ndarray:
     """
     将高位深（如uint16, float32）的NumPy数组通过百分比截断线性拉伸转换为uint8数组。
 
