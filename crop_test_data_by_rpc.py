@@ -146,7 +146,7 @@ if __name__ == '__main__':
     root = args.root
     output_path = args.output_path
     os.makedirs(output_path,exist_ok=True)
-    names = [i.split('.')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
     img1 = read_tif(os.path.join(root,f'{names[0]}.tiff'))
     img2 = read_tif(os.path.join(root,f'{names[1]}.tiff'))
     dem1 = read_tif(os.path.join(root,f'{names[0]}_dem.tif'))
