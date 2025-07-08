@@ -93,7 +93,7 @@ def read_tif(tif_path):
         pan_data = np.mean(data,axis=0).astype(src.profile('dtype'))
         return pan_data
 
-def find_intersection(rect1: np.ndarray, rect2: np.ndarray) -> np.ndarray | None:
+def find_intersection(rect1: np.ndarray, rect2: np.ndarray) -> np.ndarray:
     """
     使用 Shapely 库计算两个非轴对齐矩形（或任意凸四边形）的重叠区域。
 
@@ -152,6 +152,7 @@ if __name__ == '__main__':
     dem1 = read_tif(os.path.join(root,f'{names[0]}_dem.tif'))
     dem2 = read_tif(os.path.join(root,f'{names[1]}_dem.tif'))
     dem_full = rasterio.open(os.path.join(root,'dem_egm.tif'),'r')
+    print("load imgs done")
     rpc1 = RPCModelParameterTorch()
     rpc2 = RPCModelParameterTorch()
     rpc1.load_from_file(os.path.join(root,f'{names[0]}.rpc'))
