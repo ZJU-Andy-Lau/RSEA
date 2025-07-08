@@ -42,7 +42,7 @@ def get_elevation(image_path: str, dem_path: str, output_path: str, rpc:RPCModel
 
             # --- 3. 创建输出文件并分块处理 ---
             with rasterio.open(output_path, 'w', **profile) as output_ds:
-                block_size_x, block_size_y = 5120, 5120
+                block_size_x, block_size_y = 512, 512
                 
                 print("开始分块计算高程...")
                 pbar = tqdm(total=img_width * img_height, desc="处理像素")
