@@ -46,7 +46,7 @@ if __name__ == '__main__':
     lats,lons = rpc1.RPC_PHOTO2OBJ(tie_points1[:,1],tie_points1[:,0],heights,'numpy')
     tie_points2 = np.stack(rpc2.RPC_OBJ2PHOTO(lats,lons,heights,'numpy'),axis=-1,dtype=int)[:,[1,0]]
 
-    save_points(os.path.join(root,'img2.txt'))
+    save_points(os.path.join(root,'img2.txt'),tie_points2)
 
     for point in tqdm(tie_points1):
         cv2.circle(img1,(int(point[1]),int(point[0])),2,(0,255,0),-1)
