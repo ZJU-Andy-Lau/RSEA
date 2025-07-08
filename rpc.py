@@ -483,10 +483,11 @@ class RPCModelParameterTorch:
         for i in range(150, 170):
             text += addition0[i] + " " + str(self.LONDEM[i - 150].item()) + "\n"
         
-        text += "\nRFM CORRECTION PARAMETERS:\n"
+        if corection_params != [0.,0.,1.,0.,1.,0.]:
+            text += "\nRFM CORRECTION PARAMETERS:\n"
 
-        for i in range(6):
-            text += addition2[i] + " " + str(corection_params[i].item()) + "\n"
+            for i in range(6):
+                text += addition2[i] + " " + str(corection_params[i].item()) + "\n"
 
         f = open(filepath, "w")
         f.write(text)
