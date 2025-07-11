@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from model_new import Encoder0409,Encoder0409,Decoder
+from model_new import Encoder,Decoder
 import os
 import cv2
 from datetime import datetime,timedelta
@@ -294,7 +294,7 @@ class RSImage():
         # return self.dem[tl_sampline[1]:br_sampline[1],tl_sampline[0]:br_sampline[0]],tl_sampline,br_sampline
 
 class Element():
-    def __init__(self,options,encoder:Encoder0409,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = np.array([0.,0.])):
+    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = np.array([0.,0.])):
         self.options = options
         self.id = id
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
@@ -1063,7 +1063,7 @@ class Element():
 
 
 class Grid():
-    def __init__(self,options,extend:np.ndarray,diag:np.ndarray,encoder:Encoder0409,output_path:str):
+    def __init__(self,options,extend:np.ndarray,diag:np.ndarray,encoder:Encoder,output_path:str):
         """
         extend:(cxx,cxy,cx0,cyx,cyy,cy0,sx,sy,dmin,dmax)
         """
@@ -1585,7 +1585,7 @@ class RSEA():
         random.seed(42)
         self.imgs:List[RSImage] = []
         self.grids:List[Grid] = []
-        self.encoder = Encoder0409(cfg_large)
+        self.encoder = Encoder(cfg_large)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
         self.root = options.root
