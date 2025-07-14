@@ -260,7 +260,7 @@ def pretrain(args):
     optimizers = []
     schedulers = []
     for dataset_idx in trange(dataset_num):
-        decoder = Decoder(in_channels=args.output_channels,block_num=1,use_bn=False)
+        decoder = Decoder(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
 
         if not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})
@@ -460,7 +460,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
     parser.add_argument('--decoder_output_path',type=str,default=None)
     parser.add_argument('--batch_size',type=int,default=8)
-    parser.add_argument('--data_batch_size',type=int,default=4)
+    parser.add_argument('--decoder_block_num',type=int,default=1)
     parser.add_argument('--use_gpu',type=bool,default=True)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
