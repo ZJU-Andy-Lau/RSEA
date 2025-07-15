@@ -11,7 +11,7 @@ from utils import project_mercator,mercator2lonlat,bilinear_interpolate,resample
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
 import rasterio
-from scipy.interpolate import RegularGridInterpolator
+from typing import Tuple
 
 class RSImage():
     def __init__(self,options,root:str,id:int,size_limit = 0):
@@ -146,7 +146,7 @@ class RSImage():
         return self.get_dem_by_sampline(tl_sampline,br_sampline),tl_sampline,br_sampline
 
     @torch.no_grad()
-    def resample_image_by_sampline(self,corner_samplines:np.ndarray,target_shape:tuple[int, int],need_local = False):
+    def resample_image_by_sampline(self,corner_samplines:np.ndarray,target_shape:Tuple[int,int],need_local:bool = False):
         img_resampled,local_hw2 = resample_from_quad(self.image,corner_samplines[:,[1,0]],target_shape)
         if need_local:
             return img_resampled,local_hw2
@@ -154,7 +154,7 @@ class RSImage():
             return img_resampled
     
     @torch.no_grad()
-    def resample_dem_by_sampline(self,corner_samplines:np.ndarray,target_shape:tuple[int, int],need_local = False):
+    def resample_dem_by_sampline(self,corner_samplines:np.ndarray,target_shape:Tuple[int,int],need_local:bool = False):
         dem_resampled,local_hw2 = resample_from_quad(self.dem,corner_samplines[:,[1,0]],target_shape)
         if need_local:
             return dem_resampled,local_hw2
