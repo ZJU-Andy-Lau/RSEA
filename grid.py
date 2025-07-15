@@ -43,8 +43,8 @@ class Grid():
         if grid_path is None :
             self.diag = diag #[[x,y],[x,y]]
             self.map_coeffs = {
-                'x':np.array([.5 * np.abs(diag[0,0] - diag[1,0]), .5 * (diag[0,0] + diag[1,0])]),
-                'y':np.array([.5 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
+                'x':np.array([.6 * np.abs(diag[0,0] - diag[1,0]), .5 * (diag[0,0] + diag[1,0])]),
+                'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
                 'h':None
             }
         else:
