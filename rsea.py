@@ -64,6 +64,8 @@ class RSEA():
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
         self.root = options.root
+        self.grid_root = os.path.join(self.root,"grids")
+        os.makedirs(self.grid_root,exist_ok=True)
         
         if not os.path.isdir(self.root):
             raise ValueError("Output path is not a folder")
@@ -131,7 +133,7 @@ class RSEA():
 
         for grid_idx,diag in enumerate(grid_diags):
             print(f"Creating grid {grid_idx}")
-            grid_output_path = os.path.join(self.root,f"grid_{grid_idx}")
+            grid_output_path = os.path.join(self.grid_root,f"grid_{grid_idx}")
             os.makedirs(grid_output_path,exist_ok=True)
 
             new_grid = Grid(options = self.options,
