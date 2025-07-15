@@ -85,7 +85,7 @@ if __name__ == '__main__':
     # --- 请在这里修改您的文件名 ---
     dem_file = args.dem_path  # 替换为您的DEM文件名
     gravity_file = args.egm_path  # 替换为您的重力异常数据文件名
-    output_file = args.dem_path.replace('dem','dem_egm') # 定义输出文件名
+    output_file = args.dem_path.replace('.tif','_egm.tif') # 定义输出文件名
     # --------------------------------
 
     adjust_dem_with_gravity(dem_file, gravity_file, output_file)

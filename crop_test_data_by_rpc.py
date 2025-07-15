@@ -11,6 +11,8 @@ from utils import project_mercator,mercator2lonlat
 from shapely.geometry import Polygon
 from shapely.errors import GEOSException
 
+from tqdm import tqdm,trange
+
 def stretch_array_to_uint8(image_array: np.ndarray, 
                            lower_percent: int = 2, 
                            upper_percent: int = 98, 
@@ -93,49 +95,78 @@ def read_tif(tif_path):
         pan_data = np.mean(data,axis=0)
         return pan_data
 
-def find_intersection(rect1: np.ndarray, rect2: np.ndarray) -> np.ndarray:
+def get_data(src,line,samp):
+    window = Window(samp,line,1,1)
+    value = src.read(window = window)
+    return value[0][0][0]
+
+def find_intersection(quads_array: np.ndarray) -> np.ndarray:
     """
-    使用 Shapely 库计算两个非轴对齐矩形（或任意凸四边形）的重叠区域。
+    计算N个凸四边形的公共重叠区域。
 
     Args:
-        rect1 (np.ndarray): 第一个矩形的(4, 2) numpy数组。
-        rect2 (np.ndarray): 第二个矩形的(4, 2) numpy数组。
+        quads_array (np.ndarray): 一个形状为 (N, 4, 2) 的Numpy数组，
+                                  记录了N个四边形的4个顶点坐标(x, y)。
 
     Returns:
-        np.ndarray | None: 
-            - 如果存在面重叠，则返回一个 NumPy 数组，包含了重叠多边形的顶点坐标。
-            - 如果没有重叠或重叠区域为线/点，则返回 None。
+        np.ndarray: 一个形状为 (M, 2) 的Numpy数组，记录了最终重叠区域
+                    多边形的M个顶点坐标。如果没有重叠区域，则返回一个
+                    形状为 (0, 2) 的空数组。
     """
+    # --- 输入验证 ---
+    if not isinstance(quads_array, np.ndarray) or quads_array.ndim != 3 or quads_array.shape[1:] != (4, 2):
+        raise ValueError("输入必须是一个形状为 (N, 4, 2) 的Numpy数组。")
+
+    num_quads = quads_array.shape[0]
+
+    # 如果没有四边形，则返回空
+    if num_quads == 0:
+        return np.empty((0, 2), dtype=float)
+
+    # --- 初始化 ---
+    # 将第一个四边形作为初始的重叠区域
     try:
-        # 1. 将Numpy数组转换为Shapely的Polygon对象
-        poly1 = Polygon(rect1)
-        poly2 = Polygon(rect2)
-        
-        # 2. 检查多边形是否有效（例如，没有自相交）并且是否存在交集
-        if not poly1.is_valid or not poly2.is_valid:
-            # 对于简单的矩形输入，通常是有效的
-            print("警告: 输入的几何图形之一无效。")
-            return None
+        # Shapely的Polygon会自动闭合，所以我们提供的顶点列表即可
+        intersection_poly = Polygon(quads_array[0])
+    except Exception as e:
+        raise ValueError(f"无法从坐标创建第一个多边形: {e}")
 
-        if not poly1.intersects(poly2):
-            return None
+    # 如果只有一个四边形，直接返回其顶点
+    if num_quads == 1:
+        # Shapely Polygon的exterior.coords返回的坐标会包含重复的闭合点，需要去掉
+        return np.array(intersection_poly.exterior.coords)[:-1]
 
-        # 3. 计算交集
-        intersection_geom = poly1.intersection(poly2)
+    # --- 迭代计算交集 ---
+    for i in range(1, num_quads):
+        # 如果当前交集已为空，则后续无需计算，最终交集也为空
+        if intersection_poly.is_empty:
+            return np.empty((0, 2), dtype=float)
 
-        # 4. 处理结果
-        # 我们只关心有面积的重叠部分（即结果为Polygon）
-        if intersection_geom.is_empty or not isinstance(intersection_geom, Polygon):
-            return None
-        
-        # 5. 提取坐标并返回
-        # intersection_geom.exterior.coords 返回一个CoordinateSequence对象
-        # 我们将其转换为Numpy数组
-        return np.array(intersection_geom.exterior.coords)
+        try:
+            current_poly = Polygon(quads_array[i])
+            # 计算与当前多边形的交集
+            intersection_poly = intersection_poly.intersection(current_poly)
+        except Exception as e:
+            # 如果某个四边形坐标无效，可以跳过或抛出异常
+            print(f"警告: 第 {i+1} 个四边形无效，已跳过。错误: {e}")
+            continue
 
-    except GEOSException as e:
-        print(f"处理几何图形时发生错误: {e}")
-        return None
+    # --- 结果处理 ---
+    # 检查最终的交集类型并提取顶点
+    if intersection_poly.is_empty:
+        # 没有交集
+        return np.empty((0, 2), dtype=float)
+    
+    # 交集可能是一个点、一条线或一个多边形
+    geom_type = intersection_poly.geom_type
+    
+    if geom_type == 'Polygon':
+        # 标准情况：交集是一个多边形
+        # exterior.coords的最后一个点与第一个点相同，用于闭合路径，我们需要去掉它
+        return np.array(intersection_poly.exterior.coords)[:-1]
+    else:
+        raise ValueError("没有重叠区域")
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -147,61 +178,68 @@ if __name__ == '__main__':
     output_path = args.output_path
     os.makedirs(output_path,exist_ok=True)
     names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
-    img1 = read_tif(os.path.join(root,f'{names[0]}.tiff'))
-    img2 = read_tif(os.path.join(root,f'{names[1]}.tiff'))
-    dem1 = read_tif(os.path.join(root,f'{names[0]}_dem.tif'))
-    dem2 = read_tif(os.path.join(root,f'{names[1]}_dem.tif'))
-    dem_full = rasterio.open(os.path.join(root,'dem_egm.tif'),'r')
+
+
+    imgs = []
+    dems = []
+    rpcs = []
+    hws = []
+    corner_yxs = []
+    dem_full = rasterio.open(os.path.join(root,'dtm_egm.tif'),'r')
+
+    for name in tqdm(names):
+        img = rasterio.open(os.path.join(root,f'{name}.tiff'),'r')
+        dem = rasterio.open(os.path.join(root,f'{name}_height.tif'),'r')
+        H,W = img.height,img.width
+        rpc = RPCModelParameterTorch()
+        rpc.load_from_file(os.path.join(root,f'{name}.rpc'))
+        corner_lats,corner_lons = rpc.RPC_PHOTO2OBJ([0,0,W-1,W-1],[0,H-1,H-1,0],[get_data(dem,0,0),get_data(dem,H-1,0),get_data(dem,H-1,W-1),get_data(dem,W-1,0)])
+        corner_yxs.append(project_mercator(torch.stack([corner_lats,corner_lons],dim=-1)).numpy())
+        imgs.append(img)
+        dems.append(dem)
+        rpcs.append(rpc)
+        hws.append([H,W])
+    corner_yxs = np.stack(corner_yxs,axis=0)
+
     print("load imgs done")
-    rpc1 = RPCModelParameterTorch()
-    rpc2 = RPCModelParameterTorch()
-    rpc1.load_from_file(os.path.join(root,f'{names[0]}.rpc'))
-    rpc2.load_from_file(os.path.join(root,f'{names[1]}.rpc'))
-    H1,W1 = img1.shape[:2]
-    H2,W2 = img2.shape[:2]
 
-    corners_lats1,corners_lons1 = rpc1.RPC_PHOTO2OBJ([0,0,W1-1,W1-1],[0,H1-1,H1-1,0],[dem1[0,0],dem1[-1,0],dem1[-1,-1],dem1[0,-1]])
-    corners_lats2,corners_lons2 = rpc2.RPC_PHOTO2OBJ([0,0,W2-1,W2-1],[0,H2-1,H2-1,0],[dem2[0,0],dem2[-1,0],dem2[-1,-1],dem2[0,-1]])
-
-    corners_yx1 = project_mercator(torch.stack([corners_lats1,corners_lons1],dim=-1)).numpy()
-    corners_yx2 = project_mercator(torch.stack([corners_lats2,corners_lons2],dim=-1)).numpy()
-
-    intersection_yxs = find_intersection(corners_yx1,corners_yx2)
+    intersection_yxs = find_intersection(corner_yxs)
+    print(intersection_yxs)
     intersection_latlons = mercator2lonlat(torch.from_numpy(intersection_yxs)).numpy()
     intersection_heights = [val[0] for val in dem_full.sample(intersection_latlons[:,[1,0]])]
-    intersection_samps1,intersection_lines1 = rpc1.RPC_OBJ2PHOTO(intersection_latlons[:,0],intersection_latlons[:,1],intersection_heights,'numpy')
-    intersection_samps2,intersection_lines2 = rpc2.RPC_OBJ2PHOTO(intersection_latlons[:,0],intersection_latlons[:,1],intersection_heights,'numpy')
-
-    line_min1,line_max1,samp_min1,samp_max1 = int(max(0,intersection_lines1.min())), \
-                                              int(min(H1-1,intersection_lines1.max())),\
-                                              int(max(0,intersection_samps1.min())),\
-                                              int(min(W1-1,intersection_samps1.max()))
     
-    line_min2,line_max2,samp_min2,samp_max2 = int(max(0,intersection_lines2.min())), \
-                                              int(min(H2-1,intersection_lines2.max())),\
-                                              int(max(0,intersection_samps2.min())),\
-                                              int(min(W2-1,intersection_samps2.max()))
-    
-    print("img1 crop range:",(line_min1,samp_min1),(line_max1,samp_max1))
-    print("img2 crop range:",(line_min2,samp_min2),(line_max2,samp_max2))
-    
-    img1_output = stretch_array_to_uint8(img1[line_min1:line_max1,samp_min1:samp_max1])
-    img2_output = stretch_array_to_uint8(img2[line_min2:line_max2,samp_min2:samp_max2])
+    for i in trange(len(names)):
+        rpc = rpcs[i]
+        intersection_samps,intersection_lines = rpc.RPC_OBJ2PHOTO(intersection_latlons[:,0],intersection_latlons[:,1],intersection_heights,'numpy')
+        line_min,line_max,samp_min,samp_max = int(max(0,intersection_lines.min())), \
+                                              int(min(hws[i][0]-1,intersection_lines.max())),\
+                                              int(max(0,intersection_samps.min())),\
+                                              int(min(hws[i][1]-1,intersection_samps.max()))
+        window = Window(samp_min,line_min,samp_max - samp_min,line_max - line_min)
+        img_output = imgs[i].read(window = window)[0]
 
-    cv2.imwrite(os.path.join(output_path,'img1.png'),img1_output)
-    cv2.imwrite(os.path.join(output_path,'img2.png'),img2_output)
+        with rasterio.open(
+            os.path.join(output_path,f'{names[i]}.tif'),
+            'w',
+            driver='GTiff',
+            height=img_output.shape[0],
+            width=img_output.shape[1],
+            count=1,
+            dtype=img_output.dtype,
+        ) as dst:
+            dst.write(img_output,1)
 
-    rpc1.LINE_OFF -= line_min1
-    rpc1.SAMP_OFF -= samp_min1
-    rpc2.LINE_OFF -= line_min2
-    rpc2.SAMP_OFF -= samp_min2
-    rpc1.save_rpc_to_file(os.path.join(output_path,'img1.rpc'))
-    rpc2.save_rpc_to_file(os.path.join(output_path,'img2.rpc'))
+        # img_output = stretch_array_to_uint8(img_output)
 
-    dem1_output = dem1[line_min1:line_max1,samp_min1:samp_max1]
-    dem2_output = dem2[line_min2:line_max2,samp_min2:samp_max2]
-    np.save(os.path.join(output_path,'img1_dem.npy'),dem1_output)
-    np.save(os.path.join(output_path,'img2_dem.npy'),dem2_output)
+        # cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
+        
+        # dem_output = dems[i].read(window = window)
+        # np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
+
+        # rpc.LINE_OFF -= line_min
+        # rpc.SAMP_OFF -= samp_min
+        # rpc.save_rpc_to_file(os.path.join(output_path,f'{names[i]}.rpc'))
+        
 
 
 

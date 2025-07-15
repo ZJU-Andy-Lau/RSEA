@@ -289,3 +289,80 @@ class CriterionTrainOneImg(nn.Module):
 
         return loss, loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(), real_photo_loss,loss_bias.item(),loss_photo_regularized.item()
    
+class CriterionTrainElement(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.height_tolerance = 5
+        self.clamp_max = 1000
+        self.loss_height_weight = 10
+        self.conf_clamp_rate = 2      
+
+    def forward(self,epoch,max_epoch,xyh_pred,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
+        
+        xyh_pred,conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [xyh_pred,conf,linesamp_gt,xyh_gt]]
+
+
+        progress = 1. * epoch / max_epoch
+
+        valid_idx = conf > .5
+        conf[conf > .5] = .5 + progress * .4
+        conf[conf < .5] = .5 - progress * .4
+        conf = torch.clip(conf - conf.mean() + 1.,min=0.)
+
+        xy_pred,h_pred = xyh_pred[:,:2],xyh_pred[:,2]
+        xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
+
+        latlon_pred = mercator2lonlat(xy_gt[:,[1,0]])
+        linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
+        
+        bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
+
+        loss_obj = torch.norm(xy_pred - xy_gt,dim=1) * conf
+        loss_height = torch.abs(h_pred - h_gt) * conf
+        loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
+        loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
+        loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
+        
+        loss = loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
+
+        return loss, loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()
+    
+class CriterionTrainGrid(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.height_tolerance = 5
+        self.clamp_max = 1000
+        self.loss_height_weight = 10
+        self.conf_clamp_rate = 2      
+
+    def forward(self,epoch,max_epoch,xyh_pred,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
+        
+        xyh_pred,conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [xyh_pred,conf,linesamp_gt,xyh_gt]]
+
+
+        progress = 1. * epoch / max_epoch
+
+        valid_idx = conf > .5
+        conf[conf > .5] = .5 + progress * .4
+        conf[conf < .5] = .5 - progress * .4
+        conf = torch.clip(conf - conf.mean() + 1.,min=0.)
+
+        xy_pred,h_pred = xyh_pred[:,:2],xyh_pred[:,2]
+        xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
+
+        latlon_pred = mercator2lonlat(xy_gt[:,[1,0]])
+        linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
+        
+        bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
+
+        loss_obj = torch.norm(xy_pred - xy_gt,dim=1) * conf
+        loss_height = torch.abs(h_pred - h_gt) * conf
+        loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
+        loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
+        loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
+        
+        loss = loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
+
+        return loss, loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()

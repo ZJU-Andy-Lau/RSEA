@@ -420,3 +420,18 @@ def print_hwc_matrix(matrix: np.ndarray, precision:int = 2):
             print(f"{element:<{max_len}}", end="  ")
         print("│")
     print("└" + "─" * (W * (max_len + 2) - 2) + "┘")
+
+def apply_polynomial(x, coefs):
+    y = torch.zeros_like(x)
+    for i, c in enumerate(coefs):
+        y = y + c * (x ** (len(coefs) - 1 - i))
+    return y
+
+def get_map_coef(target:np.ndarray,bins=1000,deg=20):
+    extend_bins = int(bins * 0.1)
+    src = np.linspace(0,1,bins)
+    tgt = np.quantile(target,src)
+    tgt = np.concatenate([2 * tgt[0] - tgt[:extend_bins][::-1],tgt,2 * tgt[-1] - tgt[-extend_bins:][::-1]],axis=0)
+    src = np.linspace(-1,1,bins + 2 * extend_bins)
+    coefs = np.polyfit(src,tgt,deg = deg)
+    return coefs

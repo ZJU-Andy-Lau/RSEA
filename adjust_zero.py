@@ -118,13 +118,22 @@ if __name__ == '__main__':
 
     rsea = RSEA(options)
 
-    image_folders = [i for i in os.listdir(options.root) if 'view' in i]
-    for image in image_folders:
-        rsea.add_image(os.path.join(options.root,image))
+    ref_images_root = os.path.join(options.root,'ref_images')
+    adjust_images_root = os.path.join(options.root,'adjust_images')
+
+    # 基于ref_images创建网格
+    for image_folder in os.listdir(ref_images_root):
+        rsea.add_image(os.path.join(ref_images_root,image_folder))
     rsea.create_grids(grid_size=options.grid_size)
+
+    # 加载网格
     # rsea.load_grids()
-    adjust_images = rsea.adjust([os.path.join(options.root,i) for i in image_folders],options)
-    rsea.check_error(os.path.join(options.root,f'log_{options.log_postfix}.csv'),adjust_images)
+
+    # 基于网格对adjust_images平差
+    rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
+
+    # adjust_images = rsea.adjust([os.path.join(options.root,i) for i in image_folders],options)
+    # rsea.check_error(os.path.join(options.root,f'log_{options.log_postfix}.csv'),adjust_images)
 
 
    
