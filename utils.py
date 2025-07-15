@@ -15,6 +15,7 @@ import torch.nn.init as init
 import random
 import argparse
 from rpc import RPCModelParameterTorch
+from typing import Tuple
 def crop_rect_from_image(image, rect_points, size):
     """
     从图像中截取矩形区域。
@@ -439,7 +440,7 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
 def resample_from_quad(
         gray_image: np.ndarray,
         quad_coords: np.ndarray,
-        target_shape: tuple[int, int]
+        target_shape: Tuple[int,int]
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         根据四边形的四个角点，在灰度图中进行重采样，得到校正后的矩形图像和坐标映射。
