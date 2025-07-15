@@ -3,30 +3,15 @@ import warnings
 warnings.filterwarnings('ignore')
 import argparse
 import torch
-import torch.nn as nn
 import numpy as np
-import pandas as pd
-from model_new import Encoder,Decoder
 import os
 import cv2
-from datetime import datetime,timedelta
-import time
-from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef
+from utils import project_mercator,mercator2lonlat,bilinear_interpolate,resample_from_quad
 
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
-from scheduler import MultiStageOneCycleLR
-from torch.optim import AdamW,lr_scheduler
-from criterion import CriterionTrainOneImg,CriterionTrainElement,CriterionTrainGrid
-import torch.nn.functional as F
-from orthorectify import orthorectify_image
 import rasterio
 from scipy.interpolate import RegularGridInterpolator
-from copy import deepcopy
-from torchvision import transforms
-from matplotlib import pyplot as plt
-import random
-from typing import List,Dict
 
 class RSImage():
     def __init__(self,options,root:str,id:int,size_limit = 0):
@@ -80,8 +65,6 @@ class RSImage():
             print("tie points format error")
             return None
         return tie_points
-
-            
     
     @torch.no_grad()
     def __get_corner_xys__(self):
@@ -92,100 +75,6 @@ class RSImage():
         xys = project_mercator(latlons)
         return xys.cpu().numpy()[:,[1,0]] # y,x -> x,y
 
-    @torch.no_grad()
-    def __sample_dem__(self,dem_path:str, block_size:int = 5000, max_iter:int=5, tol:float=0.1) -> np.ndarray:
-        """
-        根据RPC模型迭代计算与遥感影像像素对应的DEM高程
-        
-        参数:
-            dem_path (str): DEM文件路径
-            max_iter (int): 最大迭代次数，默认5次
-            tol (float): 收敛阈值（米），默认0.1米
-        
-        返回:
-            np.ndarray: 高程数组，形状为[H,W]
-        """
-        # 读取DEM数据
-        print("Loading DEM")
-        with rasterio.open(dem_path) as dem_ds:
-            dem = dem_ds.read(1)
-            dem_transform = dem_ds.transform
-            dem_nodata = dem_ds.nodatavals[0]
-        print("Sampling DEM")
-        # 处理无效值并转换为float
-        dem = np.where(dem == dem_nodata, np.nan, dem).astype(np.float32)
-
-        # 生成DEM网格坐标（中心点）
-        dem_rows, dem_cols = dem.shape
-        x_coords = []  # 经度坐标
-        y_coords = []  # 纬度坐标
-        
-        # 获取DEM每个像素中心的经纬度
-        for col in range(dem_cols):
-            x, _ = rasterio.transform.xy(dem_transform, 0, col, offset='center')
-            x_coords.append(x)
-        for row in range(dem_rows):
-            _, y = rasterio.transform.xy(dem_transform, row, 0, offset='center')
-            y_coords.append(y)
-
-        x_coords = np.array(x_coords,dtype=np.double)
-        y_coords = np.array(y_coords,dtype=np.double)
-
-        # 确保坐标单调递增（处理北向上DEM）
-        if y_coords[0] < y_coords[1]:
-            y_coords = y_coords[::-1]
-            dem = dem[::-1, :]
-
-        # 创建DEM插值器
-        dem_interp = RegularGridInterpolator(
-            (y_coords, x_coords),  # 纬度在前，经度在后
-            dem,
-            method='linear',
-            bounds_error=False,
-            fill_value=np.nan
-        )
-
-        dem_mean = np.nanmean(dem[~np.isnan(dem)])
-
-        elevation = np.full((self.H, self.W), np.nan, dtype=np.float32)
-        pbar = tqdm(total=int(np.ceil(self.H / block_size)) * int(np.ceil(self.W / block_size)))
-    
-        # 分块处理逻辑
-        for y_offset in range(0, self.H, block_size):
-            # 计算当前块的行数
-            y_size = min(block_size, self.H - y_offset)
-            
-            for x_offset in range(0, self.W, block_size):
-                # 计算当前块的列数
-                x_size = min(block_size, self.W - x_offset)
-                
-                # 生成当前块的网格坐标
-                cols, rows = np.meshgrid(
-                    np.arange(x_offset, x_offset+x_size),
-                    np.arange(y_offset, y_offset+y_size)
-                )
-                samp = cols.ravel()  # 列坐标
-                line = rows.ravel()  # 行坐标
-
-                # 初始化当前块的高程
-                h = np.full(samp.size, dem_mean, dtype=np.float32)
-                
-                # 迭代计算（与原始方法相同）
-                for _ in range(max_iter):
-                    prev_h = h.copy()
-                    lat, lon = self.rpc.RPC_PHOTO2OBJ(samp, line, h, 'numpy')
-                    points = np.column_stack((lat, lon))
-                    new_h = dem_interp(points)
-                    valid = ~np.isnan(new_h)
-                    h[valid] = new_h[valid]
-                    if np.nanmean(np.abs(h - prev_h)) < tol:
-                        break
-
-                # 将结果写入对应位置
-                elevation[y_offset:y_offset+y_size, x_offset:x_offset+x_size] = h.reshape(y_size, x_size)
-                pbar.update(1)
-
-        return elevation.reshape((self.H, self.W))
     
     @torch.no_grad()
     def dem_interp(self,sampline:np.ndarray):
@@ -256,4 +145,18 @@ class RSImage():
         br_sampline = self.xy_to_sampline(brxy)
         return self.get_dem_by_sampline(tl_sampline,br_sampline),tl_sampline,br_sampline
 
-
+    @torch.no_grad()
+    def resample_image_by_sampline(self,corner_samplines:np.ndarray,target_shape:tuple[int, int],need_local = False):
+        img_resampled,local_hw2 = resample_from_quad(self.image,corner_samplines[:,[1,0]],target_shape)
+        if need_local:
+            return img_resampled,local_hw2
+        else:
+            return img_resampled
+    
+    @torch.no_grad()
+    def resample_dem_by_sampline(self,corner_samplines:np.ndarray,target_shape:tuple[int, int],need_local = False):
+        dem_resampled,local_hw2 = resample_from_quad(self.dem,corner_samplines[:,[1,0]],target_shape)
+        if need_local:
+            return dem_resampled,local_hw2
+        else:
+            return dem_resampled

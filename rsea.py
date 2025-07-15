@@ -270,17 +270,16 @@ class RSEA():
                 overlap_diag = self.__overlap__(grid.diag[0],image.corner_xys[0],grid.diag[1],image.corner_xys[3])
                 if overlap_diag is None :
                     continue
-                img_raw,dem,tl_linesamp,br_linesamp = grid.get_overlap_image(image,margin=[64,64])
-                print("tl:",tl_linesamp,"br:",br_linesamp)
+                img_raw,dem,local_hw2 = grid.get_overlap_image(image,mode="interpolate")
                 cv2.imwrite(os.path.join(grid.output_path,f'adjust_img_{img_idx}.png'),img_raw)
                 
-                pred_res = grid.pred_xyh(img_raw)
+                pred_res = grid.pred_xyh(img_raw,local_hw2)
 
                 xyh = np.concatenate([pred_res['yx_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
                 all_xyh.append(xyh)
 
                 latlon_P2 = mercator2lonlat(pred_res['yx_P2'])
-                locals_P2 = pred_res['locals_P2'] + tl_linesamp # (line,samp) + (line,samp)
+                locals_P2 = pred_res['locals_P2']
                 linesamp_pred_P2 = np.stack(image.rpc.RPC_OBJ2PHOTO(latlon_P2[:,0],latlon_P2[:,1],pred_res['h_P1'],'numpy'),axis=1)[:,[1,0]]
                 all_locals.append(locals_P2)
                 all_preds.append(linesamp_pred_P2)

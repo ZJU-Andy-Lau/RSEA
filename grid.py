@@ -1,3 +1,4 @@
+from ast import mod
 import warnings
 
 from pretrain_swt import warp_by_poly
@@ -59,17 +60,32 @@ class Grid():
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
         self.SAMPLE_FACTOR = 16
+        self.pred_resolution = .7
         self.vis_points_latlon = None
     
-    def get_overlap_image(self,img:RSImage,margin = np.array([0,0])):
+    def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
-        top = max(corner_samplines[0,1],corner_samplines[1,1]) + margin[0]
-        bottom = min(corner_samplines[2,1],corner_samplines[3,1]) - margin[0]
-        left = max(corner_samplines[0,0],corner_samplines[3,0]) + margin[1]
-        right = min(corner_samplines[1,0],corner_samplines[2,0]) - margin[1]
-        img_raw = img.get_image_by_sampline(np.array([left,top]),np.array([right,bottom]))
-        dem = img.get_dem_by_sampline(np.array([left,top]),np.array([right,bottom]))
-        return img_raw,dem,np.array([top,left]),np.array([bottom,right])
+        if mode == 'bbox':
+            top = max(min(corner_samplines[0,1],corner_samplines[1,1]),0)
+            bottom = min(max(corner_samplines[2,1],corner_samplines[3,1]),img.H-1)
+            left = max(min(corner_samplines[0,0],corner_samplines[3,0]),0)
+            right = min(max(corner_samplines[1,0],corner_samplines[2,0]),img.W-1)
+            img_raw = img.get_image_by_sampline(np.array([left,top]),np.array([right,bottom]))
+            dem = img.get_dem_by_sampline(np.array([left,top]),np.array([right,bottom]))
+            return img_raw,dem,np.array([top,left]),np.array([bottom,right])
+        elif mode == 'interpolate':
+            img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines[:,[1,0]],
+                                                            (int((self.border[2] - self.border[0]) / self.pred_resolution),
+                                                            int((self.border[3] - self.border[1]) / self.pred_resolution)),
+                                                            need_local=True)
+            
+            dem = img.resample_image_by_sampline(corner_samplines[:,[1,0]],
+                                                (int((self.border[2] - self.border[0]) / self.pred_resolution),
+                                                 int((self.border[3] - self.border[1]) / self.pred_resolution)))
+
+            return img_raw,dem,
+        else:
+            raise ValueError("mode should either be 'bbox' or 'interpolate'")
 
     def get_height_map_coeffs(self):
         heights = []
@@ -87,7 +103,7 @@ class Grid():
         if not os.path.exists(output_path):
             os.mkdir(output_path)
         
-        img_raw,dem,tl_linesamp,br_linesamp = self.get_overlap_image(img)
+        img_raw,dem,tl_linesamp,br_linesamp = self.get_overlap_image(img,mode='bbox')
 
         new_element = Element(options = self.options,
                               encoder = self.encoder,
@@ -357,11 +373,15 @@ class Grid():
             cv2.imwrite(os.path.join(element.output_path,f'match_vis.png' if idx is None else f'match_vis_{idx}.png'),img_vis)
 
         
-    def __crop_img__(self,img,crop_size,step,random_ratio = 1.):
+    def __crop_img__(self,img,crop_size,step,local = None,random_ratio = 1.):
 
         print("cropping image")
         H, W = img.shape[:2]
-        local = get_coord_mat(H,W)
+        if local is None:
+            local = get_coord_mat(H,W)
+
+        if local.shape[:2] != img.shape[:2]:
+            raise ValueError(f"img shape {img.shape} does not match local shape {local.shape}")
         cut_number = 0
         row_num = 0
         col_num = 0
@@ -410,7 +430,7 @@ class Grid():
         return crop_imgs,crop_locals
 
     @torch.no_grad()
-    def pred_xyh(self,img_raw:np.ndarray) -> Dict[str,np.ndarray]:
+    def pred_xyh(self,img_raw:np.ndarray,local_hw2:np.ndarray) -> Dict[str,np.ndarray]:
         """
         return: {"xy_P2","h_P1","locals_P2","confs_P1"} np.ndarray
         """
@@ -422,7 +442,7 @@ class Grid():
             crop_step = self.options.crop_step
         else:
             crop_step = int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 150.))
-        crop_imgs_NHW,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step)
+        crop_imgs_NHW,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step,local=local_hw2)
         imgs_NHW = torch.stack([self.transform(img) for img in crop_imgs_NHW]) # N,H,W
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR)

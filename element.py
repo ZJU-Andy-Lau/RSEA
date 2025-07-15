@@ -91,7 +91,6 @@ class Element():
         print(f"===========================Element {self.id} Initiated===========================")
         print(f"img size:{img_raw.shape}")
         print(f"top_left_linesamp:{top_left_linesamp}")
-        print(f"extend:{self.extend}")
         print("=================================================================================")
 
     def __crop_img__(self,crop_size = 256,step = 256 // 2,random_ratio = 1.):
