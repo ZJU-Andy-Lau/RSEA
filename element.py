@@ -311,6 +311,7 @@ class Element():
             features_pD = self.buffer['features'][idxs].contiguous()
             confs_p1 = self.buffer['confs'][idxs].contiguous()
             objs_p3 = self.buffer['objs'][idxs].contiguous()
+            print(dists.shape)
             features_pD = features_pD * dists.unsqueeze(-1)
             confs_p1 = confs_p1 * dists
             objs_p3 = objs_p3 * dists.unsqueeze(-1)
