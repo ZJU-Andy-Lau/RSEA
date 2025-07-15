@@ -260,8 +260,8 @@ class Grid():
                 locals_p2 = locals_p2[inside_border_mask]
 
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
-                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask & inside_border_mask,:].contiguous()
-                global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask & inside_border_mask,:].contiguous()
+                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
                 features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
             
