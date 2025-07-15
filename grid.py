@@ -181,7 +181,7 @@ class Grid():
 
     def train_mapper(self):
         start_time = time.perf_counter()
-        max_patch_num = max(*[element.patch_num for element in self.elements])
+        max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
         optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
         scheduler = MultiStageOneCycleLR(optimizer = optimizer,

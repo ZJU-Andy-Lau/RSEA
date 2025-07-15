@@ -291,18 +291,92 @@ def proj2photo(proj_coord:torch.Tensor,dem:torch.Tensor,rpc:RPCModelParameterTor
     photo_coord = torch.stack(rpc.RPC_OBJ2PHOTO(lonlat_coord[:,0],lonlat_coord[:,1],dem),dim=1)
     return photo_coord
 
-def bilinear_interpolate(array, points):
+def bilinear_interpolate(array, points, use_cuda=False):
     """
-    输入：
-    - array: 二维 (H, W) 或三维 (H, W, C) 的数组
-    - points: (N, 2) 的浮点坐标数组，每行表示一个坐标 [x, y]
-    输出：
-    - 插值结果，形状为 (N,) 或 (N, C)
+    在矩阵上进行双线性插值采样，可选择在 CPU (NumPy) 或 GPU (PyTorch) 上运行。
+
+    输入:
+    - array: 二维 (H, W) 或三维 (H, W, C) 的 numpy 数组或 torch 张量。
+    - points: (N, 2) 的浮点坐标数组或张量，每行表示一个坐标 [x, y]。
+    - use_cuda:布尔值。如果为 True，则尝试使用 GPU (CUDA) 加速。
+
+    输出:
+    - 插值结果，形状为 (N,) 或 (N, C) 的 numpy 数组。
     """
+    
+    # ----------- GPU (CUDA) 加速路径 -----------
+    if use_cuda:
+        # 检查 CUDA 是否可用，如果不可用则警告并回退到 CPU
+        if not torch.cuda.is_available():
+            print("警告：CUDA 不可用。将回退到 CPU (NumPy) 执行。")
+            use_cuda = False
+        else:
+            device = torch.device('cuda')
+            
+            # 确保输入是 PyTorch 张量并移至 GPU
+            # 使用 torch.as_tensor 避免不必要的数据拷贝
+            arr_tensor = torch.as_tensor(array, dtype=torch.float32, device=device)
+            pts_tensor = torch.as_tensor(points, dtype=torch.float32, device=device)
+            
+            # 将二维数组扩展为 (H, W, 1) 以统一处理
+            if arr_tensor.dim() == 2:
+                arr_tensor = arr_tensor.unsqueeze(-1)
+            
+            H, W, C = arr_tensor.shape
+            x = pts_tensor[:, 0]
+            y = pts_tensor[:, 1]
+            
+            # 计算整数坐标并约束边界
+            # torch.floor 的结果是浮点数，需要转为长整型用于索引
+            x0 = torch.floor(x).long()
+            y0 = torch.floor(y).long()
+            
+            # 使用 torch.clamp 约束边界，等同于 np.clip
+            x1 = torch.clamp(x0 + 1, 0, W - 1)
+            x0 = torch.clamp(x0, 0, W - 1)
+            y1 = torch.clamp(y0 + 1, 0, H - 1)
+            y0 = torch.clamp(y0, 0, H - 1)
+            
+            # 提取四个角点的值，形状 (N, C)
+            # PyTorch 的高级索引方式与 NumPy 相同
+            Ia = arr_tensor[y0, x0, :]
+            Ib = arr_tensor[y1, x0, :]
+            Ic = arr_tensor[y0, x1, :]
+            Id = arr_tensor[y1, x1, :]
+            
+            # 计算权重 (dx, dy 仍然是浮点数)
+            dx = x - x0.float()
+            dy = y - y0.float()
+            
+            wa = (1 - dx) * (1 - dy)
+            wb = (1 - dx) * dy
+            wc = dx * (1 - dy)
+            wd = dx * dy
+            
+            # 加权求和 (使用 unsqueeze(1) 广播到所有通道)
+            # wa[:, None] 在 PyTorch 中是 wa.unsqueeze(1)
+            result_tensor = (
+                wa.unsqueeze(1) * Ia +
+                wb.unsqueeze(1) * Ib +
+                wc.unsqueeze(1) * Ic +
+                wd.unsqueeze(1) * Id
+            )
+            
+            # 压缩多余的维度
+            if arr_tensor.shape[-1] == 1 and arr_tensor.dim() == 3:
+                result_tensor = result_tensor.squeeze(axis=1)
+                
+            # 将结果从 GPU 移回 CPU 并转换为 NumPy 数组
+            return result_tensor.cpu().numpy()
+
+    # ----------- CPU (NumPy) 原始路径 -----------
+    # 如果 use_cuda 为 False，则执行原始逻辑
     array = np.asarray(array)
     points = np.asarray(points)
     
-    # 将二维数组扩展为 (H, W, 1) 以统一处理
+    # 记录原始维度以决定最终输出形状
+    original_ndim = array.ndim
+    
     if array.ndim == 2:
         array = array[..., np.newaxis]
     
@@ -310,22 +384,19 @@ def bilinear_interpolate(array, points):
     x = points[:, 0].astype(float)
     y = points[:, 1].astype(float)
     
-    # 计算整数坐标并约束边界
     x0 = np.floor(x).astype(int)
-    x1 = np.clip(x0 + 1, 0, W-1)
-    x0 = np.clip(x0, 0, W-1)
+    x1 = np.clip(x0 + 1, 0, W - 1)
+    x0 = np.clip(x0, 0, W - 1)
     
     y0 = np.floor(y).astype(int)
-    y1 = np.clip(y0 + 1, 0, H-1)
-    y0 = np.clip(y0, 0, H-1)
+    y1 = np.clip(y0 + 1, 0, H - 1)
+    y0 = np.clip(y0, 0, H - 1)
     
-    # 提取四个角点的值，形状 (N, C)
     Ia = array[y0, x0, :]
     Ib = array[y1, x0, :]
     Ic = array[y0, x1, :]
     Id = array[y1, x1, :]
     
-    # 计算权重
     dx = x - x0
     dy = y - y0
     wa = (1 - dx) * (1 - dy)
@@ -333,7 +404,6 @@ def bilinear_interpolate(array, points):
     wc = dx * (1 - dy)
     wd = dx * dy
     
-    # 加权求和（广播到所有通道）
     result = (
         wa[:, None] * Ia +
         wb[:, None] * Ib +
@@ -341,25 +411,28 @@ def bilinear_interpolate(array, points):
         wd[:, None] * Id
     )
     
-    # 压缩多余的维度（若原始输入是二维）
-    if array.shape[-1] == 1 and array.ndim == 3:
+    if original_ndim == 2:
         result = result.squeeze(axis=1)
     
     return result
 
-def downsample(arr:torch.Tensor,ds):
+def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False):
     if ds <= 0:
         return arr
     if len(arr.shape) < 4:
         arr = arr.unsqueeze(-1)
     arr_ds = []
+    if show_detail:
+        pbar = tqdm(total = len(arr))
     for a in arr:
         H,W = a.shape[:2]
         lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
         samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
         sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
-        a = torch.tensor(bilinear_interpolate(a,sample_idxs))
+        a = torch.tensor(bilinear_interpolate(a,sample_idxs,use_cuda=use_cuda))
         arr_ds.append(a.reshape(len(lines),len(samps),-1).squeeze())
+        if show_detail:
+            pbar.update(1)
     arr_ds = torch.stack(arr_ds,dim=0)
     return arr_ds
 
