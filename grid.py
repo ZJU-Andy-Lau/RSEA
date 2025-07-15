@@ -481,7 +481,7 @@ class Grid():
             features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]
             output_13p1 = self.mapper(features_1Dp1)
             output_p3 = output_13p1.permute(0,2,3,1).flatten(0,2)
-            xyh_pred_p3 = warp_by_poly(output_p3,self.map_coeffs)
+            xyh_pred_p3 = self.warp_by_poly(output_p3,self.map_coeffs)
             xyh_preds.append(xyh_pred_p3)
         
         xyh_P3 = torch.concatenate(xyh_P3,dim=0)
