@@ -253,7 +253,6 @@ class Grid():
 
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
-                print(f"inside ratio:{inside_border_mask.sum()}/{len(inside_border_mask)}")
                 features_pD = features_pD[inside_border_mask]
                 confs_p1 = confs_p1[inside_border_mask]
                 objs_p3 = objs_p3[inside_border_mask]
