@@ -43,8 +43,8 @@ class Element():
         self.H,self.W = self.img_raw.shape[:2]
         self.transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
-            transforms.RandomInvert(p=.3),
+            # transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
+            # transforms.RandomInvert(p=.3),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
         # self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(options.encoder_path)).items()})
@@ -155,12 +155,13 @@ class Element():
         
         start_time = time.perf_counter()
 
-        imgs_NHW = torch.stack([self.transform(img) for img in self.crop_imgs_NHW]) # N,H,W
+        print("---Transform input images")
+        imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
         locals_NHW2= torch.from_numpy(self.crop_locals_NHW2)
-        print("Downsample locals")
+        print("---Downsample locals")
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True)
         dems_NHW = torch.from_numpy(self.crop_dems_NHW)
-        print("Downsample DEM")
+        print("---Downsample DEM")
         dems_Nhw = downsample(dems_NHW,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True)
 
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
@@ -312,7 +313,7 @@ class Element():
             objs_p3 = self.buffer['objs'][idxs].contiguous()
             features_pD = features_pD * dists.unsqueeze(-1)
             confs_p1 = confs_p1 * dists
-            objs_p3 = objs_p3 * dists
+            objs_p3 = objs_p3 * dists.unsqueeze(-1)
             features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
             confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
             objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
