@@ -287,6 +287,7 @@ class Grid():
                     'lr':f'{scheduler.get_last_lr()[0]:.2e}',
                     'obj':f'{loss_obj.item():.2f}',
                     'photo':f'{loss_photo.item():.2f}',
+                    'h':f'{loss_height.item():.2f}',
                     'reg':f'{loss_reg:.2f}',
                     'min':f'{min_photo_loss:.2f}'
                 })
