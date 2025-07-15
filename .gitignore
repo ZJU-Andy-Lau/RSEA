@@ -2,6 +2,7 @@ datasets/
 log/
 weights/
 tmp/
+__pycache__/
 datasets.zip
 packages.txt
 adjust_multitasks.sh
