@@ -9,27 +9,17 @@ import pandas as pd
 from model_new import Encoder,Decoder
 import os
 import cv2
-from datetime import datetime,timedelta
-import time
-from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef
+from utils import mercator2lonlat
 
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
-from scheduler import MultiStageOneCycleLR
-from torch.optim import AdamW,lr_scheduler
-from criterion import CriterionTrainOneImg,CriterionTrainElement,CriterionTrainGrid
 import torch.nn.functional as F
 from orthorectify import orthorectify_image
-import rasterio
-from scipy.interpolate import RegularGridInterpolator
-from copy import deepcopy
-from torchvision import transforms
 from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
 
-from element import Element
 from rs_image import RSImage
 from grid import Grid
 

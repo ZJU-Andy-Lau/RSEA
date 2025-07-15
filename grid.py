@@ -1,8 +1,5 @@
 import warnings
 
-from huggingface_hub import StateDictSplit
-from jupyter_client import LocalPortCache
-
 from pretrain_swt import warp_by_poly
 warnings.filterwarnings('ignore')
 import argparse
