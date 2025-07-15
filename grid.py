@@ -244,10 +244,10 @@ class Grid():
                 confs_p1 = element.buffer['confs'][idxs].contiguous()
                 objs_p3 = element.buffer['objs'][idxs].contiguous()
                 locals_p2 = sample_linesamps[valid_mask]
-
+                print(dists.shape)
                 features_pD = features_pD * dists.unsqueeze(-1)
                 confs_p1 = confs_p1 * dists
-                objs_p3 = objs_p3 * dists
+                objs_p3 = objs_p3 * dists.unsqueeze(-1)
                 features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
                 confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
                 objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
