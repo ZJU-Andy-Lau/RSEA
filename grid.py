@@ -244,8 +244,6 @@ class Grid():
                 features_pD = element.buffer['features'][idxs].contiguous()
                 confs_p1 = element.buffer['confs'][idxs].contiguous()
                 objs_p3 = element.buffer['objs'][idxs].contiguous()
-                print(dists.shape,idxs.shape)
-                print(confs_p1.shape,objs_p3.shape)
                 locals_p2 = sample_linesamps[valid_mask]
                 features_pD = features_pD * dists.unsqueeze(-1)
                 confs_p1 = confs_p1 * dists
@@ -262,8 +260,8 @@ class Grid():
                 locals_p2 = locals_p2[inside_border_mask]
 
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
-                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:].contiguous()
-                global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:].contiguous()
+                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask & inside_border_mask,:].contiguous()
+                global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask & inside_border_mask,:].contiguous()
                 features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
                 features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
             
