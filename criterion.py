@@ -313,7 +313,7 @@ class CriterionTrainElement(nn.Module):
         xy_pred,h_pred = xyh_pred[:,:2],xyh_pred[:,2]
         xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
 
-        latlon_pred = mercator2lonlat(xy_gt[:,[1,0]])
+        latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
         linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
         
         bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
@@ -352,7 +352,7 @@ class CriterionTrainGrid(nn.Module):
         xy_pred,h_pred = xyh_pred[:,:2],xyh_pred[:,2]
         xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
 
-        latlon_pred = mercator2lonlat(xy_gt[:,[1,0]])
+        latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
         linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
         
         # bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
