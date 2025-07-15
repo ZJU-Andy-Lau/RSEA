@@ -245,7 +245,7 @@ class RSEA():
         print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
     
 
-    def adjust(self,image_folders:List[str],options):
+    def adjust(self,image_folders:List[str]):
 
         # def check_error(check_points:np.ndarray,trans:np.ndarray):
         #     ones = np.ones((check_points.shape[0],1))
