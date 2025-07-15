@@ -234,7 +234,7 @@ class Element():
         }
         return map_coeffs
 
-    def warp_by_poly(raw,coefs):
+    def warp_by_poly(self,raw,coefs):
         x = apply_polynomial(raw[:,0],coefs['x'])
         y = apply_polynomial(raw[:,1],coefs['y'])
         h = apply_polynomial(raw[:,2],coefs['h'])

@@ -1,7 +1,6 @@
 from ast import mod
 import warnings
 
-from pretrain_swt import warp_by_poly
 warnings.filterwarnings('ignore')
 import argparse
 import torch
@@ -173,7 +172,7 @@ class Grid():
             new_trans = np.hstack([new_A,new_t.reshape(2,1)])
             element.af_trans = new_trans        
 
-    def warp_by_poly(raw,coefs):
+    def warp_by_poly(self,raw,coefs):
         x = apply_polynomial(raw[:,0],coefs['x'])
         y = apply_polynomial(raw[:,1],coefs['y'])
         h = apply_polynomial(raw[:,2],coefs['h'])
