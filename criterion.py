@@ -355,11 +355,13 @@ class CriterionTrainGrid(nn.Module):
         latlon_pred = mercator2lonlat(xy_gt[:,[1,0]])
         linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
         
-        bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
+        # bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
+        bias = linesamp_pred - linesamp_gt
 
         loss_obj = torch.norm(xy_pred - xy_gt,dim=1) * conf
         loss_height = torch.abs(h_pred - h_gt) * conf
-        loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
+        # loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
+        loss_photo = torch.norm(linesamp_pred - linesamp_gt,dim=1) * conf
         loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
         loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
         
