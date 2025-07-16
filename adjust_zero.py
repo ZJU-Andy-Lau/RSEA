@@ -123,12 +123,12 @@ if __name__ == '__main__':
     grid_root = os.path.join(options.root,'grids')
 
     # 基于ref_images创建网格
-    for image_folder in os.listdir(ref_images_root):
-        rsea.add_image(os.path.join(ref_images_root,image_folder))
-    rsea.create_grids(grid_size=options.grid_size)
+    # for image_folder in os.listdir(ref_images_root):
+    #     rsea.add_image(os.path.join(ref_images_root,image_folder))
+    # rsea.create_grids(grid_size=options.grid_size)
 
     #加载网格
-    # rsea.load_grids(grid_root)
+    rsea.load_grids(grid_root)
 
     # 基于网格对adjust_images平差
     rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])

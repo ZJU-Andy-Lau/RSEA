@@ -78,7 +78,7 @@ class Grid():
                                                             int((self.border[3] - self.border[1]) / self.pred_resolution)),
                                                             need_local=True)
             
-            dem = img.resample_image_by_sampline(corner_samplines,
+            dem = img.resample_dem_by_sampline(corner_samplines,
                                                 (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                  int((self.border[3] - self.border[1]) / self.pred_resolution)))
 
