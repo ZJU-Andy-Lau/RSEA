@@ -86,13 +86,13 @@ if __name__ == '__main__':
     parser.add_argument('--grid_train_lr_min', type=float, default=0.0001,
                         help='lowest learning rate')
     
-    parser.add_argument('--grid_training_iters', type=int, default=5000,
+    parser.add_argument('--grid_training_iters', type=int, default=10000,
                         help='number of epochs through the finetune mapper')
     
     parser.add_argument('--grid_warmup_iters', type=int, default=200,
                         help='number of epochs for lr climbing to lr_max')
     
-    parser.add_argument('--grid_summit_hold_iters', type=int, default=3800,
+    parser.add_argument('--grid_summit_hold_iters', type=int, default=8800,
                         help='number of epochs for lr staying lr_max after warmup')
     
     # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
