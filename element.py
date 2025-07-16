@@ -34,6 +34,7 @@ class Element():
         self.options = options
         self.id = id
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
+        print(img_raw.shape,dem.shape,local_raw.shape)
         cv2.imwrite(os.path.join(output_path,f'img_{id}.png'),img_raw)
         if top_left_linesamp is None:
             self.top_left_linesamp = np.array([0.,0.])
