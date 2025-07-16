@@ -513,8 +513,8 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
 def resample_from_quad(
     source_image: np.ndarray,
     quad_coords: np.ndarray,
-    target_shape: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray]:
+    target_shape: Tuple[int, int]
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     根据四边形的四个角点，在源图像(灰度或RGB)中进行重采样，得到校正后的矩形图像和坐标映射。
 
