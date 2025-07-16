@@ -361,6 +361,56 @@ class RPCModelParameterTorch:
 
         return lat, lon
     
+    def latlon2yx(self,latlon:torch.Tensor):
+        """
+        (lat,lon) -> (y,x) N,2
+        """
+        r = 6378137.
+        lon_rad = latlon[:,1] * torch.pi / 180.
+        lat_rad = latlon[:,0] * torch.pi / 180.
+        x = r * lon_rad
+        y = r * torch.log(torch.tan(torch.pi / 4. + lat_rad / 2.))
+        return torch.stack([y,x],dim=-1)
+
+    def yx2latlon(self,yx:torch.Tensor):
+        """
+        (y,x) -> (lat,lon) N,2
+        """
+        yx = torch.tensor(yx).to(torch.float64)
+        r = 6378137.
+        lon = (180. * yx[:,1]) / (torch.pi * r)
+        lat = (2 * torch.atan(torch.exp(yx[:,0] / r)) - torch.pi * 0.5) * 180. / torch.pi
+        return torch.stack([lat,lon],dim=-1)
+
+    def RPC_XY2LINESAMP(self,x_in, y_in, h_in, output_type='tensor'):
+        x = torch.tensor(x_in,dtype=torch.double,device=self.device)
+        y = torch.tensor(y_in,dtype=torch.double,device=self.device)
+        h = torch.tensor(h_in,dtype=torch.double,device=self.device)
+        
+        latlon = self.yx2latlon(torch.stack([y,x],dim=-1))
+        samp,line = self.RPC_OBJ2PHOTO(latlon[:,0],latlon[:,1],h)
+
+        if output_type == 'numpy':
+            line = line.cpu().numpy()
+            samp = samp.cpu().numpy()
+        
+        return line,samp
+    
+    def RPC_LINESAMP2XY(self,line_in, samp_in, h_in, output_type='tensor'):
+        line = torch.tensor(line_in,dtype=torch.double,device=self.device)
+        samp = torch.tensor(samp_in,dtype=torch.double,device=self.device)
+        h = torch.tensor(h_in,dtype=torch.double,device=self.device)
+
+        lat,lon = self.RPC_PHOTO2OBJ(samp,line,h)
+        yx = self.latlon2yx(torch.stack([lat,lon],dim=-1))
+        y,x = yx[:,0],yx[:,1]
+
+        if output_type == 'numpy':
+            x = x.cpu().numpy()
+            y = y.cpu().numpy()
+
+        return x,y
+
     # def adjust(self, insamp, inline):
     #     samp = torch.tensor(insamp,dtype=torch.double,device=self.device)
     #     line = torch.tensor(inline,dtype=torch.double,device=self.device)
