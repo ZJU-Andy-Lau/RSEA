@@ -348,11 +348,18 @@ class CriterionTrainGrid(nn.Module):
         conf[conf < .5] = .5 - progress * .4
         conf = torch.clip(conf - conf.mean() + 1.,min=0.)
 
-        sigma_xyh = torch.exp(log_sigma_xyh)
-        loss_distribution = (torch.sum(((xyh_gt - mu_xyh) ** 2) / (2 * sigma_xyh**2),dim=-1) + torch.sum(log_sigma_xyh,dim=-1)) * conf
-
         xy_pred,h_pred = mu_xyh[:,:2],mu_xyh[:,2]
         xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
+
+        sigma_xyh = torch.exp(log_sigma_xyh)
+        sigma_xy = sigma_xyh[:,:2]
+        sigma_h = sigma_xyh[:,2:]
+
+        loss_distribution_xy = (torch.sum(((xy_gt - xy_pred) ** 2) / (2 * sigma_xy**2),dim=-1) + torch.sum(log_sigma_xyh[:,:2],dim=-1)) * conf
+        loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2),dim=-1) + log_sigma_xyh[:,2:]) * conf
+        loss_distribution = loss_distribution_xy + loss_distribution_h
+
+        
 
         latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
         linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
