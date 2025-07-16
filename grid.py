@@ -74,12 +74,12 @@ class Grid():
             dem = img.get_dem_by_sampline(np.array([left,top]),np.array([right,bottom]))
             return img_raw,dem,np.array([top,left]),np.array([bottom,right])
         elif mode == 'interpolate':
-            img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines[:,[1,0]],
+            img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines,
                                                             (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                             int((self.border[3] - self.border[1]) / self.pred_resolution)),
                                                             need_local=True)
             
-            dem = img.resample_image_by_sampline(corner_samplines[:,[1,0]],
+            dem = img.resample_image_by_sampline(corner_samplines,
                                                 (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                  int((self.border[3] - self.border[1]) / self.pred_resolution)))
             print(local_hw2[0,0].astype(int),
