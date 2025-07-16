@@ -343,6 +343,7 @@ class Grid():
 
     def load_grid(self,path:str):
         state_dict = torch.load(path)
+        name = os.path.basename(path)
         self.mapper.load_state_dict(state_dict['mapper'])
         self.diag = state_dict['diag'].cpu().numpy()
         self.map_coeffs = {
@@ -350,6 +351,7 @@ class Grid():
             'y':state_dict['map_coeffs_y'].cpu().numpy(),
             'h':state_dict['map_coeffs_h'].cpu().numpy(),
         }
+        print(f"Grid '{name} loaded succesfully'")
     
     @torch.no_grad()
     def vis_match(self,idx=None):

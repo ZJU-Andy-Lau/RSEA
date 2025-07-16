@@ -511,93 +511,70 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
     return coefs
 
 def resample_from_quad(
-        gray_image: np.ndarray,
-        quad_coords: np.ndarray,
-        target_shape: Tuple[int,int]
-    ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        根据四边形的四个角点，在灰度图中进行重采样，得到校正后的矩形图像和坐标映射。
+    source_image: np.ndarray,
+    quad_coords: np.ndarray,
+    target_shape: tuple[int, int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    根据四边形的四个角点，在源图像(灰度或RGB)中进行重采样，得到校正后的矩形图像和坐标映射。
 
-        Args:
-            gray_image (np.ndarray): 输入的灰度图像，形状为 (H, W)。
-            quad_coords (np.ndarray): 四边形的四个角点坐标，形状为 (4, 2)，
-                                    数据类型为 float 或 int。
-                                    顺序为：左上、右上、右下、左下。
-                                    坐标格式为 (row, col)，即 (行号, 列号)。
-            target_shape (tuple[int, int]): 目标输出图像的尺寸 (h, w)。
+    Args:
+        source_image (np.ndarray): 输入的源图像，形状为 (H, W) 的灰度图或 (H, W, 3) 的RGB/BGR图。
+        quad_coords (np.ndarray): 四边形的四个角点坐标，形状为 (4, 2)，
+                                  数据类型为 float 或 int。
+                                  顺序为：左上、右上、右下、左下。
+                                  坐标格式为 (row, col)，即 (行号, 列号)。
+        target_shape (tuple[int, int]): 目标输出图像的尺寸 (h, w)。
 
-        Returns:
-            tuple[np.ndarray, np.ndarray]:
-            - resampled_image (np.ndarray): 重采样后的矩形图像，形状为 (h, w)。
-            - coordinate_map (np.ndarray): 坐标映射矩阵，形状为 (h, w, 2)。
-                                            map[y, x] = [row, col] 记录了新图(y,x)像素
-                                            在原图中的浮点坐标。
-        """
-        if gray_image.ndim != 2:
-            raise ValueError("输入图像必须是灰度图 (二维数组)。")
-        if quad_coords.shape != (4, 2):
-            raise ValueError("角点坐标数组的形状必须是 (4, 2)。")
+    Returns:
+        tuple[np.ndarray, np.ndarray]:
+        - resampled_image (np.ndarray): 重采样后的矩形图像。
+                                        如果输入是灰度图，形状为 (h, w)。
+                                        如果输入是RGB图，形状为 (h, w, 3)。
+        - coordinate_map (np.ndarray): 坐标映射矩阵，形状为 (h, w, 2)。
+                                        map[y, x] = [row, col] 记录了新图(y,x)像素
+                                        在原图中的浮点坐标。
+    """
+    # 1. 输入验证
+    if source_image.ndim not in [2, 3]:
+        raise ValueError("输入图像必须是二维 (灰度图) 或三维 (RGB/BGR图) 数组。")
+    if quad_coords.shape != (4, 2):
+        raise ValueError("角点坐标数组的形状必须是 (4, 2)。")
 
-        h, w = target_shape
-        
-        # 1. 准备源坐标点和目标坐标点
-        # OpenCV 的函数期望坐标格式为 (x, y)，即 (列, 行)。
-        # 我们的输入 quad_coords 是 (行, 列)，所以需要转换一下。
-        # astype(np.float32) 是必须的，因为 cv2.findHomography 要求输入是 float32 类型。
-        src_points = quad_coords[:, ::-1].astype(np.float32) # 从 (row, col) 转换为 (col, row)
+    h, w = target_shape
+    
+    # 2. 准备源坐标点和目标坐标点 
+    # OpenCV 的函数期望坐标格式为 (x, y)，即 (列, 行)。
+    src_points = quad_coords[:, ::-1].astype(np.float32) # 从 (row, col) 转换为 (col, row)
 
-        # 定义目标矩形的四个角点坐标 (x, y)
-        # 顺序必须与 src_points 对应：左上, 右上, 右下, 左下
-        dst_points = np.array([
-            [0, 0],         # 左上
-            [w - 1, 0],     # 右上
-            [w - 1, h - 1], # 右下
-            [0, h - 1]      # 左下
-        ], dtype=np.float32)
+    # 定义目标矩形的四个角点坐标 (x, y)
+    dst_points = np.array([
+        [0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]
+    ], dtype=np.float32)
 
-        # 2. 计算从源坐标到目标坐标的透视变换矩阵 M
-        # M 会将 src_points 映射到 dst_points
-        M, _ = cv2.findHomography(src_points, dst_points)
+    # 3. 计算透视变换矩阵 M 
+    M, _ = cv2.findHomography(src_points, dst_points)
 
-        # 3. 使用 M 对源图像进行透视变换（重采样）
-        # cv2.warpPerspective 使用反向映射和双线性插值，效率非常高。
-        # dsize 参数需要传入 (width, height) 的顺序。
-        resampled_image = cv2.warpPerspective(
-            gray_image,
-            M,
-            (w, h),
-            flags=cv2.INTER_LINEAR,     # 双线性插值，速度和效果的良好平衡
-            borderMode=cv2.BORDER_REPLICATE # 边界像素填充模式
-        )
+    # 4. 使用 M 对源图像进行透视变换
+    # cv2.warpPerspective 可以自动处理单通道和多通道图像。
+    # 如果 source_image 是 (H,W,3)，输出就是 (h,w,3)。
+    resampled_image = cv2.warpPerspective(
+        source_image,
+        M,
+        (w, h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_REPLICATE
+    )
 
-        # 4. 计算坐标映射矩阵
-        # 我们需要的是从目标图像坐标到源图像坐标的映射。
-        # 这需要使用变换矩阵 M 的逆矩阵。
-        M_inv = np.linalg.inv(M)
+    # 5. 计算坐标映射矩阵 
+    M_inv = np.linalg.inv(M)
+    y_grid, x_grid = np.mgrid[0:h, 0:w]
+    target_coords_homogeneous = np.stack(
+        (x_grid.ravel(), y_grid.ravel(), np.ones(h * w)), axis=1
+    )
+    source_coords_homogeneous = target_coords_homogeneous @ M_inv.T
+    source_coords_xy = source_coords_homogeneous[:, :2] / source_coords_homogeneous[:, 2, np.newaxis]
+    source_coords_xy = source_coords_xy.reshape(h, w, 2)
+    coordinate_map = source_coords_xy[:, :, ::-1]
 
-        # 创建目标图像的网格坐标 (x, y)
-        # np.mgrid 创建的是 (row, col) 顺序的网格，y_grid 是行，x_grid 是列
-        y_grid, x_grid = np.mgrid[0:h, 0:w]
-
-        # 将网格坐标转换为齐次坐标 (x, y, 1)，并 reshape 成 (h*w, 3) 的矩阵以便进行矩阵乘法
-        target_coords_homogeneous = np.stack(
-            (x_grid.ravel(), y_grid.ravel(), np.ones(h * w)), axis=1
-        )
-
-        # 使用逆变换矩阵 M_inv 将目标齐次坐标转换回源坐标系
-        # @ 是矩阵乘法运算符
-        source_coords_homogeneous = target_coords_homogeneous @ M_inv.T
-
-        # 将源齐次坐标转换回非齐次坐标 (x, y)
-        # 通过除以第三个分量 z 来实现
-        z = source_coords_homogeneous[:, 2]
-        source_coords_xy = source_coords_homogeneous[:, :2] / z[:, np.newaxis]
-
-        # 将坐标数组 reshape 回图像的形状 (h, w, 2)
-        # 当前格式是 (col, row) 即 (x, y)
-        source_coords_xy = source_coords_xy.reshape(h, w, 2)
-        
-        # 按照需求，将坐标格式从 (col, row) 转换回 (row, col)
-        coordinate_map = source_coords_xy[:, :, ::-1]
-
-        return resampled_image, coordinate_map
+    return resampled_image, coordinate_map

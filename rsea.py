@@ -227,20 +227,21 @@ class RSEA():
         print(f"threshold:{threshold} \t {inlier_num}/{conf_valid_idx.sum()}/{total_num} \t {inlier_num / total_num}")
         return affine_matrix
 
-    def load_grids(self,root = None):
-        if root is None:
-            root = self.root
-        grid_paths = [i for i in os.listdir(root) if 'grid_' in i]
+    def load_grids(self,path = None):
+        if path is None:
+            path = os.path.join(self.root,'grids')
+        grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
         for grid_path in grid_paths:
-            extend = np.load(os.path.join(root,grid_path,'extend.npy'))
-            center = np.array([extend[2],extend[5]])
-            scale = extend[6:8]
-            diag = np.stack([np.array([center[0] - scale[0],center[1] + scale[1]]),np.array([center[0] + scale[0],center[1] - scale[1]])],axis=0)
-            print(center)
-            print(scale)
-            print(diag)
-            new_grid = Grid(self.options,extend,diag,self.encoder,os.path.join(self.root,grid_path))
-            new_grid.load_mapper(os.path.join(self.root,grid_path,'grid_mapper.pth'))
+            new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
+            # extend = np.load(os.path.join(root,grid_path,'extend.npy'))
+            # center = np.array([extend[2],extend[5]])
+            # scale = extend[6:8]
+            # diag = np.stack([np.array([center[0] - scale[0],center[1] + scale[1]]),np.array([center[0] + scale[0],center[1] - scale[1]])],axis=0)
+            # print(center)
+            # print(scale)
+            # print(diag)
+            # new_grid = Grid(self.options,extend,diag,self.encoder,os.path.join(self.root,grid_path))
+            # new_grid.load_mapper(os.path.join(self.root,grid_path,'grid_mapper.pth'))
             self.grids.append(new_grid)
         print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
     
