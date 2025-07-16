@@ -209,6 +209,7 @@ class Grid():
 
 
         total_loss = 0
+        total_loss_dist = 0
         total_loss_obj = 0
         total_loss_height = 0
         total_loss_photo = 0
@@ -274,14 +275,23 @@ class Grid():
                 # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
                 # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
                 
-                output_13p1 = self.mapper(features_1Dp1)
-                output_p3 = output_13p1.permute(0,2,3,1).flatten(0,2)
-                xyh_pred_p3 = self.warp_by_poly(output_p3,self.map_coeffs)
+                output_16p1 = self.mapper(features_1Dp1)
+                output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+                mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+                log_sigma_xyh_p3 = output_p6[:,3:]
                 
-                loss,loss_obj,loss_height,loss_photo,loss_bias,loss_reg = criterion(iter_idx,self.options.element_training_iters,xyh_pred_p3,confs_p1,locals_p2,objs_p3,element.rpc)
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg = criterion(iter_idx,
+                                                                                                      self.options.element_training_iters,
+                                                                                                      mu_xyh_p3,
+                                                                                                      log_sigma_xyh_p3,
+                                                                                                      confs_p1,
+                                                                                                      locals_p2,
+                                                                                                      objs_p3,
+                                                                                                      element.rpc)
                 loss.backward()
 
                 total_loss += loss.item()
+                total_loss_dist += loss_distribution.item()
                 total_loss_obj += loss_obj.item()
                 total_loss_photo += loss_photo.item()
                 total_loss_height += loss_height.item()
@@ -292,6 +302,7 @@ class Grid():
                 pbar.update(1)
                 pbar.set_postfix({
                     'lr':f'{scheduler.get_last_lr()[0]:.2e}',
+                    'dist':f'{loss_distribution.item():.2f}',
                     'obj':f'{loss_obj.item():.2f}',
                     'photo':f'{loss_photo.item():.2f}',
                     'h':f'{loss_height.item():.2f}',
@@ -305,6 +316,7 @@ class Grid():
 
             if (iter_idx + 1) % 10 == 0:
                 total_loss /= count
+                total_loss_dist /= count
                 total_loss_obj /= count
                 total_loss_height /= count
                 total_loss_photo /= count
@@ -326,6 +338,7 @@ class Grid():
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
                 total_loss = 0
+                total_loss_dist = 0
                 total_loss_obj = 0
                 total_loss_height = 0
                 total_loss_photo = 0

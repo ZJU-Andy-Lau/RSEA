@@ -10,7 +10,7 @@ import torch.distributed as dist
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
 from criterion import CriterionFinetune
-from model_new import Encoder,ProjectHead,Decoder
+from model_new import Encoder,ProjectHead,DecoderFinetune
 import h5py
 import datetime
 import time
@@ -110,7 +110,7 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         img = 255 * (img - img.min()) / (img.max() - img.min())
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
-def compute_loss(args,epoch,data,encoder:Encoder,decoder:Decoder,projector:ProjectHead,criterion:nn.Module):
+def compute_loss(args,epoch,data,encoder:Encoder,decoder:DecoderFinetune,projector:ProjectHead,criterion:nn.Module):
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -260,7 +260,7 @@ def pretrain(args):
     optimizers = []
     schedulers = []
     for dataset_idx in trange(dataset_num):
-        decoder = Decoder(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
+        decoder = DecoderFinetune(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
 
         if not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})

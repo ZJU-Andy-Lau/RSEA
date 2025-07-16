@@ -166,7 +166,7 @@ class ProjectHead(nn.Module):
         return F.normalize(self.head(x),p=2,dim=1)
 
 
-class Decoder(nn.Module):
+class DecoderFinetune(nn.Module):
     """
     MLP network predicting per-pixel scene coordinates given a feature vector. All layers are 1x1 convolutions.
     """
@@ -210,6 +210,56 @@ class Decoder(nn.Module):
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
         return torch.cat([xy_res,height_res],dim=1)
+    
+    
+class Decoder(nn.Module):
+    """
+    MLP network predicting per-pixel scene coordinates given a feature vector. All layers are 1x1 convolutions.
+    """
+
+    def get_block(self,channels):
+        return nn.Sequential(
+            nn.Conv2d(channels,channels * 2,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(channels * 2,channels * 2,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(channels * 2,channels,1,1,0)
+        )
+
+    def __init__(self,in_channels=512,block_num=5,use_bn=False):
+        super().__init__()
+        block_num = max(block_num,1)
+        self.use_bn = use_bn
+        self.blocks = nn.ModuleList([self.get_block(in_channels) for _ in range(block_num)])
+        self.output_xy = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,4,1,1,0)
+        )
+        self.output_height = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,2,1,1,0)
+        )
+        # self.bn = bnac(in_channels)
+
+
+    def forward(self, res):
+        # res = res / torch.norm(res,dim=1,keepdim=True)
+        # if self.use_bn:
+        #     res = self.bn(res)
+        for block in self.blocks:
+            x = block(res)
+            res = res + x
+        xy_res = self.output_xy(res)
+        height_res = self.output_height(res)
+        mu_xy = F.tanh(xy_res[:,:2])
+        log_sigma_xy = xy_res[:,2:]
+        mu_h = F.tanh(height_res[:,:1])
+        log_sigma_h = height_res[:,1:]
+
+        return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
+
 
 
 

@@ -337,19 +337,21 @@ class CriterionTrainGrid(nn.Module):
         self.loss_height_weight = 10
         self.conf_clamp_rate = 2      
 
-    def forward(self,epoch,max_epoch,xyh_pred,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
+    def forward(self,epoch,max_epoch,mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
         
-        xyh_pred,conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [xyh_pred,conf,linesamp_gt,xyh_gt]]
+        mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt]]
 
 
         progress = 1. * epoch / max_epoch
 
-        valid_idx = conf > .5
         conf[conf > .5] = .5 + progress * .4
         conf[conf < .5] = .5 - progress * .4
         conf = torch.clip(conf - conf.mean() + 1.,min=0.)
 
-        xy_pred,h_pred = xyh_pred[:,:2],xyh_pred[:,2]
+        sigma_xyh = torch.exp(log_sigma_xyh)
+        loss_distribution = (torch.sum(((xyh_gt - mu_xyh) ** 2) / (2 * sigma_xyh**2),dim=-1) + torch.sum(log_sigma_xyh,dim=-1)) * conf
+
+        xy_pred,h_pred = mu_xyh[:,:2],mu_xyh[:,2]
         xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
 
         latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
@@ -365,6 +367,6 @@ class CriterionTrainGrid(nn.Module):
         loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
         loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
         
-        loss = loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
+        loss = loss_distribution.mean(),loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
 
-        return loss, loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()
+        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()
