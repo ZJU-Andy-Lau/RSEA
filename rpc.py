@@ -3,6 +3,7 @@ import os
 import torch
 import cv2
 
+
 class RPCModelParameterTorch:
     def __init__(self, data=torch.zeros(170,dtype=torch.double)):
         self.LINE_OFF = data[0]
@@ -272,7 +273,7 @@ class RPCModelParameterTorch:
     def convert_tensor(self,arr,device):
         if isinstance(arr,torch.Tensor):
             return arr.to(dtype=torch.double,device=device)
-        elif isinstance(arr,np.ndarray):
+        else:
             return torch.as_tensor(arr,dtype=torch.double,device=device)
 
     def RPC_OBJ2PHOTO(self, inlat, inlon, inhei, output_type='tensor'):
@@ -451,6 +452,8 @@ class RPCModelParameterTorch:
                 - var_linesamp (torch.Tensor): Projected variance in image space (line, samp).
                                                Shape: (2,) or (B, 2).
         """
+        mu_xyh = self.convert_tensor(mu_xyh,self.device)
+        sigma_xyh = self.convert_tensor(sigma_xyh,self.device)
         # Ensure inputs are in batched format (B, D)
         is_batched = mu_xyh.dim() == 2
         if not is_batched:
