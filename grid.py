@@ -64,7 +64,7 @@ class Grid():
     
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
-        print("corner_samplines",corner_samplines)
+        print("corner_samplines",corner_samplines.astype(int))
         if mode == 'bbox':
             top = max(min(corner_samplines[0,1],corner_samplines[1,1]),0)
             bottom = min(max(corner_samplines[2,1],corner_samplines[3,1]),img.H-1)
@@ -82,6 +82,10 @@ class Grid():
             dem = img.resample_image_by_sampline(corner_samplines[:,[1,0]],
                                                 (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                  int((self.border[3] - self.border[1]) / self.pred_resolution)))
+            print(local_hw2[0,0].astype(int),
+                  local_hw2[0,-1].astype(int),
+                  local_hw2[-1,-1].astype(int),
+                  local_hw2[-1,0].astype(int),)
 
             return img_raw,dem,local_hw2
         else:
@@ -487,7 +491,7 @@ class Grid():
             xyh_pred_p3 = self.warp_by_poly(output_p3,self.map_coeffs)
             xyh_preds.append(xyh_pred_p3)
         
-        xyh_P3 = torch.concatenate(xyh_P3,dim=0)
+        xyh_P3 = torch.concatenate(xyh_preds,dim=0)
 
 
         # kd_tree = build_kd_tree(locals_P2,device='cuda')
