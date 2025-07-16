@@ -215,7 +215,8 @@ class Grid():
         total_reg = 0
         count = 0
         no_update_count = 0
-        
+        early_stop_iter = -1
+
         pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
 
         for iter_idx in range(self.options.grid_training_iters):
@@ -322,6 +323,7 @@ class Grid():
                     self.mapper.load_state_dict(best_mapper_state_dict)
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
+                    early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
                 total_loss = 0
                 total_loss_obj = 0
@@ -329,7 +331,11 @@ class Grid():
                 total_loss_photo = 0
                 total_reg = 0
                 count = 0
-            
+
+            if early_stop_iter > 0 and iter_idx >= early_stop_iter:
+                break
+        if early_stop_iter > 0:
+            print("early stopped")
         self.mapper.load_state_dict(best_mapper_state_dict)
         # torch.save(best_mapper_state_dict,os.path.join(self.output_path,'grid_mapper.pth'))
         self.save_grid()

@@ -168,17 +168,17 @@ class RPCModelParameterTorch:
         hei = hei.reshape(-1)
 
         # 归一化
-        samp -= self.SAMP_OFF
-        samp /= self.SAMP_SCALE
-        line -= self.LINE_OFF
-        line /= self.LINE_SCALE
+        samp = samp - self.SAMP_OFF
+        samp = samp / self.SAMP_SCALE
+        line = line - self.LINE_OFF
+        line = line / self.LINE_SCALE
 
-        lat -= self.LAT_OFF
-        lat /= self.LAT_SCALE
-        lon -= self.LONG_OFF
-        lon /= self.LONG_SCALE
-        hei -= self.HEIGHT_OFF
-        hei /= self.HEIGHT_SCALE
+        lat = lat - self.LAT_OFF
+        lat = lat / self.LAT_SCALE
+        lon = lon - self.LONG_OFF
+        lon = lon / self.LONG_SCALE
+        hei = hei - self.HEIGHT_OFF
+        hei = hei / self.HEIGHT_SCALE
 
         coef = self.RPC_PLH_COEF(samp, line, hei)
 
@@ -268,24 +268,31 @@ class RPCModelParameterTorch:
         coef[:, 19] = H * H * H
 
         return coef
+    
+    def convert_tensor(self,arr,device):
+        if isinstance(arr,torch.Tensor):
+            return arr.to(dtype=torch.double,device=device)
+        elif isinstance(arr,np.ndarray):
+            return torch.as_tensor(arr,dtype=torch.double,device=device)
+
     def RPC_OBJ2PHOTO(self, inlat, inlon, inhei, output_type='tensor'):
         """
         From (lat, lon, hei) to (samp, line) using the direct rpc
         rpc: RPC_MODEL_PARAMETER
         lat, lon, hei (n)
         """
-        lat = torch.tensor(inlat,dtype=torch.double,device=self.device)
-        lon = torch.tensor(inlon,dtype=torch.double,device=self.device)
-        hei = torch.tensor(inhei,dtype=torch.double,device=self.device)
+        lat = self.convert_tensor(inlat,self.device)
+        lon = self.convert_tensor(inlon,self.device)
+        hei = self.convert_tensor(inhei,self.device)
 
-        lat -= self.LAT_OFF
-        lat /= self.LAT_SCALE
+        lat = lat - self.LAT_OFF
+        lat = lat / self.LAT_SCALE
 
-        lon -= self.LONG_OFF
-        lon /= self.LONG_SCALE
+        lon = lon - self.LONG_OFF
+        lon = lon / self.LONG_SCALE
 
-        hei -= self.HEIGHT_OFF
-        hei /= self.HEIGHT_SCALE
+        hei = hei - self.HEIGHT_OFF
+        hei = hei / self.HEIGHT_SCALE
 
         coef = self.RPC_PLH_COEF(lat, lon, hei)
 
@@ -324,22 +331,22 @@ class RPCModelParameterTorch:
         """
         # samp = torch.tensor(insamp,dtype=torch.double,device=self.device)
         # line = torch.tensor(inline,dtype=torch.double,device=self.device)
-        hei = torch.tensor(inhei,dtype=torch.double,device=self.device)
-        samp = torch.tensor(insamp,dtype=torch.double,device=self.device)
-        line = torch.tensor(inline,dtype=torch.double,device=self.device)
+        hei = self.convert_tensor(inhei,self.device)
+        samp = self.convert_tensor(insamp,self.device)
+        line = self.convert_tensor(inline,self.device)
  
         transformed_points = torch.stack([line,samp],dim=-1) @ self.adjust_params[:,:2].T + self.adjust_params[:,2]
         line = transformed_points[:,0]
         samp = transformed_points[:,1]
 
-        samp -= self.SAMP_OFF
-        samp /= self.SAMP_SCALE
+        samp = samp - self.SAMP_OFF
+        samp = samp / self.SAMP_SCALE
 
-        line -= self.LINE_OFF
-        line /= self.LINE_SCALE
+        line = line - self.LINE_OFF
+        line = line / self.LINE_SCALE
 
-        hei -= self.HEIGHT_OFF
-        hei /= self.HEIGHT_SCALE
+        hei = hei - self.HEIGHT_OFF
+        hei = hei / self.HEIGHT_SCALE
 
 
         coef = self.RPC_PLH_COEF(samp, line, hei)
@@ -376,16 +383,16 @@ class RPCModelParameterTorch:
         """
         (y,x) -> (lat,lon) N,2
         """
-        yx = torch.tensor(yx).to(torch.float64)
+        yx = self.convert_tensor(yx,self.device)
         r = 6378137.
         lon = (180. * yx[:,1]) / (torch.pi * r)
         lat = (2 * torch.atan(torch.exp(yx[:,0] / r)) - torch.pi * 0.5) * 180. / torch.pi
         return torch.stack([lat,lon],dim=-1)
 
     def RPC_XY2LINESAMP(self,x_in, y_in, h_in, output_type='tensor'):
-        x = torch.tensor(x_in,dtype=torch.double,device=self.device)
-        y = torch.tensor(y_in,dtype=torch.double,device=self.device)
-        h = torch.tensor(h_in,dtype=torch.double,device=self.device)
+        x = self.convert_tensor(x_in,self.device)
+        y = self.convert_tensor(y_in,self.device)
+        h = self.convert_tensor(h_in,self.device)
         
         latlon = self.yx2latlon(torch.stack([y,x],dim=-1))
         samp,line = self.RPC_OBJ2PHOTO(latlon[:,0],latlon[:,1],h)
@@ -397,9 +404,9 @@ class RPCModelParameterTorch:
         return line,samp
     
     def RPC_LINESAMP2XY(self,line_in, samp_in, h_in, output_type='tensor'):
-        line = torch.tensor(line_in,dtype=torch.double,device=self.device)
-        samp = torch.tensor(samp_in,dtype=torch.double,device=self.device)
-        h = torch.tensor(h_in,dtype=torch.double,device=self.device)
+        line = self.convert_tensor(line_in,self.device)
+        samp = self.convert_tensor(samp_in,self.device)
+        h = self.convert_tensor(h_in,self.device)
 
         lat,lon = self.RPC_PHOTO2OBJ(samp,line,h)
         yx = self.latlon2yx(torch.stack([lat,lon],dim=-1))
@@ -410,6 +417,82 @@ class RPCModelParameterTorch:
             y = y.cpu().numpy()
 
         return x,y
+    
+    def _project_xyh_to_linesamp_for_jacobian(self, xyh_tensor: torch.Tensor) -> torch.Tensor:
+        """
+        A helper function that takes a single (N, 3) tensor for xyh
+        and returns a (N, 2) tensor for line/samp.
+        This format is required by torch.autograd.functional.jacobian.
+        """
+        x, y, h = xyh_tensor[..., 0], xyh_tensor[..., 1], xyh_tensor[..., 2]
+        
+        # Chain the transformations
+        latlon = self.yx2latlon(torch.stack([y, x], dim=-1))
+        line, samp = self.RPC_OBJ2PHOTO(latlon[:, 0], latlon[:, 1], h)
+        
+        return torch.stack([line, samp], dim=-1)
+
+    def xy_distribution_to_linesamp(self, mu_xyh: torch.Tensor, sigma_xyh: torch.Tensor):
+        """
+        Projects a distribution from object space (x, y, h in EPSG:3857) 
+        to image space (line, samp) using first-order Taylor expansion 
+        for uncertainty propagation. This function is fully differentiable.
+
+        Args:
+            mu_xyh (torch.Tensor): Tensor of shape (3,) or (B, 3) for the mean
+                                   of (x, y, height).
+            sigma_xyh (torch.Tensor): Tensor of shape (3,) or (B, 3) for the
+                                      standard deviation of (x, y, height).
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]:
+                - mu_linesamp (torch.Tensor): Projected mean in image space (line, samp).
+                                              Shape: (2,) or (B, 2).
+                - var_linesamp (torch.Tensor): Projected variance in image space (line, samp).
+                                               Shape: (2,) or (B, 2).
+        """
+        # Ensure inputs are in batched format (B, D)
+        is_batched = mu_xyh.dim() == 2
+        if not is_batched:
+            mu_xyh = mu_xyh.unsqueeze(0)
+            sigma_xyh = sigma_xyh.unsqueeze(0)
+
+        # --- 1. Mean Propagation ---
+        # Project the mean point directly.
+        mu_linesamp = self._project_xyh_to_linesamp_for_jacobian(mu_xyh)
+
+        # --- 2. Covariance Propagation ---
+        # a. Calculate the Jacobian matrix J at the mean point.
+        # create_graph=True allows for higher-order derivatives if needed.
+        J = torch.autograd.functional.jacobian(
+            self._project_xyh_to_linesamp_for_jacobian, 
+            mu_xyh, 
+            create_graph=True
+        )
+        
+        # The output of jacobian on a batched input has a shape of (B, D_out, B, D_in).
+        # We need to extract the per-sample Jacobians, which form a "diagonal"
+        # in the batch dimensions, resulting in a shape of (B, D_out, D_in).
+        J = torch.diagonal(J, dim1=0, dim2=2).permute(2, 0, 1)
+
+        # b. Construct the input diagonal covariance matrix Sigma_in.
+        # The user provides standard deviations (sigma), so we square them to get variance.
+        var_xyh = sigma_xyh.pow(2)
+        Sigma_in = torch.diag_embed(var_xyh)
+
+        # c. Propagate the covariance: Sigma_out = J @ Sigma_in @ J^T
+        J_T = J.transpose(-1, -2)
+        Sigma_out = J @ Sigma_in @ J_T
+
+        # d. Extract the variances from the diagonal of the output covariance matrix.
+        var_linesamp = torch.diagonal(Sigma_out, dim1=-2, dim2=-1)
+
+        # Return to original shape if input was not batched
+        if not is_batched:
+            mu_linesamp = mu_linesamp.squeeze(0)
+            var_linesamp = var_linesamp.squeeze(0)
+            
+        return mu_linesamp, var_linesamp
 
     # def adjust(self, insamp, inline):
     #     samp = torch.tensor(insamp,dtype=torch.double,device=self.device)

@@ -95,6 +95,9 @@ if __name__ == '__main__':
     parser.add_argument('--grid_summit_hold_iters', type=int, default=8800,
                         help='number of epochs for lr staying lr_max after warmup')
     
+    parser.add_argument('--grid_cool_down_iters', type=int, default=1000,
+                        help='number of epochs for lr staying lr_max after warmup')
+    
     # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
     #                     help='factor of lr decay in every 10 epochs')
     
