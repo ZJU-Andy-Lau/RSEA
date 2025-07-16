@@ -106,9 +106,9 @@ class MultiStageOneCycleLR:
             self.pct_start *= self.pct_decay
             self.new_stage()
     
-    def cool_down(self):
+    def cool_down(self,adjust_gamma = True):
         self.manual_cooldown = True
-        if not self.min_lr is None:
+        if not self.min_lr is None and adjust_gamma:
             exp_steps = self.steps_per_epoch * self.n_epochs_per_stage - self.step_count
             self.gamma = (self.min_lr / self.base_max_lr) ** (1. / exp_steps)
 

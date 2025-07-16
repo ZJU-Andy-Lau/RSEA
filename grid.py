@@ -313,7 +313,7 @@ class Grid():
                 
                 if no_update_count >= 50:
                     self.mapper.load_state_dict(best_mapper_state_dict)
-                    scheduler.cool_down()
+                    scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
 
                 total_loss = 0
