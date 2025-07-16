@@ -37,6 +37,7 @@ class Grid():
     def __init__(self,options,encoder:Encoder,output_path:str,diag:np.ndarray = None,grid_path:str = None):
 
         self.options = options
+        self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         if diag is None and grid_path is None:
             print("Grid loaded error: Neither diag nor grid path is given")
             return None
@@ -53,7 +54,6 @@ class Grid():
         print(f"\n Grid range: x: {self.border[0]:.2f} ~ {self.border[2]:.2f} \t y: {self.border[1]:.2f} ~ {self.border[3]:.2f}\n")
         self.encoder = encoder
         self.output_path = output_path
-        self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         self.elements:List[Element] = []
         self.transform = transforms.Compose([
             transforms.ToTensor(),
@@ -342,7 +342,7 @@ class Grid():
         torch.save(state_dict,os.path.join(self.output_path,'grid_data.pth'))
 
     def load_grid(self,path:str):
-        state_dict = torch.load(path)
+        state_dict = torch.load(os.path.join(path,'grid_data.pth'))
         name = os.path.basename(path)
         self.mapper.load_state_dict(state_dict['mapper'])
         self.diag = state_dict['diag'].cpu().numpy()
