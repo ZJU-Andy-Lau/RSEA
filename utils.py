@@ -505,13 +505,15 @@ def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False,mode='mid'):
     """
     if ds <= 0:
         return arr
-    if len(arr.shape) < 4:
-        arr = arr.unsqueeze(-1)
+    # if len(arr.shape) < 4:
+    #     arr = arr.unsqueeze(-1)
     arr_ds = []
     if show_detail:
         pbar = tqdm(total = len(arr))
     for a in arr:
         if mode == 'mid':
+            if len(a.shape) < 3:
+                a = a.unsqueeze(-1)
             H,W = a.shape[:2]
             lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
             samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
