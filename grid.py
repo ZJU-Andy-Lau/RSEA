@@ -255,6 +255,7 @@ class Grid():
                     confs_p1 = element.buffer['confs'][sample_idxs].contiguous()
                     objs_p3 = element.buffer['objs'][sample_idxs].contiguous()
                     locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
+                    valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
 
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
