@@ -367,6 +367,6 @@ class CriterionTrainGrid(nn.Module):
         loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
         loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
         
-        loss = loss_distribution.mean(),loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
+        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
 
         return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()
