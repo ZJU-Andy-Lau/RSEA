@@ -161,7 +161,6 @@ class RSEA():
         """
         return : [tl,br] [x,y] np.ndarray
         """
-        print(tl1,tl2,br1,br2)
         if tl1[0] > br2[0] or tl1[1] < br2[1] or br1[0] < tl2[0] or br1[1] > tl2[1]:
             return None
         tl = np.array([max(tl1[0],tl2[0]),min(tl1[1],tl2[1])])

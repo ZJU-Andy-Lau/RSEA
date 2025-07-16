@@ -102,7 +102,7 @@ class Grid():
         if not os.path.exists(output_path):
             os.mkdir(output_path)
         
-        img_raw,dem,tl_linesamp,br_linesamp = self.get_overlap_image(img,mode='bbox')
+        img_raw,dem,local_hw2 = self.get_overlap_image(img,mode='interpolate')
 
         new_element = Element(options = self.options,
                               encoder = self.encoder,
@@ -111,7 +111,7 @@ class Grid():
                               rpc = img.rpc,
                               id = len(self.elements) if id is None else id,
                               output_path = output_path,
-                              top_left_linesamp=tl_linesamp)
+                              local_raw = local_hw2)
         if mapper_path:
             new_element.load_mapper(mapper_path)
 

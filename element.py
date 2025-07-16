@@ -30,14 +30,21 @@ import random
 from typing import List,Dict
 
 class Element():
-    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = np.array([0.,0.])):
+    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None):
         self.options = options
         self.id = id
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
         cv2.imwrite(os.path.join(output_path,f'img_{id}.png'),img_raw)
-        self.local_raw = get_coord_mat(self.img_raw.shape[0],self.img_raw.shape[1])
-        self.top_left_linesamp = top_left_linesamp
-        self.local_raw += top_left_linesamp
+        if top_left_linesamp is None:
+            self.top_left_linesamp = np.array([0.,0.])
+        else:
+            self.top_left_linesamp = top_left_linesamp
+        if local_raw is None:
+            self.local_raw = get_coord_mat(self.img_raw.shape[0],self.img_raw.shape[1])
+            self.local_raw += self.top_left_linesamp
+        else:
+            self.local_raw = local_raw
+            self.top_left_linesamp = local_raw[0,0]
         self.dem = dem
         self.rpc = rpc
         self.H,self.W = self.img_raw.shape[:2]
