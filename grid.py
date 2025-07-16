@@ -223,32 +223,37 @@ class Grid():
             optimizer.zero_grad()
             for element in self.elements:
                 
-
-                sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
-                                                           min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
-                                                torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
-                                                           min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
-                                                dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
-                sample_linesamps = torch.concatenate([sample_linesamps,
-                                                      torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
-                                                      torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
-                                                      torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
-                                                      dim=0)
-                dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=4)
-                valid_mask = dists.max(dim=1).values < 256
-                dists = 1. / (dists[valid_mask] + 1e-6)
-                idxs = idxs[valid_mask]
-                dists = dists / torch.mean(dists,dim=-1,keepdim=True)
-                features_pD = element.buffer['features'][idxs].contiguous()
-                confs_p1 = element.buffer['confs'][idxs].contiguous()
-                objs_p3 = element.buffer['objs'][idxs].contiguous()
-                locals_p2 = sample_linesamps[valid_mask]
-                features_pD = features_pD * dists.unsqueeze(-1)
-                confs_p1 = confs_p1 * dists
-                objs_p3 = objs_p3 * dists.unsqueeze(-1)
-                features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
-                confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
-                objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
+                if iter_idx % 5 != 0:
+                    sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
+                                                            min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
+                                                    torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
+                                                            min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
+                                                    dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
+                    sample_linesamps = torch.concatenate([sample_linesamps,
+                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
+                                                        dim=0)
+                    dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=4)
+                    valid_mask = dists.max(dim=1).values < 256
+                    dists = 1. / (dists[valid_mask] + 1e-6)
+                    idxs = idxs[valid_mask]
+                    dists = dists / torch.mean(dists,dim=-1,keepdim=True)
+                    features_pD = element.buffer['features'][idxs].contiguous()
+                    confs_p1 = element.buffer['confs'][idxs].contiguous()
+                    objs_p3 = element.buffer['objs'][idxs].contiguous()
+                    locals_p2 = sample_linesamps[valid_mask]
+                    features_pD = features_pD * dists.unsqueeze(-1)
+                    confs_p1 = confs_p1 * dists
+                    objs_p3 = objs_p3 * dists.unsqueeze(-1)
+                    features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
+                    confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
+                    objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
+                else:
+                    sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
+                    features_pD = element.buffer['features'][sample_idxs].contiguous()
+                    confs_p1 = element.buffer['confs'][sample_idxs].contiguous()
+                    objs_p3 = element.buffer['objs'][sample_idxs].contiguous()
 
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
