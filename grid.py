@@ -82,7 +82,7 @@ class Grid():
                                                 (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                  int((self.border[3] - self.border[1]) / self.pred_resolution)))
 
-            return img_raw,dem,
+            return img_raw,dem,local_hw2
         else:
             raise ValueError("mode should either be 'bbox' or 'interpolate'")
 
