@@ -416,7 +416,93 @@ def bilinear_interpolate(array, points, use_cuda=False):
     
     return result
 
-def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False):
+def downsample_average(
+    input_tensor: torch.Tensor,
+    downsample_factor: int,
+    use_cuda: bool = False
+) -> torch.Tensor:
+    """
+    使用滑动窗口平均值对图像张量进行下采样。
+
+    该函数接受一个形状为 (H, W) 或 (H, W, C) 的 PyTorch 图像张量，
+    并使用一个 (downsample_factor x downsample_factor) 的窗口
+    以 downsample_factor 为步长进行不重叠的滑动窗口下采样，
+    并取窗口内的像素平均值。
+
+    Args:
+        input_tensor (torch.Tensor): 输入的图像张量，形状可以是 (H, W) [灰度图]
+                                     或 (H, W, C) [彩色图]。
+        downsample_factor (int): 下采样因子，将作为窗口大小和步长。例如，8 表示
+                                 使用 8x8 的窗口下采样8倍。
+        use_cuda (bool, optional): 如果为 True，则尝试使用 CUDA GPU 进行加速。
+                                   如果 CUDA 不可用，将打印警告并回退到 CPU。
+                                   默认为 False。
+
+    Returns:
+        torch.Tensor: 经过下采样后的图像张量。
+                      如果输入是 (H, W)，输出是 (H/factor, W/factor)。
+                      如果输入是 (H, W, C)，输出是 (H/factor, W/factor, C)。
+                      输出张量将位于计算所用的设备上（CPU 或 CUDA）。
+
+    Raises:
+        ValueError: 如果输入张量的维度不是 2 或 3。
+        TypeError: 如果输入不是一个 torch.Tensor。
+    """
+    if not isinstance(input_tensor, torch.Tensor):
+        raise TypeError(f"输入必须是 torch.Tensor，但得到的是 {type(input_tensor)}")
+
+    # --- 1. 检查和设置计算设备 (CPU or CUDA) ---
+    device = torch.device("cpu")
+    if use_cuda:
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            # print("CUDA is available. Using GPU for acceleration.")
+        else:
+            print("警告: 请求使用 CUDA，但 CUDA 不可用。将回退到 CPU。")
+
+    # 将输入张量移动到目标设备
+    input_tensor = input_tensor.to(device)
+
+    # --- 2. 预处理：将输入张量调整为 PyTorch 卷积层期望的格式 (N, C, H, W) ---
+    # PyTorch 的 2D 卷积/池化层需要一个4D张量作为输入：(批量大小, 通道数, 高, 宽)
+    input_dim = input_tensor.dim()
+    if input_dim == 2:  # 灰度图 (H, W)
+        is_grayscale = True
+        # 扩展为 (1, 1, H, W)
+        tensor_in = input_tensor.unsqueeze(0).unsqueeze(0)
+    elif input_dim == 3:  # 彩色图 (H, W, C)
+        is_grayscale = False
+        # PyTorch 使用 "channels-first" (C, H, W) 格式，所以需要转换维度
+        # (H, W, C) -> (C, H, W)，然后扩展为 (1, C, H, W)
+        tensor_in = input_tensor.permute(2, 0, 1).unsqueeze(0)
+    else:
+        raise ValueError(f"输入张量的维度必须是 2 (H,W) 或 3 (H,W,C)，但得到的是 {input_dim}")
+
+    # 确保输入张量是浮点数类型，以便计算平均值
+    tensor_in = tensor_in.float()
+
+    # --- 3. 定义并执行平均池化操作 ---
+    # 使用 AvgPool2d 可以高效地完成滑动窗口平均操作
+    # kernel_size 是窗口大小
+    # stride 是滑动步长
+    # 当 kernel_size 和 stride 相同时，窗口不会重叠
+    pool = nn.AvgPool2d(kernel_size=downsample_factor, stride=downsample_factor).to(device)
+    downsampled_tensor = pool(tensor_in)
+
+    # --- 4. 后处理：将输出张量恢复为原始格式 ---
+    if is_grayscale:
+        # (1, 1, H', W') -> (H', W')
+        output_tensor = downsampled_tensor.squeeze(0).squeeze(0)
+    else:
+        # (1, C, H', W') -> (C, H', W') -> (H', W', C)
+        output_tensor = downsampled_tensor.squeeze(0).permute(1, 2, 0)
+
+    return output_tensor.cpu()
+
+def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False,mode='mid'):
+    """
+    mode: mid or avg
+    """
     if ds <= 0:
         return arr
     if len(arr.shape) < 4:
@@ -425,12 +511,18 @@ def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False):
     if show_detail:
         pbar = tqdm(total = len(arr))
     for a in arr:
-        H,W = a.shape[:2]
-        lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
-        samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
-        sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
-        a = torch.tensor(bilinear_interpolate(a,sample_idxs,use_cuda=use_cuda))
-        arr_ds.append(a.reshape(len(lines),len(samps),-1).squeeze())
+        if mode == 'mid':
+            H,W = a.shape[:2]
+            lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
+            samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
+            sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
+            a = torch.tensor(bilinear_interpolate(a,sample_idxs,use_cuda=use_cuda))
+            arr_ds.append(a.reshape(len(lines),len(samps),-1).squeeze())
+        elif mode == 'avg':
+            a_ds = downsample_average(a,ds,use_cuda)
+            arr_ds.append(a_ds)
+        else:
+            raise ValueError("downsample mode should either be mid or avg")
         if show_detail:
             pbar.update(1)
     arr_ds = torch.stack(arr_ds,dim=0)

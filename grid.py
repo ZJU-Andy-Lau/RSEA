@@ -447,7 +447,7 @@ class Grid():
         print("Tranforming Images")
         imgs_NHW = torch.stack([self.transform(img) for img in tqdm(crop_imgs_NHW)]) # N,H,W
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
-        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR)
+        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,mode='avg')
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
 
