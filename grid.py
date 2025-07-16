@@ -64,6 +64,7 @@ class Grid():
     
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
+        print("corner_samplines",corner_samplines)
         if mode == 'bbox':
             top = max(min(corner_samplines[0,1],corner_samplines[1,1]),0)
             bottom = min(max(corner_samplines[2,1],corner_samplines[3,1]),img.H-1)
@@ -476,7 +477,7 @@ class Grid():
         locals_P2 = torch.cat(locals_P2,dim=0)
 
         patches_per_batch = self.options.patches_per_batch
-        batch_num = int(np.ceil(total_patch_num / patches_per_batch))
+        batch_num = int(np.ceil(features_PD.shape[0] / patches_per_batch))
         print("Predicting Geographic Coordinates")
         xyh_preds = []
         for batch_idx in trange(batch_num):
