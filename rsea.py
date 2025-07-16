@@ -278,10 +278,10 @@ class RSEA():
                 
                 pred_res = grid.pred_xyh(img_raw,local_hw2)
 
-                xyh = np.concatenate([pred_res['yx_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
+                xyh = np.concatenate([pred_res['xy_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
                 all_xyh.append(xyh)
 
-                latlon_P2 = mercator2lonlat(pred_res['yx_P2'])
+                latlon_P2 = mercator2lonlat(pred_res['xy_P2'][:,[1,0]])
                 locals_P2 = pred_res['locals_P2']
                 linesamp_pred_P2 = np.stack(image.rpc.RPC_OBJ2PHOTO(latlon_P2[:,0],latlon_P2[:,1],pred_res['h_P1'],'numpy'),axis=1)[:,[1,0]]
                 all_locals.append(locals_P2)

@@ -64,7 +64,6 @@ class Grid():
     
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
-        print("corner_samplines",corner_samplines.astype(int))
         if mode == 'bbox':
             top = max(min(corner_samplines[0,1],corner_samplines[1,1]),0)
             bottom = min(max(corner_samplines[2,1],corner_samplines[3,1]),img.H-1)
@@ -82,10 +81,6 @@ class Grid():
             dem = img.resample_image_by_sampline(corner_samplines,
                                                 (int((self.border[2] - self.border[0]) / self.pred_resolution),
                                                  int((self.border[3] - self.border[1]) / self.pred_resolution)))
-            print(local_hw2[0,0].astype(int),
-                  local_hw2[0,-1].astype(int),
-                  local_hw2[-1,-1].astype(int),
-                  local_hw2[-1,0].astype(int),)
 
             return img_raw,dem,local_hw2
         else:
@@ -449,7 +444,8 @@ class Grid():
         else:
             crop_step = int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 150.))
         crop_imgs_NHW,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step,local=local_hw2)
-        imgs_NHW = torch.stack([self.transform(img) for img in crop_imgs_NHW]) # N,H,W
+        print("Tranforming Images")
+        imgs_NHW = torch.stack([self.transform(img) for img in tqdm(crop_imgs_NHW)]) # N,H,W
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR)
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
@@ -546,7 +542,7 @@ class Grid():
         # yxh_P3 = warp_by_extend(pred_raw_P3,self.extend)
         
         res = {
-            'yx_P2':xyh_P3[:,:2].cpu().numpy(),
+            'xy_P2':xyh_P3[:,:2].cpu().numpy(),
             'h_P1':xyh_P3[:,2].cpu().numpy(),
             'locals_P2':locals_P2.cpu().numpy(),
             'confs_P1':confs_P1.cpu().numpy(),
