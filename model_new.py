@@ -320,8 +320,11 @@ class AffineFitter:
         affine_matrix = torch.tensor([[1.0, 0.0, 0.0],
                                       [0.0, 1.0, 0.0]], device=device, dtype=source_points.dtype)
         
+        
         # 将其封装为可学习参数
         self.params = nn.Parameter(affine_matrix)
+
+        best_params = self.params
         
         # 使用 Adam 优化器
         optimizer = torch.optim.Adam([self.params], lr=self.lr)
@@ -333,6 +336,8 @@ class AffineFitter:
         # --- 4. 优化循环 ---
         if self.verbose:
             print(f"开始拟合... 总共 {self.iterations} 次迭代。")
+        
+        min_loss = 1e9
             
         for i in range(self.iterations):
             optimizer.zero_grad()
@@ -345,18 +350,22 @@ class AffineFitter:
             # L = sum( (x'_i - mu_xi)^2 / sigma_xi^2 + (y'_i - mu_yi)^2 / sigma_yi^2 )
             error = transformed_points - pred_means
             weighted_squared_error = error.pow(2) * weights
-            loss = weighted_squared_error.sum()
+            loss = weighted_squared_error.mean()
+
+            if loss < min_loss:
+                min_loss = loss.item()
+                best_params = self.params
 
             # 反向传播和优化
             loss.backward()
             optimizer.step()
 
             if self.verbose and (i % (self.iterations // 10) == 0 or i == self.iterations - 1):
-                print(f"迭代 {i:5d}/{self.iterations}, 损失: {loss.item():.4f}")
+                print(f"iter {i:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
 
         # --- 5. 保存并返回结果 ---
         # detach() 以防止后续操作被追踪梯度
-        self.transformation_matrix = self.params.detach().clone()
+        self.transformation_matrix = best_params.detach().clone()
         
         if self.verbose:
             print("拟合完成！")

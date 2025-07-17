@@ -173,7 +173,7 @@ class RSEA():
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"ori dis: {ori_dis.item()} \t avg_sigma:{avg_sigma.item()}")
 
-        fitter = AffineFitter(learning_rate=0.01, num_iterations=10000)
+        fitter = AffineFitter(learning_rate=0.0001, num_iterations=10000)
         total_num = len(confs)
         conf_valid_idx = confs > self.options.conf_threshold
         src = src[conf_valid_idx]
@@ -195,7 +195,7 @@ class RSEA():
     def load_grids(self,path = None):
         if path is None:
             path = os.path.join(self.root,'grids')
-        grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
+        grid_paths = [i for i in os.listdir(path) if 'grid_' in i][:1]
         for grid_path in grid_paths:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
             # extend = np.load(os.path.join(root,grid_path,'extend.npy'))
