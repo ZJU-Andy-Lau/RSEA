@@ -174,7 +174,7 @@ class RSEA():
         src = src[conf_valid_idx]
         tgt_mu = tgt_mu[conf_valid_idx]
         tgt_sigma = tgt_sigma[conf_valid_idx]
-        confs = tgt_sigma[confs]
+        confs = confs[conf_valid_idx]
         print(f"conf filter :{conf_valid_idx.sum()}/{total_num}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
@@ -190,7 +190,7 @@ class RSEA():
     def load_grids(self,path = None):
         if path is None:
             path = os.path.join(self.root,'grids')
-        grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
+        grid_paths = [i for i in os.listdir(path) if 'grid_' in i][:1]
         for grid_path in grid_paths:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
             # extend = np.load(os.path.join(root,grid_path,'extend.npy'))

@@ -433,74 +433,95 @@ class RPCModelParameterTorch:
         
         return torch.stack([line, samp], dim=-1)
 
-    def xy_distribution_to_linesamp(self, mu_xyh: torch.Tensor, sigma_xyh: torch.Tensor):
+    def _vjp_projection_core(self, mu_xyh: torch.Tensor, sigma_xyh: torch.Tensor):
         """
-        【内存高效版】
-        使用向量-雅可比积（Vector-Jacobian Products）将物方分布投影到像方。
-        此版本经过高度优化，可处理百万级数量的点，避免显存溢出。
+        【私有核心函数】执行VJP投影计算。
+        假定输入的张量块能完全载入显存。
+        """
+        # 确保 mu_xyh 可以追踪梯度，这是 autograd.grad 的要求
+        mu_xyh.requires_grad_(True)
+
+        # --- 均值传播 ---
+        line, samp = self.RPC_XY2LINESAMP(mu_xyh[:, 0], mu_xyh[:, 1], mu_xyh[:, 2])
+        mu_linesamp = torch.stack([line, samp], dim=-1)
+
+        # --- 方差传播 (VJP方法) ---
+        grad_line, = torch.autograd.grad(
+            outputs=line, inputs=mu_xyh,
+            grad_outputs=torch.ones_like(line),
+            create_graph=True, retain_graph=True,
+        )
+        grad_samp, = torch.autograd.grad(
+            outputs=samp, inputs=mu_xyh,
+            grad_outputs=torch.ones_like(samp),
+            create_graph=True,
+        )
+        
+        var_xyh = sigma_xyh.pow(2)
+        var_line = (grad_line.pow(2) * var_xyh).sum(dim=-1)
+        var_samp = (grad_samp.pow(2) * var_xyh).sum(dim=-1)
+        var_linesamp = torch.stack([var_line, var_samp], dim=-1)
+            
+        return mu_linesamp, var_linesamp
+
+    def xy_distribution_to_linesamp(self, mu_xyh: torch.Tensor, sigma_xyh: torch.Tensor, chunk_size: int = 524288):
+        """
+        【最终版公开接口】一个鲁棒且高效的投影函数，集成了VJP方法和自动分块机制。
 
         Args:
             mu_xyh (torch.Tensor): 形状为 (N, 3) 或 (3,) 的张量，表示 (x, y, h) 的均值。
             sigma_xyh (torch.Tensor): 形状为 (N, 3) 或 (3,) 的张量，表示 (x, y, h) 的标准差。
+            chunk_size (int, optional): 处理块的大小。如果输入点的总数 N 超过此值，
+                                        将自动启用分块计算。默认为 524288 (512 * 1024)。
+                                        您可以根据您的GPU显存大小调整此值。
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]:
                 - mu_linesamp (torch.Tensor): 投影后的像方均值 (line, samp)，形状为 (N, 2) 或 (2,)。
                 - var_linesamp (torch.Tensor): 投影后的像方方差 (line, samp)，形状为 (N, 2) 或 (2,)。
         """
-        # 确保输入是批处理格式 (N, D)，并开启梯度跟踪
+        # 确保输入是批处理格式
         is_batched = mu_xyh.dim() == 2
         if not is_batched:
             mu_xyh = mu_xyh.unsqueeze(0)
             sigma_xyh = sigma_xyh.unsqueeze(0)
         
-        # 确保 mu_xyh 可以追踪梯度，这是 autograd.grad 的要求
-        mu_xyh.requires_grad_(True)
+        num_points = mu_xyh.shape[0]
 
-        # --- 1. 均值传播 ---
-        # 这一步的计算量和显存占用都很小
-        line, samp = self.RPC_XY2LINESAMP(mu_xyh[:, 0], mu_xyh[:, 1], mu_xyh[:, 2])
-        mu_linesamp = torch.stack([line, samp], dim=-1)
+        # --- 调度逻辑：根据输入点数决定是否分块 ---
+        if num_points <= chunk_size:
+            # 点数不多，直接调用核心VJP函数一次性计算，效率最高
+            # print(f"点数 ({num_points}) 未超过阈值 ({chunk_size})，执行直接计算。")
+            mu_linesamp, var_linesamp = self._vjp_projection_core(mu_xyh, sigma_xyh)
+        else:
+            # 点数过多，启用分块计算以保证稳定性
+            print(f"警告: 点数 ({num_points}) 超过阈值 ({chunk_size})，自动启用分块计算。")
+            mu_results = []
+            var_results = []
+            
+            # 使用 torch.split 进行安全分块
+            mu_chunks = torch.split(mu_xyh, chunk_size)
+            sigma_chunks = torch.split(sigma_xyh, chunk_size)
 
-        # --- 2. 方差传播（内存高效版） ---
-        
-        # a. 计算雅可比矩阵的第一行 (∂line/∂x, ∂line/∂y, ∂line/∂h)
-        # 我们通过计算 line.sum() 对 mu_xyh 的梯度来实现
-        # grad_outputs=torch.ones_like(line) 确保了我们得到的是真正的梯度和，而不是广播后的结果
-        grad_line, = torch.autograd.grad(
-            outputs=line,
-            inputs=mu_xyh,
-            grad_outputs=torch.ones_like(line),
-            create_graph=True, # 允许更高阶的梯度（例如，如果损失函数本身也包含方差）
-            retain_graph=True, # 因为我们还要对 samp 进行求导，需要保留计算图
-        ) # grad_line 的形状为 (N, 3)
+            for mu_chunk, sigma_chunk in zip(mu_chunks, sigma_chunks):
+                # 对每个块调用核心VJP函数
+                mu_chunk_out, var_chunk_out = self._vjp_projection_core(mu_chunk, sigma_chunk)
+                
+                # 收集结果
+                mu_results.append(mu_chunk_out)
+                var_results.append(var_chunk_out)
 
-        # b. 计算雅可比矩阵的第二行 (∂samp/∂x, ∂samp/∂y, ∂samp/∂h)
-        grad_samp, = torch.autograd.grad(
-            outputs=samp,
-            inputs=mu_xyh,
-            grad_outputs=torch.ones_like(samp),
-            create_graph=True,
-        ) # grad_samp 的形状为 (N, 3)
+            # 将所有块的结果拼接起来
+            # PyTorch的autograd会自动处理拼接操作的梯度回传
+            mu_linesamp = torch.cat(mu_results, dim=0)
+            var_linesamp = torch.cat(var_results, dim=0)
         
-        # c. 使用展开的公式计算输出方差
-        # var_out = (J_element^2 * var_in).sum()
-        var_xyh = sigma_xyh.pow(2)
-        
-        # 计算 line 的方差
-        var_line = (grad_line.pow(2) * var_xyh).sum(dim=-1)
-        
-        # 计算 samp 的方差
-        var_samp = (grad_samp.pow(2) * var_xyh).sum(dim=-1)
-        
-        var_linesamp = torch.stack([var_line, var_samp], dim=-1)
         sigma_linesamp = torch.sqrt(var_linesamp)
-
-        # Return to original shape if input was not batched
+        # 如果原始输入不是批处理格式，则恢复其形状
         if not is_batched:
             mu_linesamp = mu_linesamp.squeeze(0)
             sigma_linesamp = sigma_linesamp.squeeze(0)
-            
+
         return mu_linesamp, sigma_linesamp
 
     # def adjust(self, insamp, inline):
