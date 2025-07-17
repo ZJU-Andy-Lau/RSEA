@@ -607,68 +607,105 @@ def get_map_coef(target:np.ndarray,bins=1000,deg=20):
 def resample_from_quad(
     source_image: np.ndarray,
     quad_coords: np.ndarray,
-    target_shape: Tuple[int, int]
+    target_shape: Tuple[int, int],
+    tile_size: int = 4096,
+    interpolation: int = cv2.INTER_LINEAR,
+    border_mode: int = cv2.BORDER_REPLICATE
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    根据四边形的四个角点，在源图像(灰度或RGB)中进行重采样，得到校正后的矩形图像和坐标映射。
+    根据四边形角点重采样图像，并返回坐标映射。
+    此最终版本通过“目标分块”和“源动态裁剪”解决了目标和源图像均可能超大尺寸的问题。
 
     Args:
-        source_image (np.ndarray): 输入的源图像，形状为 (H, W) 的灰度图或 (H, W, 3) 的RGB/BGR图。
-        quad_coords (np.ndarray): 四边形的四个角点坐标，形状为 (4, 2)，
-                                  数据类型为 float 或 int。
-                                  顺序为：左上、右上、右下、左下。
-                                  坐标格式为 (row, col)，即 (行号, 列号)。
+        source_image (np.ndarray): 输入的源图像 (H, W) 或 (H, W, 3)。
+        quad_coords (np.ndarray): 四边形的四个角点坐标 (4, 2), (row, col)。
         target_shape (tuple[int, int]): 目标输出图像的尺寸 (h, w)。
+        tile_size (int, optional): 分块处理的块边长。
+        interpolation (int, optional): 插值方法。
+        border_mode (int, optional): 边界模式。
 
     Returns:
-        tuple[np.ndarray, np.ndarray]:
-        - resampled_image (np.ndarray): 重采样后的矩形图像。
-                                        如果输入是灰度图，形状为 (h, w)。
-                                        如果输入是RGB图，形状为 (h, w, 3)。
-        - coordinate_map (np.ndarray): 坐标映射矩阵，形状为 (h, w, 2)。
-                                        map[y, x] = [row, col] 记录了新图(y,x)像素
-                                        在原图中的浮点坐标。
+        tuple[np.ndarray, np.ndarray]: 重采样图像和坐标映射。
     """
-    # 1. 输入验证
+    # 1. 输入验证和矩阵计算 (与之前相同)
+    # ... (此处省略了与上一版相同的验证和矩阵计算代码，请直接复制过来)
     if source_image.ndim not in [2, 3]:
         raise ValueError("输入图像必须是二维 (灰度图) 或三维 (RGB/BGR图) 数组。")
     if quad_coords.shape != (4, 2):
         raise ValueError("角点坐标数组的形状必须是 (4, 2)。")
 
     h, w = target_shape
+    src_h, src_w = source_image.shape[:2]
     
-    # 2. 准备源坐标点和目标坐标点 
-    # OpenCV 的函数期望坐标格式为 (x, y)，即 (列, 行)。
-    src_points = quad_coords[:, ::-1].astype(np.float32) # 从 (row, col) 转换为 (col, row)
-
-    # 定义目标矩形的四个角点坐标 (x, y)
+    src_points = quad_coords[:, ::-1].astype(np.float32)
     dst_points = np.array([
         [0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]
     ], dtype=np.float32)
 
-    # 3. 计算透视变换矩阵 M 
-    M, _ = cv2.findHomography(src_points, dst_points)
+    M = cv2.getPerspectiveTransform(src_points, dst_points)
+    try:
+        M_inv = np.linalg.inv(M)
+    except np.linalg.LinAlgError:
+        print("错误: 变换矩阵 M 是奇异矩阵，无法计算逆矩阵。")
+        return None, None
 
-    # 4. 使用 M 对源图像进行透视变换
-    # cv2.warpPerspective 可以自动处理单通道和多通道图像。
-    # 如果 source_image 是 (H,W,3)，输出就是 (h,w,3)。
-    resampled_image = cv2.warpPerspective(
-        source_image,
-        M,
-        (w, h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_REPLICATE
-    )
+    # 2. 准备空的输出画布 (与之前相同)
+    if source_image.ndim == 3:
+        output_channels = source_image.shape[2]
+        resampled_image = np.zeros((h, w, output_channels), dtype=source_image.dtype)
+    else:
+        resampled_image = np.zeros((h, w), dtype=source_image.dtype)
+    
+    coordinate_map = np.zeros((h, w, 2), dtype=np.float32)
 
-    # 5. 计算坐标映射矩阵 
-    M_inv = np.linalg.inv(M)
-    y_grid, x_grid = np.mgrid[0:h, 0:w]
-    target_coords_homogeneous = np.stack(
-        (x_grid.ravel(), y_grid.ravel(), np.ones(h * w)), axis=1
-    )
-    source_coords_homogeneous = target_coords_homogeneous @ M_inv.T
-    source_coords_xy = source_coords_homogeneous[:, :2] / source_coords_homogeneous[:, 2, np.newaxis]
-    source_coords_xy = source_coords_xy.reshape(h, w, 2)
-    coordinate_map = source_coords_xy[:, :, ::-1]
+    # 3. 分块处理
+    for y_start in range(0, h, tile_size):
+        for x_start in range(0, w, tile_size):
+            tile_h = min(tile_size, h - y_start)
+            tile_w = min(tile_size, w - x_start)
+            
+            # a. 为当前块创建目标坐标网格并变换回源坐标系
+            y_grid, x_grid = np.mgrid[y_start : y_start + tile_h, x_start : x_start + tile_w]
+            target_coords_homo = np.stack((x_grid.ravel(), y_grid.ravel(), np.ones(tile_h * tile_w)), axis=1)
+            source_coords_homo = target_coords_homo @ M_inv.T
+            w_inv = 1.0 / (source_coords_homo[:, 2] + 1e-9)
+            source_coords_xy = source_coords_homo[:, :2] * w_inv[:, np.newaxis]
+            
+            # b. 计算所需源区域的边界框 (Bounding Box)
+            # map1 是 x 坐标 (col), map2 是 y 坐标 (row)
+            map1 = source_coords_xy[:, 0]
+            map2 = source_coords_xy[:, 1]
+            
+            # 计算边界并增加一点 padding，以防插值时访问到边界外
+            padding = 2 
+            src_x_min = max(0, int(np.floor(map1.min())) - padding)
+            src_x_max = min(src_w, int(np.ceil(map1.max())) + padding)
+            src_y_min = max(0, int(np.floor(map2.min())) - padding)
+            src_y_max = min(src_h, int(np.ceil(map2.max())) + padding)
 
+            # 如果所需区域完全在源图像外，则跳过
+            if src_x_min >= src_w or src_x_max <= 0 or src_y_min >= src_h or src_y_max <= 0:
+                continue
+
+            # c. 裁剪源图像ROI和调整坐标
+            source_roi = source_image[src_y_min:src_y_max, src_x_min:src_x_max]
+            
+            # 将绝对坐标调整为相对于 ROI 的坐标
+            adjusted_map1 = (map1 - src_x_min).reshape(tile_h, tile_w).astype(np.float32)
+            adjusted_map2 = (map2 - src_y_min).reshape(tile_h, tile_w).astype(np.float32)
+
+            # d. 使用裁剪后的 ROI 和调整后的 map 调用 remap
+            resampled_tile = cv2.remap(
+                source_roi,         #  使用裁剪后的小图
+                adjusted_map1,      #  使用调整后的坐标
+                adjusted_map2,      #  使用调整后的坐标
+                interpolation=interpolation,
+                borderMode=border_mode
+            )
+            
+            # e. 拼接结果
+            resampled_image[y_start:y_start+tile_h, x_start:x_start+tile_w] = resampled_tile
+            coordinate_map[y_start:y_start+tile_h, x_start:x_start+tile_w, 0] = map2.reshape(tile_h, tile_w)
+            coordinate_map[y_start:y_start+tile_h, x_start:x_start+tile_w, 1] = map1.reshape(tile_h, tile_w)
+            
     return resampled_image, coordinate_map

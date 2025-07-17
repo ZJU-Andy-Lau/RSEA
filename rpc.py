@@ -655,3 +655,8 @@ class RPCModelParameterTorch:
         f = open(filepath, "w")
         f.write(text)
         f.close()
+
+def load_rpc(rpc_path:str) -> RPCModelParameterTorch:
+    rpc = RPCModelParameterTorch()
+    rpc.load_from_file(rpc_path)
+    return rpc
