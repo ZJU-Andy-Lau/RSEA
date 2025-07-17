@@ -384,6 +384,11 @@ class AffineFitter:
         
         if self.verbose:
             print("拟合完成！")
+            ori_dis = torch.norm(source_points - pred_means,dim=-1).mean()
+            trans_points = self.transform(source_points)
+            trans_dis = torch.norm(trans_points - pred_means,dim=-1).mean()
+            print(f"初始误差: {ori_dis.item():.2f} \t 变换后误差: {trans_dis.item():.2f}")
+           
             
         return self.transformation_matrix
 
