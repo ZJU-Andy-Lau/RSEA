@@ -173,7 +173,7 @@ class RSEA():
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"ori dis: {ori_dis.item()} \t avg_sigma:{avg_sigma.item()}")
 
-        fitter = AffineFitter(learning_rate=0.0001, num_iterations=10000)
+        fitter = AffineFitter(learning_rate=0.0001, num_iterations=-1)
         total_num = len(confs)
         conf_valid_idx = confs > self.options.conf_threshold
         src = src[conf_valid_idx]

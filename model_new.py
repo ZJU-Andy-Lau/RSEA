@@ -335,11 +335,14 @@ class AffineFitter:
 
         # --- 4. 优化循环 ---
         if self.verbose:
-            print(f"开始拟合... 总共 {self.iterations} 次迭代。")
+            print(f"开始拟合... 总共 {self.iterations if self.iterations > 0 else 'no limit'} 次迭代。")
         
         min_loss = 1e9
-            
-        for i in range(self.iterations):
+        iter_count = 0
+        no_update_count = 0
+
+        while(True):
+            iter_count += 1
             optimizer.zero_grad()
 
             # 应用仿射变换: (N, 3) @ (3, 2) -> (N, 2)
@@ -355,13 +358,25 @@ class AffineFitter:
             if loss < min_loss:
                 min_loss = loss.item()
                 best_params = self.params
+                no_update_count = 0
+            else:
+                no_update_count += 1
 
             # 反向传播和优化
             loss.backward()
             optimizer.step()
 
-            if self.verbose and (i % (self.iterations // 10) == 0 or i == self.iterations - 1):
-                print(f"iter {i:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
+            if self.verbose and (iter_count % 1000 == 0 or iter_count == self.iterations - 1):
+                print(f"iter {iter_count:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
+            
+            if self.iterations > 0 and iter_count >= self.iterations:
+                break
+
+            if no_update_count > 5000:
+                if self.verbose:
+                    print("no update for 5000 iterations, early stop")
+                break
+            
 
         # --- 5. 保存并返回结果 ---
         # detach() 以防止后续操作被追踪梯度
