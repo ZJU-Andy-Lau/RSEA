@@ -280,7 +280,7 @@ class Grid():
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
                 log_sigma_xyh_p3 = output_p6[:,3:]
                 
-                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg = criterion(iter_idx,
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg,sigma_avg = criterion(iter_idx,
                                                                                                       self.options.element_training_iters,
                                                                                                       mu_xyh_p3,
                                                                                                       log_sigma_xyh_p3,
@@ -303,6 +303,7 @@ class Grid():
                 pbar.set_postfix({
                     'lr':f'{scheduler.get_last_lr()[0]:.2e}',
                     'dist':f'{loss_distribution.item():.2f}',
+                    's':f'{sigma_avg:.2f}',
                     'obj':f'{loss_obj.item():.2f}',
                     'photo':f'{loss_photo.item():.2f}',
                     'h':f'{loss_height.item():.2f}',

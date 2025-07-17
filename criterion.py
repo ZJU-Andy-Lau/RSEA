@@ -359,6 +359,7 @@ class CriterionTrainGrid(nn.Module):
         loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2),dim=-1) + log_sigma_xyh[:,2:]) * conf
         loss_distribution = loss_distribution_xy + loss_distribution_h
 
+        sigma_avg = torch.norm(sigma_xy,dim=-1).mean()
         
 
         latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
@@ -376,4 +377,4 @@ class CriterionTrainGrid(nn.Module):
         
         loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_bias + loss_reg
 
-        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item()
+        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_bias.item(),loss_reg.item(),sigma_avg.item()
