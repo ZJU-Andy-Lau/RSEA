@@ -168,6 +168,11 @@ class RSEA():
         return np.stack([tl,br],axis=0)
 
     def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,confs:torch.Tensor) -> torch.Tensor:
+
+        ori_dis = torch.norm(tgt_mu - src,dim=-1).mean()
+        avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
+        print(f"ori dis: {ori_dis.item()} \t avg_sigma:{avg_sigma.item()}")
+
         fitter = AffineFitter(learning_rate=0.01, num_iterations=10000)
         total_num = len(confs)
         conf_valid_idx = confs > self.options.conf_threshold
@@ -247,10 +252,10 @@ class RSEA():
                 all_tgt_mu.append(mu_linesamp)
                 all_tgt_sigma.append(sigma_linesamp)
                 all_confs.append(conf)
-            all_src = torch.concatenate(all_src,dim=0)
-            all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0)
-            all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0)
-            all_confs = torch.concatenate(all_confs,dim=0)
+            all_src = torch.concatenate(all_src,dim=0).detach()
+            all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0).detach()
+            all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0).detach()
+            all_confs = torch.concatenate(all_confs,dim=0).detach()
 
             transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_confs)
             image.rpc.Update_Adjust(transform)
