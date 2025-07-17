@@ -429,66 +429,71 @@ class RPCModelParameterTorch:
         
         # Chain the transformations
         latlon = self.yx2latlon(torch.stack([y, x], dim=-1))
-        line, samp = self.RPC_OBJ2PHOTO(latlon[:, 0], latlon[:, 1], h)
+        samp, line = self.RPC_OBJ2PHOTO(latlon[:, 0], latlon[:, 1], h)
         
         return torch.stack([line, samp], dim=-1)
 
     def xy_distribution_to_linesamp(self, mu_xyh: torch.Tensor, sigma_xyh: torch.Tensor):
         """
-        Projects a distribution from object space (x, y, h in EPSG:3857) 
-        to image space (line, samp) using first-order Taylor expansion 
-        for uncertainty propagation. This function is fully differentiable.
+        【内存高效版】
+        使用向量-雅可比积（Vector-Jacobian Products）将物方分布投影到像方。
+        此版本经过高度优化，可处理百万级数量的点，避免显存溢出。
 
         Args:
-            mu_xyh (torch.Tensor): Tensor of shape (3,) or (B, 3) for the mean
-                                   of (x, y, height).
-            sigma_xyh (torch.Tensor): Tensor of shape (3,) or (B, 3) for the
-                                      standard deviation of (x, y, height).
+            mu_xyh (torch.Tensor): 形状为 (N, 3) 或 (3,) 的张量，表示 (x, y, h) 的均值。
+            sigma_xyh (torch.Tensor): 形状为 (N, 3) 或 (3,) 的张量，表示 (x, y, h) 的标准差。
 
         Returns:
             tuple[torch.Tensor, torch.Tensor]:
-                - mu_linesamp (torch.Tensor): Projected mean in image space (line, samp).
-                                              Shape: (2,) or (B, 2).
-                - sigma_linesamp (torch.Tensor): Projected standard variance in image space (line, samp).
-                                               Shape: (2,) or (B, 2).
+                - mu_linesamp (torch.Tensor): 投影后的像方均值 (line, samp)，形状为 (N, 2) 或 (2,)。
+                - var_linesamp (torch.Tensor): 投影后的像方方差 (line, samp)，形状为 (N, 2) 或 (2,)。
         """
-        mu_xyh = self.convert_tensor(mu_xyh,self.device)
-        sigma_xyh = self.convert_tensor(sigma_xyh,self.device)
-        # Ensure inputs are in batched format (B, D)
+        # 确保输入是批处理格式 (N, D)，并开启梯度跟踪
         is_batched = mu_xyh.dim() == 2
         if not is_batched:
             mu_xyh = mu_xyh.unsqueeze(0)
             sigma_xyh = sigma_xyh.unsqueeze(0)
-
-        # --- 1. Mean Propagation ---
-        # Project the mean point directly.
-        mu_linesamp = self._project_xyh_to_linesamp_for_jacobian(mu_xyh)
-
-        # --- 2. Covariance Propagation ---
-        # a. Calculate the Jacobian matrix J at the mean point.
-        # create_graph=True allows for higher-order derivatives if needed.
-        J = torch.autograd.functional.jacobian(
-            self._project_xyh_to_linesamp_for_jacobian, 
-            mu_xyh, 
-            create_graph=True
-        )
         
-        # The output of jacobian on a batched input has a shape of (B, D_out, B, D_in).
-        # We need to extract the per-sample Jacobians, which form a "diagonal"
-        # in the batch dimensions, resulting in a shape of (B, D_out, D_in).
-        J = torch.diagonal(J, dim1=0, dim2=2).permute(2, 0, 1)
+        # 确保 mu_xyh 可以追踪梯度，这是 autograd.grad 的要求
+        mu_xyh.requires_grad_(True)
 
-        # b. Construct the input diagonal covariance matrix Sigma_in.
-        # The user provides standard deviations (sigma), so we square them to get variance.
+        # --- 1. 均值传播 ---
+        # 这一步的计算量和显存占用都很小
+        line, samp = self.RPC_XY2LINESAMP(mu_xyh[:, 0], mu_xyh[:, 1], mu_xyh[:, 2])
+        mu_linesamp = torch.stack([line, samp], dim=-1)
+
+        # --- 2. 方差传播（内存高效版） ---
+        
+        # a. 计算雅可比矩阵的第一行 (∂line/∂x, ∂line/∂y, ∂line/∂h)
+        # 我们通过计算 line.sum() 对 mu_xyh 的梯度来实现
+        # grad_outputs=torch.ones_like(line) 确保了我们得到的是真正的梯度和，而不是广播后的结果
+        grad_line, = torch.autograd.grad(
+            outputs=line,
+            inputs=mu_xyh,
+            grad_outputs=torch.ones_like(line),
+            create_graph=True, # 允许更高阶的梯度（例如，如果损失函数本身也包含方差）
+            retain_graph=True, # 因为我们还要对 samp 进行求导，需要保留计算图
+        ) # grad_line 的形状为 (N, 3)
+
+        # b. 计算雅可比矩阵的第二行 (∂samp/∂x, ∂samp/∂y, ∂samp/∂h)
+        grad_samp, = torch.autograd.grad(
+            outputs=samp,
+            inputs=mu_xyh,
+            grad_outputs=torch.ones_like(samp),
+            create_graph=True,
+        ) # grad_samp 的形状为 (N, 3)
+        
+        # c. 使用展开的公式计算输出方差
+        # var_out = (J_element^2 * var_in).sum()
         var_xyh = sigma_xyh.pow(2)
-        Sigma_in = torch.diag_embed(var_xyh)
-
-        # c. Propagate the covariance: Sigma_out = J @ Sigma_in @ J^T
-        J_T = J.transpose(-1, -2)
-        Sigma_out = J @ Sigma_in @ J_T
-
-        # d. Extract the variances from the diagonal of the output covariance matrix.
-        var_linesamp = torch.diagonal(Sigma_out, dim1=-2, dim2=-1)
+        
+        # 计算 line 的方差
+        var_line = (grad_line.pow(2) * var_xyh).sum(dim=-1)
+        
+        # 计算 samp 的方差
+        var_samp = (grad_samp.pow(2) * var_xyh).sum(dim=-1)
+        
+        var_linesamp = torch.stack([var_line, var_samp], dim=-1)
         sigma_linesamp = torch.sqrt(var_linesamp)
 
         # Return to original shape if input was not batched

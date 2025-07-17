@@ -253,7 +253,7 @@ class RSEA():
             all_confs = torch.concatenate(all_confs,dim=0)
 
             transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_confs)
-            image.rpc.Update_Adjust(torch.from_numpy(transform))
+            image.rpc.Update_Adjust(transform)
             print(image.rpc.adjust_params.cpu().numpy())
 
             # output_obj_vis(all_xyh,output_path=os.path.join(image.root,'obj_vis.txt'))
