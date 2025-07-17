@@ -366,8 +366,11 @@ class AffineFitter:
             loss.backward()
             optimizer.step()
 
-            if self.verbose and (iter_count % 1000 == 0 or iter_count == self.iterations - 1):
-                print(f"iter {iter_count:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
+            if self.verbose and (iter_count % 1000 == 0 or iter_count == self.iterations - 1 or no_update_count > 5000):
+                if self.iterations > 0:
+                    print(f"iter {iter_count:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
+                else:
+                    print(f"iter {iter_count:5d}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
             
             if self.iterations > 0 and iter_count >= self.iterations:
                 break
