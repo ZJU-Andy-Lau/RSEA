@@ -20,6 +20,8 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_path', type=str, default='weights/pretrain_swt_cnn_r2_0409_large/backbone.pth',
                         help='file containing pre-trained encoder weights')
     
+    parser.add_argument('--create_grids',type=_strtobool,default=True)
+    
     parser.add_argument('--crop_size', type=int, default=1024,
                         help='size of input data')
     
@@ -125,13 +127,14 @@ if __name__ == '__main__':
     adjust_images_root = os.path.join(options.root,'adjust_images')
     grid_root = os.path.join(options.root,'grids')
 
-    # 基于ref_images创建网格
-    # for image_folder in os.listdir(ref_images_root):
-    #     rsea.add_image(os.path.join(ref_images_root,image_folder))
-    # rsea.create_grids(grid_size=options.grid_size)
-
-    #加载网格
-    rsea.load_grids(grid_root)
+    if options.create_grids:
+        # 基于ref_images创建网格
+        for image_folder in os.listdir(ref_images_root):
+            rsea.add_image(os.path.join(ref_images_root,image_folder))
+        rsea.create_grids(grid_size=options.grid_size)
+    else:
+        #加载网格
+        rsea.load_grids(grid_root)
 
     # 基于网格对adjust_images平差
     rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
