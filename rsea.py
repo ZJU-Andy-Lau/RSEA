@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import pandas as pd
-from model_new import Encoder,Decoder
+from model_new import Encoder,AffineFitter
 import os
 import cv2
 from utils import mercator2lonlat
@@ -167,64 +167,25 @@ class RSEA():
         br = np.array([min(br1[0],br2[0]),max(br1[1],br2[1])])
         return np.stack([tl,br],axis=0)
 
-    def __calculate_transform__(self,locals:np.ndarray,targets:np.ndarray,confs:np.ndarray) -> np.ndarray:
-        def estimate_affine_transform(src, dst):
-            n = len(src)
-            A = np.zeros((2*n, 6))
-            b = np.zeros(2*n)
-            
-            for i in range(n):
-                A[2*i] = [src[i, 0], src[i, 1], 0, 0, 1, 0]
-                A[2*i+1] = [0, 0, src[i, 0], src[i, 1], 0, 1]
-                b[2*i] = dst[i, 0]
-                b[2*i+1] = dst[i, 1]
-            
-            # 使用最小二乘法求解
-            x, _, _, _ = np.linalg.lstsq(A, b, rcond=None)
-            
-            # 构建变换矩阵 [a1, a2, b1; a3, a4, b2]
-            transform_matrix = np.array([
-                [x[0], x[1], x[4]],
-                [x[2], x[3], x[5]]
-            ])
-            
-            return transform_matrix
-            
+    def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,confs:torch.Tensor) -> torch.Tensor:
+        fitter = AffineFitter(learning_rate=0.01, num_iterations=10000)
         total_num = len(confs)
         conf_valid_idx = confs > self.options.conf_threshold
-        locals = locals[conf_valid_idx]
-        targets = targets[conf_valid_idx]
+        src = src[conf_valid_idx]
+        tgt_mu = tgt_mu[conf_valid_idx]
+        tgt_sigma = tgt_sigma[conf_valid_idx]
+        confs = tgt_sigma[confs]
+        print(f"conf filter :{conf_valid_idx.sum()}/{total_num}")
 
-
-        dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
-        
+        fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
+        # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
         # print("mean_dis:",dis.mean())
-        dis_valid_idx = dis < dis.mean() + dis.std()
-        locals = locals[dis_valid_idx]
-        targets = targets[dis_valid_idx]
+        # dis_valid_idx = dis < dis.mean() + dis.std()
+        # locals = locals[dis_valid_idx]
+        # targets = targets[dis_valid_idx]
         # offset = np.mean(targets,axis=0) - np.mean(locals,axis=0)
         
-
-        threshold = np.mean(np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)) + 5.
-        # print(np.mean(targets,axis=0),np.mean(locals,axis=0),np.mean(targets,axis=0) - np.mean(locals,axis=0))
-        M,inliers = cv2.estimateAffine2D(locals,targets,ransacReprojThreshold=threshold,maxIters=10000)
-        inliers = inliers.reshape(-1).astype(bool)
-        locals = locals[inliers]
-        targets = targets[inliers]
-        dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
-        inlier_num = inliers.sum()
-        print("mean_dis:",dis.mean())
-
-        
-        affine_matrix = estimate_affine_transform(locals,targets)
-
-        # offset = np.mean(targets,axis=0) - np.mean(locals,axis=0)
-        print("M:")
-        print(M)
-
-
-        print(f"threshold:{threshold} \t {inlier_num}/{conf_valid_idx.sum()}/{total_num} \t {inlier_num / total_num}")
-        return affine_matrix
+        return fitted_matrix
 
     def load_grids(self,path = None):
         if path is None:
@@ -261,10 +222,11 @@ class RSEA():
             adjust_images.append(image)
         
         for img_idx,image in enumerate(adjust_images):
-            all_locals = []
-            all_preds = []
+            all_src = []
+            all_tgt_mu = []
+            all_tgt_sigma = []
             all_confs = []
-            all_xyh = []
+            # all_xyh = []
             # orthorectify_image(image.image[:5000,:5000,0],image.dem[:5000,:5000],image.rpc,os.path.join(image.root,'dom.tif'))
             # continue
             for grid_idx,grid in enumerate(self.grids):
@@ -277,22 +239,22 @@ class RSEA():
                 
                 pred_res = grid.pred_xyh(img_raw,local_hw2)
 
-                xyh = np.concatenate([pred_res['xy_P2'][:,[1,0]],pred_res['h_P1'][:,None]],axis=-1)
-                all_xyh.append(xyh)
+                mu_linesamp,sigma_linesamp = image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
+                local_linesamp = pred_res['locals_P2']
+                conf = pred_res['confs_P1']
 
-                latlon_P2 = mercator2lonlat(pred_res['xy_P2'][:,[1,0]])
-                locals_P2 = pred_res['locals_P2']
-                linesamp_pred_P2 = np.stack(image.rpc.RPC_OBJ2PHOTO(latlon_P2[:,0],latlon_P2[:,1],pred_res['h_P1'],'numpy'),axis=1)[:,[1,0]]
-                all_locals.append(locals_P2)
-                all_preds.append(linesamp_pred_P2)
-                all_confs.append(pred_res['confs_P1'])
-            all_locals = np.concatenate(all_locals,axis=0)
-            all_preds = np.concatenate(all_preds,axis=0)
-            all_confs = np.concatenate(all_confs,axis=0)
-            all_xyh = np.concatenate(all_xyh,axis=0)
-            transform = self.__calculate_transform__(all_locals,all_preds,all_confs)
+                all_src.append(local_linesamp)
+                all_tgt_mu.append(mu_linesamp)
+                all_tgt_sigma.append(sigma_linesamp)
+                all_confs.append(conf)
+            all_src = torch.concatenate(all_src,dim=0)
+            all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0)
+            all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0)
+            all_confs = torch.concatenate(all_confs,dim=0)
+
+            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_confs)
             image.rpc.Update_Adjust(torch.from_numpy(transform))
-            print(image.rpc.adjust_params)
+            print(image.rpc.adjust_params.cpu().numpy())
 
             # output_obj_vis(all_xyh,output_path=os.path.join(image.root,'obj_vis.txt'))
 

@@ -506,16 +506,19 @@ class Grid():
         patches_per_batch = self.options.patches_per_batch
         batch_num = int(np.ceil(features_PD.shape[0] / patches_per_batch))
         print("Predicting Geographic Coordinates")
-        xyh_preds = []
+        mu_xyh_preds = []
+        sigma_xyh_preds = []
         for batch_idx in trange(batch_num):
             features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]
-            output_13p1 = self.mapper(features_1Dp1)
-            output_p3 = output_13p1.permute(0,2,3,1).flatten(0,2)
-            xyh_pred_p3 = self.warp_by_poly(output_p3,self.map_coeffs)
-            xyh_preds.append(xyh_pred_p3)
+            output_16p1 = self.mapper(features_1Dp1)
+            output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+            mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+            sigma_xyh_p3 = torch.exp(output_p6[:,3:])
+            mu_xyh_preds.append(mu_xyh_p3)
+            sigma_xyh_preds.append(sigma_xyh_p3)
         
-        xyh_P3 = torch.concatenate(xyh_preds,dim=0)
-
+        mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
+        sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
 
         # kd_tree = build_kd_tree(locals_P2,device='cuda')
 
@@ -569,10 +572,10 @@ class Grid():
         # yxh_P3 = warp_by_extend(pred_raw_P3,self.extend)
         
         res = {
-            'xy_P2':xyh_P3[:,:2].cpu().numpy(),
-            'h_P1':xyh_P3[:,2].cpu().numpy(),
-            'locals_P2':locals_P2.cpu().numpy(),
-            'confs_P1':confs_P1.cpu().numpy(),
+            'mu_xyh_P3':mu_xyh_P3,
+            'sigma_xyh_P3':sigma_xyh_P3,
+            'locals_P2':locals_P2,
+            'confs_P1':confs_P1,
         }
         crop_imgs_NHW = None
         crop_locals_NHW2 = None

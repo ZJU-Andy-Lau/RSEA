@@ -261,7 +261,133 @@ class Decoder(nn.Module):
         return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
 
 
+class AffineFitter:
+    """
+    使用概率方法拟合一个2D仿射变换。
 
+    该类通过最小化加权的最小二乘损失（等价于负对数似然）来寻找
+    一个最佳的仿射变换，将源点映射到目标分布。权重由预测的标准差确定。
+    """
+
+    def __init__(self, learning_rate: float = 1e-3, num_iterations: int = 2000, verbose: bool = True):
+        """
+        初始化拟合器。
+
+        Args:
+            learning_rate (float): 优化器的学习率。
+            num_iterations (int): 梯度下降的迭代次数。
+            verbose (bool): 是否在拟合过程中打印损失信息。
+        """
+        self.lr = learning_rate
+        self.iterations = num_iterations
+        self.verbose = verbose
+        
+        # 最终得到的仿射变换矩阵，(2, 3)
+        self.transformation_matrix = None
+
+    def fit(self, 
+            source_points: torch.Tensor, 
+            pred_means: torch.Tensor, 
+            pred_stds: torch.Tensor) -> torch.Tensor:
+        """
+        执行仿射变换的拟合过程。
+
+        Args:
+            source_points (torch.Tensor): 原始点坐标，形状为 (N, 2)。
+            pred_means (torch.Tensor): 预测的目标点坐标均值，形状为 (N, 2)。
+            pred_stds (torch.Tensor): 预测的目标点坐标标准差，形状为 (N, 2)。
+
+        Returns:
+            torch.Tensor: 拟合得到的 (2, 3) 仿射变换矩阵。
+        """
+        # --- 1. 数据校验与准备 ---
+        if not (source_points.shape == pred_means.shape == pred_stds.shape and source_points.dim() == 2 and source_points.shape[1] == 2):
+            raise ValueError("所有输入张量的形状必须为 (N, 2)。")
+        
+        device = source_points.device
+        num_points = source_points.shape[0]
+
+        # 将源点转换为齐次坐标 (N, 3)，方便矩阵乘法
+        # (x, y) -> (x, y, 1)
+        source_homogeneous = torch.cat(
+            [source_points, torch.ones(num_points, 1, device=device)], 
+            dim=1
+        )
+
+        # --- 2. 初始化变换参数和优化器 ---
+        # 初始化一个 (2, 3) 的仿射矩阵 [a, b, c; d, e, f]
+        # 最佳实践是初始化为单位变换
+        affine_matrix = torch.tensor([[1.0, 0.0, 0.0],
+                                      [0.0, 1.0, 0.0]], device=device, dtype=source_points.dtype)
+        
+        # 将其封装为可学习参数
+        self.params = nn.Parameter(affine_matrix)
+        
+        # 使用 Adam 优化器
+        optimizer = torch.optim.Adam([self.params], lr=self.lr)
+
+        # --- 3. 计算NLL损失的权重 ---
+        # 权重 = 1 / sigma^2。增加一个小的 epsilon 防止除以零。
+        weights = 1.0 / (pred_stds.pow(2) + 1e-8)
+
+        # --- 4. 优化循环 ---
+        if self.verbose:
+            print(f"开始拟合... 总共 {self.iterations} 次迭代。")
+            
+        for i in range(self.iterations):
+            optimizer.zero_grad()
+
+            # 应用仿射变换: (N, 3) @ (3, 2) -> (N, 2)
+            # [x, y, 1] @ [[a, d], [b, e], [c, f]] = [ax+by+c, dx+ey+f]
+            transformed_points = source_homogeneous @ self.params.T
+
+            # 计算损失 (加权MSE，等价于NLL)
+            # L = sum( (x'_i - mu_xi)^2 / sigma_xi^2 + (y'_i - mu_yi)^2 / sigma_yi^2 )
+            error = transformed_points - pred_means
+            weighted_squared_error = error.pow(2) * weights
+            loss = weighted_squared_error.sum()
+
+            # 反向传播和优化
+            loss.backward()
+            optimizer.step()
+
+            if self.verbose and (i % (self.iterations // 10) == 0 or i == self.iterations - 1):
+                print(f"迭代 {i:5d}/{self.iterations}, 损失: {loss.item():.4f}")
+
+        # --- 5. 保存并返回结果 ---
+        # detach() 以防止后续操作被追踪梯度
+        self.transformation_matrix = self.params.detach().clone()
+        
+        if self.verbose:
+            print("拟合完成！")
+            
+        return self.transformation_matrix
+
+    def transform(self, points: torch.Tensor) -> torch.Tensor:
+        """
+        使用拟合好的变换矩阵来变换新的点。
+
+        Args:
+            points (torch.Tensor): 需要变换的点，形状为 (M, 2)。
+
+        Returns:
+            torch.Tensor: 变换后的点，形状为 (M, 2)。
+        """
+        if self.transformation_matrix is None:
+            raise RuntimeError("必须先调用 .fit() 方法进行拟合，然后才能进行变换。")
+        
+        device = points.device
+        num_points = points.shape[0]
+        
+        points_homogeneous = torch.cat(
+            [points, torch.ones(num_points, 1, device=device)],
+            dim=1
+        )
+        
+        # 使用存储的矩阵进行变换
+        transformed_points = points_homogeneous @ self.transformation_matrix.T
+        
+        return transformed_points
 
 
 # self.cnn = nn.Sequential(

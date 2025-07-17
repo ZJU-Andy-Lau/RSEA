@@ -449,7 +449,7 @@ class RPCModelParameterTorch:
             tuple[torch.Tensor, torch.Tensor]:
                 - mu_linesamp (torch.Tensor): Projected mean in image space (line, samp).
                                               Shape: (2,) or (B, 2).
-                - var_linesamp (torch.Tensor): Projected variance in image space (line, samp).
+                - sigma_linesamp (torch.Tensor): Projected standard variance in image space (line, samp).
                                                Shape: (2,) or (B, 2).
         """
         mu_xyh = self.convert_tensor(mu_xyh,self.device)
@@ -489,13 +489,14 @@ class RPCModelParameterTorch:
 
         # d. Extract the variances from the diagonal of the output covariance matrix.
         var_linesamp = torch.diagonal(Sigma_out, dim1=-2, dim2=-1)
+        sigma_linesamp = torch.sqrt(var_linesamp)
 
         # Return to original shape if input was not batched
         if not is_batched:
             mu_linesamp = mu_linesamp.squeeze(0)
-            var_linesamp = var_linesamp.squeeze(0)
+            sigma_linesamp = sigma_linesamp.squeeze(0)
             
-        return mu_linesamp, var_linesamp
+        return mu_linesamp, sigma_linesamp
 
     # def adjust(self, insamp, inline):
     #     samp = torch.tensor(insamp,dtype=torch.double,device=self.device)
