@@ -315,11 +315,13 @@ class Grid():
 
             scheduler.step()
 
-            if no_update_count > 0 and loss_photo > min_photo_loss * 10.:
-                self.mapper.load_state_dict(best_mapper_state_dict)
-                scheduler.cool_down(adjust_gamma=False)
-                no_update_count = -1e9 #防止重复启动
-                early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+            if loss_photo > min_photo_loss * 10.:
+                self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
+                if no_update_count > 0:
+                    scheduler.cool_down(adjust_gamma=False)
+                    no_update_count = -1e9 #防止重复启动
+                    early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
             if (iter_idx + 1) % 10 == 0:
                 total_loss /= count
@@ -335,19 +337,26 @@ class Grid():
                     min_photo_loss = total_loss_photo
                     no_update_count = 0
                     if last_mapper_state_dict is None:
-                        best_mapper_state_dict = self.mapper.state_dict()
+                        best_mapper_state_dict = {
+                            'model':self.mapper.state_dict(),
+                            'optimizer':optimizer.state_dict()
+                        }
                     else:
                         best_mapper_state_dict = last_mapper_state_dict
                 else:
                     no_update_count += 1
                 
                 if no_update_count >= 100 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
-                    self.mapper.load_state_dict(best_mapper_state_dict)
+                    self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                    optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
-                last_mapper_state_dict = self.mapper.state_dict()
+                last_mapper_state_dict = {
+                        'model':self.mapper.state_dict(),
+                        'optimizer':optimizer.state_dict()
+                    }
 
                 total_loss = 0
                 total_loss_dist = 0
@@ -361,7 +370,7 @@ class Grid():
                 break
         if early_stop_iter > 0:
             print("early stopped")
-        self.mapper.load_state_dict(best_mapper_state_dict)
+        self.mapper.load_state_dict(best_mapper_state_dict['model'])
         # torch.save(best_mapper_state_dict,os.path.join(self.output_path,'grid_mapper.pth'))
         self.save_grid()
         for element in self.elements:
