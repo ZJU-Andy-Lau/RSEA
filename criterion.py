@@ -355,8 +355,8 @@ class CriterionTrainGrid(nn.Module):
         sigma_xy = sigma_xyh[:,:2]
         sigma_h = sigma_xyh[:,2:]
 
-        loss_distribution_xy = (torch.sum(((xy_gt - xy_pred) ** 2) / (2 * sigma_xy**2),dim=-1) + torch.sum(log_sigma_xyh[:,:2],dim=-1)) * conf
-        loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2),dim=-1) + log_sigma_xyh[:,2:]) * conf
+        loss_distribution_xy = (torch.sum(((xy_gt - xy_pred) ** 2) / (2 * sigma_xy**2 + 1e-8),dim=-1) + torch.sum(log_sigma_xyh[:,:2],dim=-1)) * conf
+        loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2 + 1e-8),dim=-1) + log_sigma_xyh[:,2:]) * conf
         loss_distribution = loss_distribution_xy + loss_distribution_h
 
         sigma_avg = torch.norm(sigma_xy,dim=-1).mean()

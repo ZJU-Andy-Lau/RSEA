@@ -18,7 +18,7 @@ import torch.distributed as dist
 from typing import List, Tuple
 
    
-def residual_average(arr, a):
+def residual_average(arr:np.ndarray, a:int) -> np.ndarray:
     is_2d = arr.ndim == 2
     if is_2d:
         arr = arr[..., np.newaxis]

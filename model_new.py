@@ -254,9 +254,9 @@ class Decoder(nn.Module):
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
         mu_xy = F.tanh(xy_res[:,:2])
-        log_sigma_xy = xy_res[:,2:]
+        log_sigma_xy = F.tanh(xy_res[:,2:]) * 10.
         mu_h = F.tanh(height_res[:,:1])
-        log_sigma_h = height_res[:,1:]
+        log_sigma_h = F.tanh(height_res[:,1:]) * 10.
 
         return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
 
