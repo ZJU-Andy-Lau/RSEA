@@ -315,6 +315,12 @@ class Grid():
 
             scheduler.step()
 
+            if no_update_count > 0 and loss_photo > min_photo_loss * 10.:
+                self.mapper.load_state_dict(best_mapper_state_dict)
+                scheduler.cool_down(adjust_gamma=False)
+                no_update_count = -1e9 #防止重复启动
+                early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+
             if (iter_idx + 1) % 10 == 0:
                 total_loss /= count
                 total_loss_dist /= count
