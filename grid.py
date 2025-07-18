@@ -217,7 +217,7 @@ class Grid():
         count = 0
         no_update_count = 0
         early_stop_iter = -1
-
+        last_mapper_state_dict = None
         pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
 
         for iter_idx in range(self.options.grid_training_iters):
@@ -333,8 +333,11 @@ class Grid():
                 # print(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
                 if total_loss_photo < min_photo_loss:
                     min_photo_loss = total_loss_photo
-                    best_mapper_state_dict = self.mapper.state_dict()
                     no_update_count = 0
+                    if last_mapper_state_dict is None:
+                        best_mapper_state_dict = self.mapper.state_dict()
+                    else:
+                        best_mapper_state_dict = last_mapper_state_dict
                 else:
                     no_update_count += 1
                 
@@ -343,6 +346,8 @@ class Grid():
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+
+                last_mapper_state_dict = self.mapper.state_dict()
 
                 total_loss = 0
                 total_loss_dist = 0
