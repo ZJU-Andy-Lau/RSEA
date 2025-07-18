@@ -230,7 +230,7 @@ class PretrainDataset(Dataset):
             self.dataset_num = len(dataset_idxs)
         self.database_keys = [list(self.database.keys())[i] for i in dataset_idxs]
         self.DOWNSAMPLE=downsample
-        self.img_size = self.database[self.database_keys[0]]['image_1'][:].shape[0]
+        self.img_size = self.database[self.database_keys[0]]['images']['image_0'][:].shape[0]
         self.input_size = input_size
         self.batch_size = batch_size
         self.obj_map_coefs = []
@@ -269,11 +269,14 @@ class PretrainDataset(Dataset):
         random.seed(seed)
 
         key = self.database_keys[index]
-        image_1_full = self.database[key]['image_1'][:]
-        image_2_full = self.database[key]['image_2'][:]
+        img_num = len(self.database[key]['images'])
+        idx1,idx2 = np.random.choice(img_num,2)
+
+        image_1_full = self.database[key]['images'][f"image_{idx1}"][:]
+        image_2_full = self.database[key]['images'][f"image_{idx2}"][:]
         obj_full = centerize_obj(self.database[key]['obj'][:])
-        residual_1_full = self.database[key]['residual_1'][:]
-        residual_2_full = self.database[key]['residual_2'][:]
+        residual_1_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
+        residual_2_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
 
