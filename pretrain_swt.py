@@ -204,7 +204,7 @@ def pretrain(args):
         dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
         indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
         indices_str = " ".join(indices_str)
-        with open(os.path.join('./log','dataset_idxs_log.txt'),'a') as f:
+        with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
             f.write(f"{indices_str}\n")
 
     dist.barrier()
@@ -286,7 +286,7 @@ def pretrain(args):
     last_loss = None
     start_time = time.perf_counter()
     criterion = CriterionFinetune()
-    logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],'finetune_log')
+    logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],f'{args.log_prefix}_finetune_log')
     
     # torch.autograd.set_detect_anomaly(True)
     for epoch in range(args.max_epoch):
@@ -468,6 +468,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
+    parser.add_argument('--log_prefix',type=str,default='')
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
     args = parser.parse_args()
