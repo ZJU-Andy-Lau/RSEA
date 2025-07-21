@@ -281,16 +281,19 @@ class RSEA():
 
 
             # image.rpc.Merge_Adjust()
-            orthorectify_image(image.image[:,:,0],image.dem,image.rpc,os.path.join(image.root,'dom.tif'))
-            image.rpc.save_rpc_to_file(os.path.join(image.root,'rpc_corrected.txt'))
+            # orthorectify_image(image.image[:,:,0],image.dem,image.rpc,os.path.join(image.root,'dom.tif'))
+            # image.rpc.save_rpc_to_file(os.path.join(image.root,'rpc_corrected.txt'))
             # timestamp  = time.strftime("%Y%m%d%H%M%S")
             # with open(os.path.join(image.root,f'adjust_info_{timestamp}.txt'),'w') as f:
             #     for k,v in vars(options).items():
             #         info = info + f"{k}:{v}\n"
             #     f.write(info)
 
-            return adjust_images
-
+            # return adjust_images
+        errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),adjust_images)
+        info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
+        print(info)
+        
     def check_error(self,log_path,images:List[RSImage] = None):        
         def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
             R = 6371000 
