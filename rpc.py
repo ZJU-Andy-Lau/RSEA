@@ -534,30 +534,32 @@ class RPCModelParameterTorch:
     #     return samp,line
     
 
-    def to_gpu(self):
-        self.LINE_OFF = self.LINE_OFF.cuda()
-        self.SAMP_OFF = self.SAMP_OFF.cuda()
-        self.LAT_OFF = self.LAT_OFF.cuda()
-        self.LONG_OFF = self.LONG_OFF.cuda()
-        self.HEIGHT_OFF = self.HEIGHT_OFF.cuda()
-        self.LINE_SCALE = self.LINE_SCALE.cuda()
-        self.SAMP_SCALE = self.SAMP_SCALE.cuda()
-        self.LAT_SCALE = self.LAT_SCALE.cuda()
-        self.LONG_SCALE = self.LONG_SCALE.cuda()
-        self.HEIGHT_SCALE = self.HEIGHT_SCALE.cuda()
+    def to_gpu(self,device = None):
+        if device is None:
+            device = 'cuda'
+        self.LINE_OFF = self.LINE_OFF.to(device)
+        self.SAMP_OFF = self.SAMP_OFF.to(device)
+        self.LAT_OFF = self.LAT_OFF.to(device)
+        self.LONG_OFF = self.LONG_OFF.to(device)
+        self.HEIGHT_OFF = self.HEIGHT_OFF.to(device)
+        self.LINE_SCALE = self.LINE_SCALE.to(device)
+        self.SAMP_SCALE = self.SAMP_SCALE.to(device)
+        self.LAT_SCALE = self.LAT_SCALE.to(device)
+        self.LONG_SCALE = self.LONG_SCALE.to(device)
+        self.HEIGHT_SCALE = self.HEIGHT_SCALE.to(device)
 
-        self.LNUM = self.LNUM.cuda()
-        self.LDEM = self.LDEM.cuda()
-        self.SNUM = self.SNUM.cuda()
-        self.SDEM = self.SDEM.cuda()
+        self.LNUM = self.LNUM.to(device)
+        self.LDEM = self.LDEM.to(device)
+        self.SNUM = self.SNUM.to(device)
+        self.SDEM = self.SDEM.to(device)
 
-        self.LATNUM = self.LATNUM.cuda()
-        self.LATDEM = self.LATDEM.cuda()
-        self.LONNUM = self.LONNUM.cuda()
-        self.LONDEM = self.LONDEM.cuda()
+        self.LATNUM = self.LATNUM.to(device)
+        self.LATDEM = self.LATDEM.to(device)
+        self.LONNUM = self.LONNUM.to(device)
+        self.LONDEM = self.LONDEM.to(device)
 
-        self.adjust_params = self.adjust_params.cuda()
-        self.adjust_params_inv = self.adjust_params_inv.cuda()
+        self.adjust_params = self.adjust_params.to(device)
+        self.adjust_params_inv = self.adjust_params_inv.to(device)
 
         self.device = self.LINE_OFF.device
 

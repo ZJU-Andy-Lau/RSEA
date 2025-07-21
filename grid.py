@@ -40,7 +40,7 @@ class GridStatus(Enum):
 
 class Grid():
     STATES = GridStatus
-    def __init__(self,options,encoder:Encoder,output_path:str,diag:np.ndarray = None,grid_path:str = None):
+    def __init__(self,options,encoder:Encoder,output_path:str,diag:np.ndarray = None,grid_path:str = None,device:str = None):
 
         self.options = options
         self.encoder = encoder
@@ -65,10 +65,23 @@ class Grid():
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             ])
+        self.train_data = []
         self.SAMPLE_FACTOR = 16
         self.pred_resolution = .7
         self.vis_points_latlon = None
+        if device is None:
+            self.device = 'cuda'
+        else:
+            self.device = device
     
+    def to_device(self,device):
+        self.device = device
+        self.encoder.to(device)
+        self.mapper.to(device)
+        for element in self.elements:
+            element.to_device(device)
+        
+
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
         if mode == 'bbox':
@@ -101,28 +114,38 @@ class Grid():
         self.map_coeffs['h'] = get_map_coef(heights)
 
 
-    def add_img(self,img:RSImage,output_path:str,mapper_path:str = None,id:int = None):
+    def add_img(self,img:RSImage):
         """
         添加训练数据
         """
-        output_path = os.path.join(output_path,f'element_{id}')
-        if not os.path.exists(output_path):
-            os.mkdir(output_path)
-        
         img_raw,dem,local_hw2 = self.get_overlap_image(img,mode='interpolate')
+        self.train_data.append({
+            'img':img_raw,
+            'dem':dem,
+            'local':local_hw2,
+            'rpc':img.rpc
+        })
+    
+    def create_elements(self,output_path:str = None):
+        if output_path is None:
+            output_path = self.output_path
+        for data in self.train_data:
+            id = len(self.elements)
+            output_path = os.path.join(output_path,f'element_{id}')
+            if not os.path.exists(output_path):
+                os.mkdir(output_path)
+                    
+            new_element = Element(options = self.options,
+                                encoder = self.encoder,
+                                img_raw = data['img'],
+                                dem = data['dem'],
+                                rpc = data['rpc'],
+                                id = id,
+                                output_path = output_path,
+                                local_raw = data['local'],
+                                device=self.device)
 
-        new_element = Element(options = self.options,
-                              encoder = self.encoder,
-                              img_raw = img_raw,
-                              dem = dem,
-                              rpc = img.rpc,
-                              id = len(self.elements) if id is None else id,
-                              output_path = output_path,
-                              local_raw = local_hw2)
-        if mapper_path:
-            new_element.load_mapper(mapper_path)
-
-        self.elements.append(new_element)
+            self.elements.append(new_element)
         self.get_height_map_coeffs()
     
     def train_elements(self,save = True):
@@ -203,7 +226,7 @@ class Grid():
         criterion = CriterionTrainGrid()
         self.mapper.train()
         if self.options.use_gpu:
-            self.mapper.cuda()
+            self.mapper.to(self.device)
 
         min_photo_loss = 1e8
 
@@ -496,8 +519,8 @@ class Grid():
         return: {"xy_P2","h_P1","locals_P2","confs_P1"} np.ndarray
         """
         H,W = img_raw.shape[:2]
-        self.encoder.eval().cuda()
-        self.mapper.eval().cuda()
+        self.encoder.eval().to(self.device)
+        self.mapper.eval().to(self.device)
 
         if self.options.crop_step > 0:
             crop_step = self.options.crop_step
@@ -518,8 +541,8 @@ class Grid():
 
         print("Extracting Features")
         for batch_idx in trange(batch_num):
-            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cuda()
-            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cuda().flatten(0,2)
+            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)

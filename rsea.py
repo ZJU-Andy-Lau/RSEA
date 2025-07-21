@@ -4,6 +4,7 @@ warnings.filterwarnings('ignore')
 import argparse
 import torch
 import torch.nn as nn
+import torch.multiprocessing as mp
 import numpy as np
 import pandas as pd
 from model_new import Encoder,AffineFitter
@@ -48,6 +49,16 @@ cfg_large = {
         'pretrain_window_size':[12, 12, 12],
         'unfreeze_backbone_modules':[]
     }
+
+def train_grid_worker(rank:int,world_size:int,round_idx:int,grids:List[Grid]):
+    grid_idx = world_size * round_idx + rank
+    grid = grids[grid_idx]
+    print(f"training grid {grid_idx}")
+    device = torch.device(f'cuda:{rank}')
+    grid.to_device(device)
+    grid.create_elements()
+    grid.train_mapper()
+
 
 
 class RSEA():
@@ -143,17 +154,28 @@ class RSEA():
 
             for img_idx,image in enumerate(self.imgs):
                 new_grid.add_img(img = image,
-                                 output_path = new_grid.output_path,
-                                 id = image.id
+                                #  output_path = new_grid.output_path,
                                  )
             # new_grid.valid_features()
             # new_grid.train_elements()
             # new_grid.valid_mappers()
             # new_grid.adjust_elements()
-            new_grid.train_mapper()
             self.grids.append(new_grid)
+            # new_grid.train_mapper()
             # if grid_idx + 1 >= 12:
             #     break
+        try:
+            gpu_num = torch.cuda.device_count()
+            grid_num = len(self.grids)
+            world_size = min(gpu_num,grid_num)
+            round_num = int(np.ceil(grid_num / world_size))
+            for round_idx in range(round_num):
+                mp.spawn(train_grid_worker,
+                        args=(world_size,round_idx,self.grids),
+                        nprocs=world_size,
+                        join=True)
+        except Exception as e:
+            print(f"格网多进程训练出错：\n{e}")
                 
         print(f"{len(self.grids)} grids created")
     
@@ -198,28 +220,11 @@ class RSEA():
         grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
         for grid_path in grid_paths:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
-            # extend = np.load(os.path.join(root,grid_path,'extend.npy'))
-            # center = np.array([extend[2],extend[5]])
-            # scale = extend[6:8]
-            # diag = np.stack([np.array([center[0] - scale[0],center[1] + scale[1]]),np.array([center[0] + scale[0],center[1] - scale[1]])],axis=0)
-            # print(center)
-            # print(scale)
-            # print(diag)
-            # new_grid = Grid(self.options,extend,diag,self.encoder,os.path.join(self.root,grid_path))
-            # new_grid.load_mapper(os.path.join(self.root,grid_path,'grid_mapper.pth'))
             self.grids.append(new_grid)
         print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
     
 
-    def adjust(self,image_folders:List[str]):
-
-        # def check_error(check_points:np.ndarray,trans:np.ndarray):
-        #     ones = np.ones((check_points.shape[0],1))
-        #     trans_points = np.concatenate([check_points,ones],axis=-1)
-        #     trans_points = np.matmul(trans_points,trans.T)
-        #     dis = np.linalg.norm(trans_points - check_points,axis=-1)
-        #     return dis
-        
+    def adjust(self,image_folders:List[str]):        
         adjust_images:List[RSImage] = []
         
         for image_id,image_folder in enumerate(image_folders):
@@ -231,13 +236,11 @@ class RSEA():
             all_tgt_mu = []
             all_tgt_sigma = []
             all_confs = []
-            # all_xyh = []
-            # orthorectify_image(image.image[:5000,:5000,0],image.dem[:5000,:5000],image.rpc,os.path.join(image.root,'dom.tif'))
-            # continue
             for grid_idx,grid in enumerate(self.grids):
                 print(f"processing grid {grid_idx}")
                 overlap_diag = self.__overlap__(grid.diag[0],image.corner_xys[0],grid.diag[1],image.corner_xys[3])
                 if overlap_diag is None :
+                    print(f"no overlap in grid {grid_idx}")
                     continue
                 img_raw,dem,local_hw2 = grid.get_overlap_image(image,mode="interpolate")
                 cv2.imwrite(os.path.join(grid.output_path,f'adjust_img_{img_idx}.png'),img_raw)
@@ -293,7 +296,7 @@ class RSEA():
         errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),adjust_images)
         info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
         print(info)
-        
+
     def check_error(self,log_path,images:List[RSImage] = None):        
         def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
             R = 6371000 

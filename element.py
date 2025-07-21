@@ -30,7 +30,7 @@ import random
 from typing import List,Dict
 
 class Element():
-    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None):
+    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None,device:str = None):
         self.options = options
         self.id = id
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
@@ -61,11 +61,15 @@ class Element():
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         self.use_gpu = options.use_gpu
         self.output_path = output_path
+        if device is None:
+            self.device = 'cuda'
+        else:
+            self.device = device
         
         if self.use_gpu:
-            self.rpc.to_gpu()
-            self.encoder.cuda()
-            self.mapper.cuda()
+            self.rpc.to_gpu(self.device)
+            self.encoder.to(self.device)
+            self.mapper.to(self.device)
         
         if options.crop_step > 0:
             crop_step = options.crop_step
@@ -176,12 +180,12 @@ class Element():
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
         print("select_ratio:",select_ratio)
         # avg = nn.AvgPool2d(self.SAMPLE_FACTOR,self.SAMPLE_FACTOR)
-        self.encoder.eval().cuda()
+        self.encoder.eval().to(self.device)
 
         # if self.use_gpu:
-        #     imgs_NHW = imgs_NHW.cuda()
-        #     locals_Nhw2 = locals_Nhw2.cuda()
-        #     dems_Nhw = dems_Nhw.cuda()
+        #     imgs_NHW = imgs_NHW.to(self.device)
+        #     locals_Nhw2 = locals_Nhw2.to(self.device)
+        #     dems_Nhw = dems_Nhw.to(self.device)
         
         batch_num = int(np.ceil(self.crop_img_num / self.options.batch_size))
 
@@ -194,9 +198,9 @@ class Element():
 
 
         for batch_idx in trange(batch_num):
-            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cuda()
-            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cuda().flatten(0,2)
-            batch_dems = dems_Nhw[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cuda().flatten(0,2)
+            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
+            batch_dems = dems_Nhw[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
 
             feat,conf = self.encoder(batch_imgs) # B,D,H,W
 
@@ -272,7 +276,7 @@ class Element():
         
         self.mapper.train()
         if self.use_gpu:
-            self.mapper.cuda()
+            self.mapper.to(self.device)
 
         min_photo_loss = 1e9
         best_mapper_state_dict = None
@@ -401,7 +405,7 @@ class Element():
         
         self.mapper.train()
         if self.use_gpu:
-            self.mapper.cuda()
+            self.mapper.to(self.device)
 
         min_photo_loss = 1e9
         best_mapper_state_dict = None
@@ -697,3 +701,12 @@ class Element():
         self.buffer = None
         self.kd_tree = None
 
+    def to_device(self,device):
+        self.device = device
+        self.encoder.to(device)
+        self.mapper.to(device)
+        self.rpc.to_gpu(device)
+        if not self.buffer is None:
+            for key in self.buffer.keys():
+                self.buffer[key].to(device)
+        
