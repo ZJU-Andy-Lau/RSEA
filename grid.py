@@ -1,4 +1,4 @@
-from ast import mod
+from enum import Enum
 import warnings
 
 warnings.filterwarnings('ignore')
@@ -33,12 +33,19 @@ from typing import List,Dict
 from rs_image import RSImage
 from element import Element
 
+class GridStatus(Enum):
+    NOT_INIT = 0
+    WELL_TRAINED = 1
+    BAD_TRAINED = 2
+
 class Grid():
+    STATES = GridStatus
     def __init__(self,options,encoder:Encoder,output_path:str,diag:np.ndarray = None,grid_path:str = None):
 
         self.options = options
         self.encoder = encoder
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
+        self.status = self.STATES.NOT_INIT
         if diag is None and grid_path is None:
             raise ValueError("Grid loaded error: Neither diag nor grid path is given")
         if grid_path is None :
@@ -338,8 +345,8 @@ class Grid():
                     no_update_count = 0
                     if last_mapper_state_dict is None:
                         best_mapper_state_dict = {
-                            'model':self.mapper.state_dict(),
-                            'optimizer':optimizer.state_dict()
+                            'model':deepcopy(self.mapper.state_dict()),
+                            'optimizer':deepcopy(optimizer.state_dict())
                         }
                     else:
                         best_mapper_state_dict = last_mapper_state_dict
@@ -354,8 +361,8 @@ class Grid():
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
                 last_mapper_state_dict = {
-                        'model':self.mapper.state_dict(),
-                        'optimizer':optimizer.state_dict()
+                        'model':deepcopy(self.mapper.state_dict()),
+                        'optimizer':deepcopy(optimizer.state_dict())
                     }
 
                 total_loss = 0
@@ -371,6 +378,10 @@ class Grid():
         if early_stop_iter > 0:
             print("early stopped")
         self.mapper.load_state_dict(best_mapper_state_dict['model'])
+        if min_photo_loss < 15.:
+            self.status = self.STATES.WELL_TRAINED
+        else:
+            self.status = self.STATES.BAD_TRAINED
         # torch.save(best_mapper_state_dict,os.path.join(self.output_path,'grid_mapper.pth'))
         self.save_grid()
         for element in self.elements:
@@ -384,6 +395,7 @@ class Grid():
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
             'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),
+            'status':self.status
         }
         torch.save(state_dict,os.path.join(self.output_path,'grid_data.pth'))
 
@@ -397,6 +409,7 @@ class Grid():
             'y':state_dict['map_coeffs_y'].cpu().numpy(),
             'h':state_dict['map_coeffs_h'].cpu().numpy(),
         }
+        self.status = state_dict['status']
         print(f"Grid '{name} loaded succesfully'")
     
     @torch.no_grad()

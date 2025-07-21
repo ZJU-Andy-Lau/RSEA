@@ -16,7 +16,7 @@ if __name__ == '__main__':
     output_path = args.output_path
     os.makedirs(output_path,exist_ok=True)
     
-    file_paths = os.listdir(root)[:30]
+    file_paths = os.listdir(root)
     pbar = tqdm(total=len(file_paths))
     with h5py.File(os.path.join(output_path,'train_data.h5'),'w') as f:
         for idx,file in enumerate(file_paths):

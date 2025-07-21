@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings('ignore')
 import numpy as np
 import cv2
 import rasterio
@@ -63,6 +65,8 @@ def stretch_array_to_uint8(image_array: np.ndarray,
 
     # 计算用于拉伸的最小和最大值
     min_val, max_val = np.percentile(valid_pixels, (lower_percent, upper_percent))
+    min_val = min_val.astype(np.float32)
+    max_val = max_val.astype(np.float32)
     
     # 边缘情况处理：如果min和max相等（例如，图像是纯色），避免除以零
     if min_val == max_val:
@@ -75,10 +79,11 @@ def stretch_array_to_uint8(image_array: np.ndarray,
         return stretched_array.astype(np.uint8)
 
     # 将所有小于min_val的像素值设置为min_val，大于max_val的设置为max_val
-    stretched_array = np.clip(stretched_array, min_val, max_val)
+    stretched_array = np.clip(stretched_array, min_val, max_val,dtype=np.float32)
+    print(stretched_array.dtype,min_val.dtype,max_val.dtype)
 
     # 应用线性拉伸公式
-    stretched_array = (stretched_array - min_val) / (max_val - min_val) * 255.0
+    stretched_array = (stretched_array - min_val) / (max_val - min_val) * 255
 
     # 将结果转换为uint8
     output_array = stretched_array.astype(np.uint8)
@@ -233,7 +238,7 @@ if __name__ == '__main__':
 
         # cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
         
-        # dem_output = dems[i].read(window = window)
+        # dem_output = dems[i].read(window = window).astype(np.float32)
         # np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
 
         # rpc.LINE_OFF -= line_min

@@ -1,7 +1,7 @@
-import enum
+import warnings
+warnings.filterwarnings('ignore')
 import numpy as np
 import torch
-import cv2
 import rasterio
 from rpc import RPCModelParameterTorch,load_rpc
 import os
@@ -10,6 +10,8 @@ from tqdm import tqdm
 from shapely.geometry import Polygon, box
 import matplotlib.pyplot as plt
 from utils import mercator2lonlat,resample_from_quad
+os.environ["OPENCV_IO_MAX_IMAGE_PIXELS"] = str(pow(2,40))
+import cv2
 
 def find_squares_in_intersection(quads: np.ndarray, size: float) -> np.ndarray:
     """
@@ -121,7 +123,7 @@ if __name__ == '__main__':
     # print("corners:",corners)
     # print("rects:",rects)
 
-    for rect_idx,rect in enumerate(rects):
+    for rect_idx,rect in enumerate(tqdm(rects)):
         rect_latlons = mercator2lonlat(torch.from_numpy(rect[:,[1,0]])).numpy()
         rect_heights = [val[0] for val in dem_full.sample(rect_latlons[:,[1,0]])]
         rect_output_path = os.path.join(output_path,f'rect_{rect_idx}')
@@ -132,11 +134,11 @@ if __name__ == '__main__':
             height_resample,_ = resample_from_quad(height,rect_linesamps,(3000,3000))
             local_p2 = local_resample.reshape(-1,2)
             height_p = height_resample.reshape(-1)
-            xy_p2 = np.stack(rpc.RPC_LINESAMP2XY(local_p2[:,0],local_p2[:,1],height_p),axis=-1)
-            obj_p3 = np.concatenate([xy_p2,height_p[:,None]],axis=-1)
+            xy_p2 = np.stack(rpc.RPC_LINESAMP2XY(local_p2[:,0],local_p2[:,1],height_p),axis=-1).astype(np.float32)
+            obj_p3 = np.concatenate([xy_p2,height_p[:,None]],axis=-1).astype(np.float32)
             obj_hw3 = obj_p3.reshape(3000,3000,3)
             cv2.imwrite(os.path.join(rect_output_path,f'{name}.png'),img_resample.astype(np.uint8))
-            np.save(os.path.join(rect_output_path,f'{name}_obj.npy'),obj_hw3)
+            np.save(os.path.join(rect_output_path,f'{name}_obj.npy'),obj_hw3.astype(np.float32))
 
 
 
