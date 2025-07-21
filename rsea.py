@@ -171,6 +171,7 @@ class RSEA():
             # if grid_idx + 1 >= 12:
             #     break
         try:
+            mp.set_start_method("spawn", force=True)
             gpu_num = torch.cuda.device_count()
             grid_num = len(self.grids)
             world_size = min(gpu_num,grid_num)
