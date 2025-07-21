@@ -169,6 +169,7 @@ class RSEA():
             grid_num = len(self.grids)
             world_size = min(gpu_num,grid_num)
             round_num = int(np.ceil(grid_num / world_size))
+            print(gpu_num,grid_num,world_size,round_num)
             for round_idx in range(round_num):
                 mp.spawn(train_grid_worker,
                         args=(world_size,round_idx,self.grids),
