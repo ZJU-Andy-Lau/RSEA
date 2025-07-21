@@ -1,5 +1,4 @@
 import warnings
-
 warnings.filterwarnings('ignore')
 import argparse
 import torch
@@ -30,11 +29,12 @@ import random
 from typing import List,Dict
 
 class Element():
-    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None,device:str = None):
+    def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None,device:str = None,verbose:int = 0):
         self.options = options
         self.id = id
+        self.verbose = verbose
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
-        print(img_raw.shape,dem.shape,local_raw.shape)
+        self._log(img_raw.shape,dem.shape,local_raw.shape)
         cv2.imwrite(os.path.join(output_path,f'img_{id}.png'),img_raw)
         if top_left_linesamp is None:
             self.top_left_linesamp = np.array([0.,0.])
@@ -100,14 +100,18 @@ class Element():
             [0.,1.,0.]
         ])
 
-        print(f"===========================Element {self.id} Initiated===========================")
-        print(f"img size:{img_raw.shape}")
-        print(f"top_left_linesamp:{top_left_linesamp}")
-        print("=================================================================================")
+        self._log(f"===========================Element {self.id} Initiated===========================")
+        self._log(f"img size:{img_raw.shape}")
+        self._log(f"top_left_linesamp:{top_left_linesamp}")
+        self._log("=================================================================================")
+    
+    def _log(self, *args, **kwargs):
+        if self.verbose:
+            self._log("[Element]:", *args, **kwargs)
 
     def __crop_img__(self,crop_size = 256,step = 256 // 2,random_ratio = 1.):
 
-        print("cropping image")
+        self._log("cropping image")
         H, W = self.img_raw.shape[:2]
         cut_number = 0
         row_num = 0
@@ -116,7 +120,8 @@ class Element():
         crop_locals = []
         crop_dems = []
 
-        pbar = tqdm(total=int((H - crop_size ) / step + 1) * int((W - crop_size) / step + 1))
+        if self.verbose > 0:
+            pbar = tqdm(total=int((H - crop_size ) / step + 1) * int((W - crop_size) / step + 1))
 
         for row in range(0, H - crop_size, step):
             for col in range(0, W - crop_size, step):
@@ -140,8 +145,9 @@ class Element():
                 crop_dems.append(self.dem[row_start:row_end,col_start:col_end])
 
                 cut_number += 1
-                pbar.update(1)
                 col_num += 1
+                if self.verbose > 0:
+                    pbar.update(1)
             row_num += 1
             col_num -= 1
 
@@ -163,22 +169,22 @@ class Element():
     @torch.no_grad()
     def __extract_features__(self) -> Dict[str,torch.Tensor]:
         
-        print("Extracting features")
+        self._log("Extracting features")
         
         start_time = time.perf_counter()
 
-        print("---Transform input images")
+        self._log("---Transform input images")
         imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
         locals_NHW2= torch.from_numpy(self.crop_locals_NHW2)
-        print("---Downsample locals")
+        self._log("---Downsample locals")
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True,mode='avg')
         dems_NHW = torch.from_numpy(self.crop_dems_NHW)
-        print("---Downsample DEM")
+        self._log("---Downsample DEM")
         dems_Nhw = downsample(dems_NHW,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True,mode='avg')
 
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
-        print("select_ratio:",select_ratio)
+        self._log("select_ratio:",select_ratio)
         # avg = nn.AvgPool2d(self.SAMPLE_FACTOR,self.SAMPLE_FACTOR)
         self.encoder.eval().to(self.device)
 
@@ -234,7 +240,7 @@ class Element():
 
         kd_tree = build_kd_tree(locals_P2,device='cuda')
 
-        print(f"Extract features done in {time.perf_counter() - start_time} seconds \t {self.patch_num} patches in total")
+        self._log(f"Extract features done in {time.perf_counter() - start_time} seconds \t {self.patch_num} patches in total")
         
         return buffer,kd_tree
     
@@ -281,7 +287,7 @@ class Element():
         min_photo_loss = 1e9
         best_mapper_state_dict = None
 
-        print("Training Mapper Start")
+        self._log("Training Mapper Start")
         start_time = time.perf_counter()
 
         patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.patch_feature_channels,self.patch_num * 5,1)),dim=1).to(self.buffer['features'].device)
@@ -298,7 +304,8 @@ class Element():
         total_reg = 0
         count = 0
 
-        pbar = tqdm(total=self.options.element_training_iters)
+        if self.verbose > 0:
+            pbar = tqdm(total=self.options.element_training_iters)
 
         for iter_idx in range(self.options.element_training_iters):
             self.mapper.train()
@@ -351,13 +358,14 @@ class Element():
             total_reg += loss_reg
             count += 1
 
-            pbar.update(1)
-            pbar.set_postfix({
-                'obj':f'{loss_obj.item():.2f}',
-                'photo':f'{loss_photo.item():.2f}',
-                'reg':f'{loss_reg:.2f}',
-                'min':f'{min_photo_loss:.2f}'
-            })
+            if self.verbose > 0:
+                pbar.update(1)
+                pbar.set_postfix({
+                    'obj':f'{loss_obj.item():.2f}',
+                    'photo':f'{loss_photo.item():.2f}',
+                    'reg':f'{loss_reg:.2f}',
+                    'min':f'{min_photo_loss:.2f}'
+                })
 
             optimizer.step()
             scheduler.step()
@@ -369,7 +377,7 @@ class Element():
                 total_reg /= count
                 
                 # cost_time = int(time.perf_counter() - start_time)
-                # print(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
+                # self._log(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
                 if total_loss_photo < min_photo_loss:
                     min_photo_loss = total_loss_photo
                     best_mapper_state_dict = self.mapper.state_dict()
@@ -385,7 +393,7 @@ class Element():
         
         self.mapper.load_state_dict(best_mapper_state_dict)
         self.ransac_threshold = min_photo_loss + 5
-        print(f"Training Mapper Done in {time.perf_counter() - start_time} seconds")
+        self._log(f"Training Mapper Done in {time.perf_counter() - start_time} seconds")
 
     
     def finetune_mapper(self):
@@ -410,7 +418,7 @@ class Element():
         min_photo_loss = 1e9
         best_mapper_state_dict = None
 
-        print("Finetune Mapper Start")
+        self._log("Finetune Mapper Start")
 
         start_time = time.perf_counter()
 
@@ -428,7 +436,8 @@ class Element():
         total_reg = 0
         count = 0
 
-        pbar = tqdm(total=self.options.element_training_iters)
+        if self.verbose > 0:
+            pbar = tqdm(total=self.options.element_training_iters)
 
         for iter_idx in range(self.options.element_training_iters):
             self.mapper.train()
@@ -481,13 +490,14 @@ class Element():
             total_reg += loss_reg
             count += 1
 
-            pbar.update(1)
-            pbar.set_postfix({
-                'obj':f'{loss_obj.item():.2f}',
-                'photo':f'{loss_photo.item():.2f}',
-                'reg':f'{loss_reg:.2f}',
-                'min':f'{min_photo_loss:.2f}'
-            })
+            if self.verbose > 0:
+                pbar.update(1)
+                pbar.set_postfix({
+                    'obj':f'{loss_obj.item():.2f}',
+                    'photo':f'{loss_photo.item():.2f}',
+                    'reg':f'{loss_reg:.2f}',
+                    'min':f'{min_photo_loss:.2f}'
+                })
 
             optimizer.step()
             scheduler.step()
@@ -499,7 +509,7 @@ class Element():
                 total_reg /= count
                 
                 # cost_time = int(time.perf_counter() - start_time)
-                # print(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
+                # self._log(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
                 if total_loss_photo < min_photo_loss:
                     min_photo_loss = total_loss_photo
                     best_mapper_state_dict = self.mapper.state_dict()
@@ -515,7 +525,7 @@ class Element():
         
         self.mapper.load_state_dict(best_mapper_state_dict)
         self.ransac_threshold = min_photo_loss + 5
-        print(f"Finetune Mapper Done in {time.perf_counter() - start_time} seconds")
+        self._log(f"Finetune Mapper Done in {time.perf_counter() - start_time} seconds")
 
     def save_mapper(self):
         state_dict = {
@@ -542,7 +552,7 @@ class Element():
         targets: (line,samp)
         '''
         dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
-        print("mean_dis:",dis.mean())
+        self._log("mean_dis:",dis.mean())
         dis_valid_idx = dis < dis.mean() + dis.std()
         locals = locals[dis_valid_idx]
         targets = targets[dis_valid_idx]
@@ -552,7 +562,7 @@ class Element():
         affine_matrix,inliers = cv2.estimateAffine2D(locals,targets,ransacReprojThreshold=threshold,maxIters=10000)
         inliers = inliers.reshape(-1).astype(bool)
         inlier_num = inliers.sum()
-        print(f'{inlier_num} / {len(locals)}')
+        self._log(f'{inlier_num} / {len(locals)}')
 
         return affine_matrix
     
@@ -672,9 +682,9 @@ class Element():
             "locals":[],
             "targets":[]
         }
-        print(f"Calculate transform of element {self.id} done in {time.perf_counter() - start_time} seconds")
-        print(f"Origin Transform of element {self.id}:")
-        print(self.af_trans)
+        self._log(f"Calculate transform of element {self.id} done in {time.perf_counter() - start_time} seconds")
+        self._log(f"Origin Transform of element {self.id}:")
+        self._log(self.af_trans)
 
     def update_obj(self):
         heights = self.buffer['objs'][:,2]
@@ -686,8 +696,8 @@ class Element():
 
     def apply_transform(self):
         self.applied_trans = self.__compose_transforms__([self.applied_trans,self.af_trans])
-        print(f"New Transform for element {self.id}: \n {self.af_trans}")
-        print(f"Composed Transform for element {self.id}: \n {self.applied_trans}")
+        self._log(f"New Transform for element {self.id}: \n {self.af_trans}")
+        self._log(f"Composed Transform for element {self.id}: \n {self.applied_trans}")
         self.rpc.Update_Adjust(torch.from_numpy(self.applied_trans))
         self.update_obj()
         self.__calculate_map_coeffs__()

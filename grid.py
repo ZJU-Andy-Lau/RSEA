@@ -81,6 +81,9 @@ class Grid():
         for element in self.elements:
             element.to_device(device)
         
+    def update_task_state(self,task_info,update_info):
+        state = task_info['state'][task_info['id']]
+        task_info['state'][task_info['id']] = {**state,**update_info}
 
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         corner_samplines = img.xy_to_sampline(np.array([self.diag[0],[self.diag[1,0],self.diag[0,1]],self.diag[1],[self.diag[0,0],self.diag[1,1]]])) # tl,tr,br,bl
@@ -126,15 +129,20 @@ class Grid():
             'rpc':img.rpc
         })
     
-    def create_elements(self,output_path:str = None):
+    def create_elements(self,output_path:str = None,task_info = None):
         if output_path is None:
             output_path = self.output_path
-        for data in self.train_data:
+        
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':"提取特征",
+                'total':len(self.train_data)
+            })
+        for idx,data in enumerate(self.train_data):
             id = len(self.elements)
             output_path = os.path.join(output_path,f'element_{id}')
             if not os.path.exists(output_path):
                 os.mkdir(output_path)
-                    
             new_element = Element(options = self.options,
                                 encoder = self.encoder,
                                 img_raw = data['img'],
@@ -146,6 +154,9 @@ class Grid():
                                 device=self.device)
 
             self.elements.append(new_element)
+            if not task_info is None:
+                self.update_task_state(task_info,{'progress':idx+1})
+
         self.get_height_map_coeffs()
     
     def train_elements(self,save = True):
@@ -208,8 +219,7 @@ class Grid():
         warped = torch.stack([x,y,h],dim=-1)
         return warped
 
-    def train_mapper(self):
-        start_time = time.perf_counter()
+    def train_mapper(self,task_info = None):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
         optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
@@ -248,8 +258,13 @@ class Grid():
         no_update_count = 0
         early_stop_iter = -1
         last_mapper_state_dict = None
-        pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
-
+        # pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':"Decoder训练",
+                'total':self.options.grid_training_iters * len(self.elements)
+            })
+        progress = 0
         for iter_idx in range(self.options.grid_training_iters):
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
@@ -327,19 +342,33 @@ class Grid():
                 total_loss_height += loss_height.item()
                 total_reg += loss_reg
                 count += 1
-
+                progress += 1 
                 # print(f"iter:{iter_idx + 1} \t img:{element.id}/{len(self.elements)} \t loss:{loss.item():.2f} \t l_obj:{loss_obj.item():.2f} \t l_photo:{loss_photo.item():.2f} \t l_real:{loss_photo_real.item():.2f} \t l_height:{loss_height.item():.2f} \t bias:{loss_bias:.2f} \t reg:{loss_reg:.2f} \t lr:{scheduler.get_last_lr()[0]:.7f}")
-                pbar.update(1)
-                pbar.set_postfix({
-                    'lr':f'{scheduler.get_last_lr()[0]:.2e}',
-                    'dist':f'{loss_distribution.item():.2f}',
-                    's':f'{sigma_avg:.2f}',
-                    'obj':f'{loss_obj.item():.2f}',
-                    'photo':f'{loss_photo.item():.2f}',
-                    'h':f'{loss_height.item():.2f}',
-                    'reg':f'{loss_reg:.2f}',
-                    'min':f'{min_photo_loss:.2f}'
-                })
+                # pbar.update(1)
+                # pbar.set_postfix({
+                #     'lr':f'{scheduler.get_last_lr()[0]:.2e}',
+                #     'dist':f'{loss_distribution.item():.2f}',
+                #     's':f'{sigma_avg:.2f}',
+                #     'obj':f'{loss_obj.item():.2f}',
+                #     'photo':f'{loss_photo.item():.2f}',
+                #     'h':f'{loss_height.item():.2f}',
+                #     'reg':f'{loss_reg:.2f}',
+                #     'min':f'{min_photo_loss:.2f}'
+                # })
+                if not task_info is None:
+                    self.update_task_state(task_info,{
+                        'progress':progress,
+                        'info':{
+                            'lr':f'{scheduler.get_last_lr()[0]:.2e}',
+                            'dist':f'{loss_distribution.item():.2f}',
+                            's':f'{sigma_avg:.2f}',
+                            'obj':f'{loss_obj.item():.2f}',
+                            'photo':f'{loss_photo.item():.2f}',
+                            'h':f'{loss_height.item():.2f}',
+                            'reg':f'{loss_reg:.2f}',
+                            'min':f'{min_photo_loss:.2f}'
+                        }
+                    })
 
             optimizer.step()
 
@@ -410,6 +439,10 @@ class Grid():
         for element in self.elements:
             element.clear_buffer()
         self.elements = None
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':"训练完成"
+            })
 
     def save_grid(self):
         state_dict = {

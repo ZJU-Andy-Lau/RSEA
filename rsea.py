@@ -1,5 +1,6 @@
+import time
+from turtle import pos
 import warnings
-
 warnings.filterwarnings('ignore')
 import argparse
 import torch
@@ -11,7 +12,7 @@ from model_new import Encoder,AffineFitter
 import os
 import cv2
 from utils import mercator2lonlat
-
+import queue
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
 import torch.nn.functional as F
@@ -50,14 +51,19 @@ cfg_large = {
         'unfreeze_backbone_modules':[]
     }
 
-def train_grid_worker(rank:int,world_size:int,round_idx:int,grids:List[Grid]):
-    grid_idx = world_size * round_idx + rank
-    grid = grids[grid_idx]
-    print(f"training grid {grid_idx}")
+def train_grid_worker(rank:int, task_queue, task_state):
     device = torch.device(f'cuda:{rank}')
-    grid.to_device(device)
-    grid.create_elements()
-    grid.train_mapper()
+    while True:
+        try:
+            task_config = task_queue.get(timeout = 1)
+            if task_config is None:
+                break
+        except queue.Empty:
+            break
+        
+        task_id,grid = task_config
+        grid.create_elements(task_info = {'state':task_state,'id':task_id})
+        grid.train_mapper(task_info = {'state':task_state,'id':task_id})
 
 
 
@@ -168,13 +174,76 @@ class RSEA():
             gpu_num = torch.cuda.device_count()
             grid_num = len(self.grids)
             world_size = min(gpu_num,grid_num)
-            round_num = int(np.ceil(grid_num / world_size))
-            print(gpu_num,grid_num,world_size,round_num)
-            for round_idx in range(round_num):
-                mp.spawn(train_grid_worker,
-                        args=(world_size,round_idx,self.grids),
-                        nprocs=world_size,
-                        join=True)
+            manager = mp.Manager()
+            task_queue = manager.Queue()
+            task_states = manager.dict()
+
+            for i in range(grid_num):
+                task_id = i + 1
+                task_queue.put((task_id,self.grids[i]))
+                task_states[task_id] = {
+                    "status":"等待分配GPU",
+                    "progress":0,
+                    "total":1,
+                    "info":{
+                        # 'lr':0,
+                        # 'dist':0,
+                        # 's':0,
+                        # 'obj':0,
+                        # 'photo':0,
+                        # 'h':0,
+                        # 'reg':0,
+                        # 'min':0
+                    }
+                }
+            for _ in range(world_size):
+                task_queue.put(None)
+            
+            pbars = []
+            for i in range(grid_num):
+                task_id = i + 1
+                print(f"============================== Grid {task_id} ==============================")
+                bar = tqdm(total=1,
+                           desc=f"Grid {task_id} 状态：",
+                           position=i * 2 + 1,
+                           leave=True)
+                pbars.append(bar)
+            
+            processes = []
+            for rank in range(world_size):
+                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states))
+                p.start()
+                processes.append(p)
+
+            acitive_workers = world_size
+            while acitive_workers > 0:
+                acitive_workers = 0
+                for p in processes:
+                    if p.is_alive():
+                        acitive_workers += 1
+                
+                for i in range(grid_num):
+                    task_id = i + 1
+                    state = task_states[task_id]
+                    bar = pbars[i]
+                    bar.set_description(f"{state['status']}")
+                    bar.total = state['total']
+                    bar.n = state['progress']
+                    bar.set_postfix(state['info'])
+                    bar.refresh() 
+                time.sleep(0.1)
+
+            for bar in pbars:
+                bar.close()
+            for p in processes:
+                p.join()                   
+            # round_num = int(np.ceil(grid_num / world_size))
+            # for round_idx in range(round_num):
+            #     grids_to_train = self.grids[round_idx * world_size : (round_idx + 1) * world_size]
+            #     mp.spawn(train_grid_worker,
+            #             args=(world_size,round_idx,grids_to_train),
+            #             nprocs=len(grids_to_train),
+            #             join=True)
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
                 
