@@ -4,18 +4,38 @@ import cv2
 import numpy as np
 from PIL import Image, ImageTk
 import os
-from rpc import RPCModelParameterTorch
 
+from rpc import RPCModelParameterTorch,load_rpc
+from shapely.geometry import Polygon, Point, MultiPoint
+from typing import List,Tuple
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # !! 用户需要实现这个函数 (You need to implement this function)
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-def get_windows(k: int, num_images: int, image_shapes: list):
+
+def find_windows(image_shapes:List[np.ndarray],rpcs:List[RPCModelParameterTorch],heights:List[np.ndarray],margin = 3000,size=500):
+    H,W = image_shapes[0][:2]
+    print(H,W)
+    res = []
+    lines = np.arange(margin,H - margin - size,size)
+    samps = np.arange(margin,W - margin - size,size)
+    lines,samps = np.meshgrid(lines,samps,indexing='ij')
+    linesamps = np.stack([lines.ravel(),samps.ravel()],axis=-1)
+    h = heights[0][linesamps[:,0],linesamps[:,1]]
+    x,y = rpcs[0].RPC_LINESAMP2XY(linesamps[:,0],linesamps[:,1],h,'numpy')
+    for rpc in rpcs:
+        tl = np.stack(rpc.RPC_XY2LINESAMP(x,y,h,'numpy'),axis=-1).astype(int)
+        br = tl + [size,size]
+        window = np.stack([tl,br],axis=1).astype(int)
+        res.append(window)
+    return np.stack(res,axis=0) # (img_num,win_num,2,2)
+    
+
+def get_windows(k: int, windows:np.ndarray):
     """
     根据窗口索引 k 获取每个影像的窗口范围。
     Args:
         k (int): 当前窗口的索引，从0开始。
-        num_images (int): 总影像数量。
-        image_shapes (list): 包含每个影像形状 (height, width, channels) 的列表。
+        windows:(img_num,win_num,2,2)
     Returns:
         np.ndarray: 一个 (N, 2, 2) 的numpy数组，N是影像数量。
                     每张影像的 [ [[r1, c1], [r2, c2]], ... ]
@@ -23,43 +43,8 @@ def get_windows(k: int, num_images: int, image_shapes: list):
                     如果某个影像没有对应的窗口，可以返回一个无效的窗口，
                     例如 [[-1,-1],[-1,-1]]，程序会处理这种情况。
     """
-    # ----- 开始: 用户实现区域 (Start: User Implementation Area) -----
-    # 这是一个示例实现，它为每个图像返回一个基于k移动的固定大小窗口
-    # 请你根据你的实际需求替换这部分逻辑
-    print(f"调用: get_windows(k={k}, num_images={num_images})")
-    windows = np.zeros((num_images, 2, 2), dtype=int)
-    window_size = 300 # 假设窗口大小为 300x300
+    return windows[:,k]
 
-    for i in range(num_images):
-        img_h, img_w = image_shapes[i][:2]
-
-        # 简单示例：窗口在影像内平移，你可以设计更复杂的逻辑
-        # 例如，如果k代表的是特定的特征区域，那么这里的逻辑会完全不同
-        offset_r = (k * 100) % max(1, img_h - window_size)
-        offset_c = (k * 100) % max(1, img_w - window_size)
-
-        r1 = offset_r
-        c1 = offset_c
-        r2 = min(img_h, r1 + window_size)
-        c1 = min(img_w, c1 + window_size) #修正笔误 c2->c1
-
-        # 修正：确保 r2 和 c2 的计算正确
-        r2 = min(img_h -1 , r1 + window_size -1)
-        c2 = min(img_w -1, c1 + window_size -1)
-
-
-        if img_h < window_size or img_w < window_size: # 如果影像太小
-            r1, c1 = 0, 0
-            r2, c2 = img_h -1 , img_w -1
-
-
-        windows[i] = [[r1, c1], [r2, c2]]
-        # print(f"  影像 {i} (形状: {img_h}x{img_w}): 窗口 k={k} -> [{r1},{c1}] - [{r2},{c2}]")
-
-    if num_images == 0: # 处理没有影像的情况
-        return np.array([]).reshape(0,2,2)
-
-    return windows
     # ----- 结束: 用户实现区域 (End: User Implementation Area) -----
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 # !! 上述 get_windows 函数需要你来实现
@@ -171,6 +156,8 @@ class TiePointPickerApp:
         self.loaded_images = []
         self.image_shapes = []
         self.point_files = []
+        self.image_rpcs = []
+        self.heights = []
 
         try:
             for p in self.image_paths:
@@ -179,8 +166,15 @@ class TiePointPickerApp:
                     raise ValueError(f"无法读取影像: {p}")
                 self.loaded_images.append(img)
                 self.image_shapes.append(img.shape)
+                rpc = load_rpc(p.replace('png','rpc'))
+                self.image_rpcs.append(rpc)
+                height = np.load(p.replace('.png','_height.npy'),mmap_mode='r')
+                print(height.shape)
+                self.heights.append(height[0])
                 base, ext = os.path.splitext(p)
                 self.point_files.append(f"{base}_points.txt")
+            self.windows = find_windows(self.image_shapes,self.image_rpcs,self.heights,5000,500)
+            print(f"Total Window Num:{self.windows.shape[1]}")
 
         except Exception as e:
             messagebox.showerror("加载错误 (Load Error)", f"加载影像失败 (Failed to load images): {e}")
@@ -223,7 +217,7 @@ class TiePointPickerApp:
             return
         k = self.current_window_k.get()
         try:
-            self.window_coords_for_k = get_windows(k, self.num_images, self.image_shapes)
+            self.window_coords_for_k = get_windows(k, self.windows)
             if self.window_coords_for_k is None or self.window_coords_for_k.shape[0] != self.num_images:
                 messagebox.showerror("窗口错误 (Window Error)", f"get_windows({k}) 返回了无效的数据 (returned invalid data).")
                 # 提供一个默认的空窗口，避免后续崩溃
@@ -283,6 +277,8 @@ class TiePointPickerApp:
         coords = self.window_coords_for_k[image_idx]
         r1, c1 = coords[0]
         r2, c2 = coords[1]
+
+        print(f'tl：({r1},{c1}) \t br: ({r2},{c2})')
 
         if r1 == -1 and c1 == -1 and r2 == -1 and c2 == -1: # get_windows指示此影像无有效窗口
             canvas.create_text(canvas.winfo_width()//2, canvas.winfo_height()//2, text="当前窗口无此影像内容\n(No content for this image\n in current window)", anchor=tk.CENTER, fill="white")

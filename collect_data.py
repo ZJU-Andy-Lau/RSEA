@@ -10,13 +10,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--root',type=str)
     parser.add_argument('--output_path',type=str)
+    parser.add_argument('--file_num',type=int,default=-1)
     args = parser.parse_args()
 
     root = args.root
     output_path = args.output_path
+    file_num = args.file_num
     os.makedirs(output_path,exist_ok=True)
     
     file_paths = os.listdir(root)
+    if file_num > 0:
+        file_paths = file_paths[:file_num]
     pbar = tqdm(total=len(file_paths))
     with h5py.File(os.path.join(output_path,'train_data.h5'),'w') as f:
         for idx,file in enumerate(file_paths):
