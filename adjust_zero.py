@@ -1,8 +1,12 @@
+import os
+import logging
+os.environ['BITSANDBYTES_NOWELCOME'] = '1'
+logging.getLogger("bitsandbytes").setLevel(logging.WARNING)
+logging.getLogger("deepspeed").setLevel(logging.WARNING)
 import warnings
 warnings.filterwarnings("ignore")
 import argparse
 from distutils.util import strtobool
-import os
 from copy import deepcopy
 from rsea import RSEA
 
