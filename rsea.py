@@ -62,6 +62,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             break
         
         task_id,diag,output_path = task_config
+        task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
         os.makedirs(output_path,exist_ok=True)
         encoder = Encoder(cfg_large)
         encoder.load_state_dict(encoder_state_dict)
@@ -219,7 +220,7 @@ class RSEA():
                 task_id = i + 1
                 # print(f"============================== Grid {task_id} ==============================")
                 bar = tqdm(total=1,
-                           desc=f"Grid {task_id} 状态：",
+                           desc=f"Grid {task_id} 状态：等待初始化",
                            position=i * 2 + 1,
                            leave=True)
                 pbars.append(bar)

@@ -58,7 +58,7 @@ class Grid():
         else:
             self.load_grid(grid_path)
         self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()]) #[min_x,min_y,max_x,max_y]
-        print(f"\n Grid range: x: {self.border[0]:.2f} ~ {self.border[2]:.2f} \t y: {self.border[1]:.2f} ~ {self.border[3]:.2f}\n")
+        # print(f"\n Grid range: x: {self.border[0]:.2f} ~ {self.border[2]:.2f} \t y: {self.border[1]:.2f} ~ {self.border[3]:.2f}\n")
         self.output_path = output_path
         self.elements:List[Element] = []
         self.transform = transforms.Compose([

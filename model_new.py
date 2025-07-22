@@ -1,6 +1,7 @@
 import math
 import re
 import os
+from tabnanny import verbose
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -59,7 +60,7 @@ class DistilledVisionTransformer(VisionTransformer):
 
 class Encoder(nn.Module):
 
-    def __init__(self,cfg = {}):
+    def __init__(self,cfg = {},verbose = 1):
         super().__init__()
         default_cfg = {
             'input_channels':3,
@@ -75,6 +76,7 @@ class Encoder(nn.Module):
             'pretrain_window_size':[0,0,0]
         }
         self.cfg = {**default_cfg,**cfg}
+        self.verbose = verbose
         self.SAMPLE_FACTOR = 16
         self.input_channels = self.cfg['input_channels']
         self.patch_feature_channels = self.cfg['patch_feature_channels']
@@ -124,7 +126,8 @@ class Encoder(nn.Module):
             if not module is None:
                 module.requires_grad_(True)
             unfreeze_modules.append(name)
-        print(f"unfreeze modules: {unfreeze_modules}")
+        if self.verbose > 0:
+            print(f"unfreeze modules: {unfreeze_modules}")
 
     def get_unfreeze_parameters(self):
         params = []
@@ -134,7 +137,8 @@ class Encoder(nn.Module):
             module = all_modules.get(name,None)
             if not module is None:
                 params.extend(list(module.parameters()))
-                print(f"Unfreeze: {name}")
+                if self.verbose > 0:
+                    print(f"Unfreeze: {name}")
         return params
 
     def forward(self, x):
