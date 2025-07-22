@@ -174,13 +174,16 @@ class Element():
         start_time = time.perf_counter()
 
         self._log("---Transform input images")
-        imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
+        if self.verbose > 0:
+            imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
+        else:
+            imgs_NHW = torch.stack([self.transform(img) for img in self.crop_imgs_NHW])
         locals_NHW2= torch.from_numpy(self.crop_locals_NHW2)
         self._log("---Downsample locals")
-        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True,mode='avg')
+        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg')
         dems_NHW = torch.from_numpy(self.crop_dems_NHW)
         self._log("---Downsample DEM")
-        dems_Nhw = downsample(dems_NHW,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=True,mode='avg')
+        dems_Nhw = downsample(dems_NHW,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg')
 
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)

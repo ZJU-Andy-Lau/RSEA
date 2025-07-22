@@ -135,7 +135,7 @@ class Grid():
         
         if not task_info is None:
             self.update_task_state(task_info,{
-                'status':"提取特征",
+                'status':f"Grid {task_info['id']}:提取特征",
                 'total':len(self.train_data)
             })
         for idx,data in enumerate(self.train_data):
