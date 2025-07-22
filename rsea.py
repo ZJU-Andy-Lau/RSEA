@@ -80,7 +80,8 @@ class RSEA():
         self.grids:List[Grid] = []
         self.encoder = Encoder(cfg_large)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
-        self.encoder.eval().share_memory_()
+        self.encoder.eval()
+        self.encoder = self.encoder.share_memory()
         self.root = options.root
         self.grid_root = os.path.join(self.root,"grids")
         os.makedirs(self.grid_root,exist_ok=True)
@@ -183,6 +184,8 @@ class RSEA():
 
             for i in range(grid_num):
                 task_id = i + 1
+                print("Encoder:",next(self.grids[i].encoder.parameters()).device)
+                print("Mapper:",next(self.grids[i].mapper.parameters()).device)
                 task_queue.put((task_id,self.grids[i]))
                 task_states[task_id] = {
                     "status":"等待分配GPU",
