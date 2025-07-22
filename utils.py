@@ -291,7 +291,7 @@ def proj2photo(proj_coord:torch.Tensor,dem:torch.Tensor,rpc:RPCModelParameterTor
     photo_coord = torch.stack(rpc.RPC_OBJ2PHOTO(lonlat_coord[:,0],lonlat_coord[:,1],dem),dim=1)
     return photo_coord
 
-def bilinear_interpolate(array, points, use_cuda=False):
+def bilinear_interpolate(array, points, use_cuda=False,device = None):
     """
     在矩阵上进行双线性插值采样，可选择在 CPU (NumPy) 或 GPU (PyTorch) 上运行。
 
@@ -303,7 +303,8 @@ def bilinear_interpolate(array, points, use_cuda=False):
     输出:
     - 插值结果，形状为 (N,) 或 (N, C) 的 numpy 数组。
     """
-    
+    if device is None:
+        device = 'cuda'
     # ----------- GPU (CUDA) 加速路径 -----------
     if use_cuda:
         # 检查 CUDA 是否可用，如果不可用则警告并回退到 CPU
@@ -311,7 +312,7 @@ def bilinear_interpolate(array, points, use_cuda=False):
             print("警告：CUDA 不可用。将回退到 CPU (NumPy) 执行。")
             use_cuda = False
         else:
-            device = torch.device('cuda')
+            device = torch.device(device)
             
             # 确保输入是 PyTorch 张量并移至 GPU
             # 使用 torch.as_tensor 避免不必要的数据拷贝
@@ -419,7 +420,8 @@ def bilinear_interpolate(array, points, use_cuda=False):
 def downsample_average(
     input_tensor: torch.Tensor,
     downsample_factor: int,
-    use_cuda: bool = False
+    use_cuda: bool = False,
+    device = 'cuda'
 ) -> torch.Tensor:
     """
     使用滑动窗口平均值对图像张量进行下采样。
@@ -452,13 +454,15 @@ def downsample_average(
         raise TypeError(f"输入必须是 torch.Tensor，但得到的是 {type(input_tensor)}")
 
     # --- 1. 检查和设置计算设备 (CPU or CUDA) ---
-    device = torch.device("cpu")
     if use_cuda:
         if torch.cuda.is_available():
-            device = torch.device("cuda")
+            device = torch.device(device)
             # print("CUDA is available. Using GPU for acceleration.")
         else:
+            device = torch.device('cpu')
             print("警告: 请求使用 CUDA，但 CUDA 不可用。将回退到 CPU。")
+    else:
+        device = torch.device('cpu')
 
     # 将输入张量移动到目标设备
     input_tensor = input_tensor.to(device)
@@ -499,7 +503,7 @@ def downsample_average(
 
     return output_tensor.cpu()
 
-def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False,mode='mid'):
+def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False,mode='mid',device = None):
     """
     mode: mid or avg
     """
@@ -510,6 +514,8 @@ def downsample(arr:torch.Tensor,ds,use_cuda=False,show_detail=False,mode='mid'):
     arr_ds = []
     if show_detail:
         pbar = tqdm(total = len(arr))
+    if device is None:
+        device = 'cuda'
     for a in arr:
         if mode == 'mid':
             if len(a.shape) < 3:
