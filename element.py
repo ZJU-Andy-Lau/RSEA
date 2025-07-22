@@ -23,6 +23,7 @@ import rasterio
 from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 from torchvision import transforms
+import kornia.augmentation as K
 from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
@@ -33,6 +34,10 @@ class Element():
         self.options = options
         self.id = id
         self.verbose = verbose
+        if device is None:
+            self.device = 'cuda'
+        else:
+            self.device = device
         self.img_raw = img_raw # cv2.imread(options.img_path,cv2.IMREAD_GRAYSCALE)
         self._log(img_raw.shape,dem.shape,local_raw.shape)
         cv2.imwrite(os.path.join(output_path,f'img_{id}.png'),img_raw)
@@ -49,22 +54,33 @@ class Element():
         self.dem = dem
         self.rpc = rpc
         self.H,self.W = self.img_raw.shape[:2]
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            # transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
-            # transforms.RandomInvert(p=.3),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-            ])
+        # self.transform = transforms.Compose([
+        #     transforms.ToTensor(),
+        #     transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
+        #     transforms.RandomInvert(p=.3),
+        #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        #     ])
+        self.transform = nn.Sequential(
+            K.ColorJitter(
+                brightness=0.4,
+                contrast=0.4,
+                saturation=0.4,
+                hue=0.4,
+                p=0.7
+            ),
+            K.RandomInvert(p=0.3),
+            K.Normalize(
+                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                std=torch.tensor([0.229, 0.224, 0.225])
+            )
+        )
         # self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(options.encoder_path)).items()})
         self.encoder = encoder
         self.encoder.eval()
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         self.use_gpu = options.use_gpu
         self.output_path = output_path
-        if device is None:
-            self.device = 'cuda'
-        else:
-            self.device = device
+        
         
         if self.use_gpu:
             self.rpc.to_gpu(self.device)
@@ -76,8 +92,8 @@ class Element():
         else:
             crop_step = int(np.sqrt((self.H - options.crop_size) * (self.W - options.crop_size) / 150.))
 
-        self.crop_imgs_NHW,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size,crop_step)
-        self.crop_img_num = len(self.crop_imgs_NHW)
+        self.crop_imgs_NHWC,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size,crop_step)
+        self.crop_img_num = len(self.crop_imgs_NHWC)
         self.SAMPLE_FACTOR = self.encoder.SAMPLE_FACTOR
         self.buffer,self.kd_tree = self.__extract_features__()
         self.map_coeffs = self.__calculate_map_coeffs__()
@@ -174,10 +190,17 @@ class Element():
         start_time = time.perf_counter()
 
         self._log("---Transform input images")
-        if self.verbose > 0:
-            imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
-        else:
-            imgs_NHW = torch.stack([self.transform(img) for img in self.crop_imgs_NHW])
+        # if self.verbose > 0:
+        #     imgs_NHW = torch.stack([self.transform(img) for img in tqdm(self.crop_imgs_NHW)]) # N,H,W
+        # else:
+        #     imgs_NHW = torch.stack([self.transform(img) for img in self.crop_imgs_NHW])
+        imgs_NCHW = torch.from_numpy(self.crop_imgs_NHWC).permute(0,3,1,2)
+        imgs_NCHW = imgs_NCHW.float() / 255.0
+        imgs_NCHW = imgs_NCHW.to(self.device)
+        self.transform = self.transform.to(self.device)
+        with torch.no_grad():
+            imgs_NCHW = self.transform(imgs_NCHW)
+
         locals_NHW2= torch.from_numpy(self.crop_locals_NHW2)
         self._log("---Downsample locals")
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg')
@@ -208,7 +231,7 @@ class Element():
         if self.verbose > 0:
             pbar = tqdm(total=batch_num)
         for batch_idx in range(batch_num):
-            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             batch_dems = dems_Nhw[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
 
