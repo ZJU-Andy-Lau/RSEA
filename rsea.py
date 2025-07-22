@@ -64,7 +64,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
         task_id,diag,output_path = task_config
         task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
         os.makedirs(output_path,exist_ok=True)
-        encoder = Encoder(cfg_large)
+        encoder = Encoder(cfg_large,verbose=0)
         encoder.load_state_dict(encoder_state_dict)
         grid = Grid(options = options,
                     encoder = encoder,
@@ -90,10 +90,9 @@ class RSEA():
         random.seed(42)
         self.imgs:List[RSImage] = []
         self.grids:List[Grid] = []
-        self.encoder = Encoder(cfg_large)
+        self.encoder = Encoder(cfg_large,verbose=0)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
-        self.encoder = self.encoder.share_memory()
         self.root = options.root
         self.grid_root = os.path.join(self.root,"grids")
         os.makedirs(self.grid_root,exist_ok=True)
@@ -215,6 +214,9 @@ class RSEA():
             for _ in range(world_size):
                 task_queue.put(None)
             
+            process_start_bar = tqdm(total=world_size,
+                                     desc = "创建进程：")
+
             pbars = []
             for i in range(grid_num):
                 task_id = i + 1
@@ -230,6 +232,7 @@ class RSEA():
                 p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
                 p.start()
                 processes.append(p)
+                process_start_bar.update(1)
 
             acitive_workers = world_size
             while acitive_workers > 0:
