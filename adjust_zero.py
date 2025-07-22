@@ -1,8 +1,7 @@
 import os
 import logging
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
-logging.getLogger("bitsandbytes").setLevel(logging.WARNING)
-logging.getLogger("deepspeed").setLevel(logging.WARNING)
+logging.basicConfig(level=logging.ERROR)
 import warnings
 warnings.filterwarnings("ignore")
 import argparse

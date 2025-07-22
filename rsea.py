@@ -1,3 +1,7 @@
+import os
+import logging
+os.environ['BITSANDBYTES_NOWELCOME'] = '1'
+logging.basicConfig(level=logging.ERROR)
 import time
 from turtle import pos
 import warnings
@@ -9,7 +13,6 @@ import torch.multiprocessing as mp
 import numpy as np
 import pandas as pd
 from model_new import Encoder,AffineFitter
-import os
 import cv2
 from utils import mercator2lonlat
 import queue
