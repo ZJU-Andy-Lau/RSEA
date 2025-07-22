@@ -51,7 +51,7 @@ cfg_large = {
         'unfreeze_backbone_modules':[]
     }
 
-def train_grid_worker(rank:int, task_queue, task_state):
+def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs, options):
     device = torch.device(f'cuda:{rank}')
     while True:
         try:
@@ -61,7 +61,16 @@ def train_grid_worker(rank:int, task_queue, task_state):
         except queue.Empty:
             break
         
-        task_id,grid = task_config
+        task_id,diag,output_path = task_config
+        os.makedirs(output_path,exist_ok=True)
+        encoder = Encoder(cfg_large)
+        encoder.load_state_dict(encoder_state_dict)
+        grid = Grid(options = options,
+                    encoder = encoder,
+                    diag = diag,
+                    output_path = output_path,
+                    device = device
+                    )
         grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id})
@@ -150,33 +159,33 @@ class RSEA():
         
         print(f"{len(grid_diags)} grids is going to be created")
 
-        for grid_idx,diag in enumerate(grid_diags):
-            print(f"Creating grid {grid_idx}")
-            grid_output_path = os.path.join(self.grid_root,f"grid_{grid_idx}")
-            os.makedirs(grid_output_path,exist_ok=True)
+        # for grid_idx,diag in enumerate(grid_diags):
+        #     print(f"Creating grid {grid_idx}")
+        #     grid_output_path = os.path.join(self.grid_root,f"grid_{grid_idx}")
+        #     os.makedirs(grid_output_path,exist_ok=True)
 
-            new_grid = Grid(options = self.options,
-                            encoder = self.encoder,
-                            diag = diag,
-                            output_path = grid_output_path)
+        #     new_grid = Grid(options = self.options,
+        #                     encoder = self.encoder,
+        #                     diag = diag,
+        #                     output_path = grid_output_path)
 
-            for img_idx,image in enumerate(self.imgs):
-                new_grid.add_img(img = image,
-                                #  output_path = new_grid.output_path,
-                                 )
-            new_grid.to_device('cpu')
-            # new_grid.valid_features()
-            # new_grid.train_elements()
-            # new_grid.valid_mappers()
-            # new_grid.adjust_elements()
-            self.grids.append(new_grid)
-            # new_grid.train_mapper()
-            # if grid_idx + 1 >= 12:
-            #     break
+        #     for img_idx,image in enumerate(self.imgs):
+        #         new_grid.add_img(img = image,
+        #                         #  output_path = new_grid.output_path,
+        #                          )
+        #     new_grid.to_device('cpu')
+        #     # new_grid.valid_features()
+        #     # new_grid.train_elements()
+        #     # new_grid.valid_mappers()
+        #     # new_grid.adjust_elements()
+        #     self.grids.append(new_grid)
+        #     # new_grid.train_mapper()
+        #     # if grid_idx + 1 >= 12:
+        #     #     break
         try:
             mp.set_start_method("spawn", force=True)
             gpu_num = torch.cuda.device_count()
-            grid_num = len(self.grids)
+            grid_num = len(grid_diags)
             world_size = min(gpu_num,grid_num)
             manager = mp.Manager()
             task_queue = manager.Queue()
@@ -184,9 +193,7 @@ class RSEA():
 
             for i in range(grid_num):
                 task_id = i + 1
-                print("Encoder:",next(self.grids[i].encoder.parameters()).device)
-                print("Mapper:",next(self.grids[i].mapper.parameters()).device)
-                task_queue.put((task_id,self.grids[i]))
+                task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}"),self.options))
                 task_states[task_id] = {
                     "status":"等待分配GPU",
                     "progress":0,
@@ -217,7 +224,7 @@ class RSEA():
             
             processes = []
             for rank in range(world_size):
-                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states))
+                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs))
                 p.start()
                 processes.append(p)
 
