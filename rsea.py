@@ -62,6 +62,7 @@ def train_grid_worker(rank:int, task_queue, task_state):
             break
         
         task_id,grid = task_config
+        grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id})
 
@@ -79,7 +80,7 @@ class RSEA():
         self.grids:List[Grid] = []
         self.encoder = Encoder(cfg_large)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
-        self.encoder.eval()
+        self.encoder.eval().share_memory_()
         self.root = options.root
         self.grid_root = os.path.join(self.root,"grids")
         os.makedirs(self.grid_root,exist_ok=True)
