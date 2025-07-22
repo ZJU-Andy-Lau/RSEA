@@ -71,6 +71,9 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
                     output_path = output_path,
                     device = device
                     )
+        for img in imgs:
+            grid.add_img(img = img,
+                         output_path = output_path)
         grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id})
@@ -193,7 +196,7 @@ class RSEA():
 
             for i in range(grid_num):
                 task_id = i + 1
-                task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}"),self.options))
+                task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
                 task_states[task_id] = {
                     "status":"等待分配GPU",
                     "progress":0,
@@ -224,7 +227,7 @@ class RSEA():
             
             processes = []
             for rank in range(world_size):
-                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs))
+                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
                 p.start()
                 processes.append(p)
 
