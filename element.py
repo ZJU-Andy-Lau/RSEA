@@ -205,8 +205,9 @@ class Element():
         
         
 
-
-        for batch_idx in trange(batch_num):
+        if self.verbose > 0:
+            pbar = tqdm(total=batch_num)
+        for batch_idx in range(batch_num):
             batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             batch_dems = dems_Nhw[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
@@ -223,6 +224,8 @@ class Element():
             confs_P1.append(conf[valid_mask][select_idxs])
             locals_P2.append(batch_locals[valid_mask][select_idxs])
             dems_P1.append(batch_dems[valid_mask][select_idxs])
+            if self.verbose > 0:
+                pbar.update(1)
 
 
         features_PD = torch.cat(features_PD,dim=0)
