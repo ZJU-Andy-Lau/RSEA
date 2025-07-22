@@ -1,6 +1,5 @@
 from enum import Enum
 import warnings
-
 warnings.filterwarnings('ignore')
 import argparse
 import torch
@@ -283,6 +282,7 @@ class Grid():
                                                         dim=0)
                     dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=4)
                     valid_mask = dists.max(dim=1).values < 256
+                    print(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     dists = 1. / (dists[valid_mask] + 1e-6)
                     idxs = idxs[valid_mask]
                     dists = dists / torch.mean(dists,dim=-1,keepdim=True)
