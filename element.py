@@ -244,7 +244,7 @@ class Element():
         }
         self.patch_num = len(features_PD)
 
-        kd_tree = build_kd_tree(locals_P2,device='cuda')
+        kd_tree = build_kd_tree(locals_P2,device=self.device)
 
         self._log(f"Extract features done in {time.perf_counter() - start_time} seconds \t {self.patch_num} patches in total")
         
