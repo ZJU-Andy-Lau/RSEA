@@ -162,6 +162,7 @@ class RSEA():
                 new_grid.add_img(img = image,
                                 #  output_path = new_grid.output_path,
                                  )
+            new_grid.to_device('cpu')
             # new_grid.valid_features()
             # new_grid.train_elements()
             # new_grid.valid_mappers()
