@@ -261,7 +261,7 @@ class Grid():
         # pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
         if not task_info is None:
             self.update_task_state(task_info,{
-                'status':"Decoder训练",
+                'status':f"Grid {task_info['id']}:Decoder训练",
                 'total':self.options.grid_training_iters * len(self.elements)
             })
         progress = 0
@@ -441,7 +441,7 @@ class Grid():
         self.elements = None
         if not task_info is None:
             self.update_task_state(task_info,{
-                'status':"训练完成"
+                'status':f"Grid {task_info['id']}:训练完成"
             })
 
     def save_grid(self):

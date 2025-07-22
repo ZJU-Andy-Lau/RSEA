@@ -72,8 +72,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
                     device = device
                     )
         for img in imgs:
-            grid.add_img(img = img,
-                         output_path = output_path)
+            grid.add_img(img = img)
         grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id})
@@ -198,7 +197,7 @@ class RSEA():
                 task_id = i + 1
                 task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
                 task_states[task_id] = {
-                    "status":"等待分配GPU",
+                    "status":f"Grid {task_id}:等待分配GPU",
                     "progress":0,
                     "total":1,
                     "info":{
@@ -218,7 +217,7 @@ class RSEA():
             pbars = []
             for i in range(grid_num):
                 task_id = i + 1
-                print(f"============================== Grid {task_id} ==============================")
+                # print(f"============================== Grid {task_id} ==============================")
                 bar = tqdm(total=1,
                            desc=f"Grid {task_id} 状态：",
                            position=i * 2 + 1,
