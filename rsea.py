@@ -236,6 +236,15 @@ class RSEA():
                 p.start()
                 processes.append(p)
                 process_start_bar.update(1)
+                for i in range(grid_num):
+                    task_id = i + 1
+                    state = task_states[task_id]
+                    bar = pbars[i]
+                    bar.set_description(f"{state['status']}")
+                    bar.total = state['total']
+                    bar.n = state['progress']
+                    bar.set_postfix(state['info'])
+                    bar.refresh() 
 
             acitive_workers = world_size
             while acitive_workers > 0:

@@ -199,7 +199,9 @@ class Element():
         imgs_NCHW = imgs_NCHW.to(self.device)
         self.transform = self.transform.to(self.device)
         with torch.no_grad():
-            imgs_NCHW = self.transform(imgs_NCHW)
+            batch_num = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
+            imgs_NCHW = [self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size]) for b in range(batch_num)]
+            imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
 
         locals_NHW2= torch.from_numpy(self.crop_locals_NHW2)
         self._log("---Downsample locals")
