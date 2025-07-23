@@ -428,8 +428,8 @@ class Grid():
 
             if early_stop_iter > 0 and iter_idx >= early_stop_iter:
                 break
-        if early_stop_iter > 0:
-            print("early stopped")
+        # if early_stop_iter > 0:
+        #     print("early stopped")
         self.mapper.load_state_dict(best_mapper_state_dict['model'])
         if min_photo_loss < 15.:
             self.status = self.STATES.WELL_TRAINED

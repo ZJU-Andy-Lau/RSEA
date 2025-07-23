@@ -277,8 +277,8 @@ class RSEA():
             #             join=True)
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
-                
-        print(f"{len(self.grids)} grids created")
+        
+        print(f"======================================All Grids created successfully, {len(self.grids)} grids created in total======================================\n\n\n\n\n\n\n\n\n\n")
     
     def __overlap__(self,tl1:np.ndarray,tl2:np.ndarray,br1:np.ndarray,br2:np.ndarray):
         """
