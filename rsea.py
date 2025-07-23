@@ -251,9 +251,10 @@ class RSEA():
                 BarColumn(bar_width=None),
                 "[progress.percentage]{task.percentage:>3.1f}%",
                 "•",
-                TextColumn("[bold yellow]{task.fields[metrics]}")
+                TextColumn("[bold yellow]{task.fields[metrics]}"),
+                expand=True
             )
-            task_progress_ids = [progress.add_task(f"{i+1}", total=1) for i in range(grid_num)]
+            task_progress_ids = [progress.add_task(f"{i+1}", total=1, metrics = "") for i in range(grid_num)]
             progress_table = Table.grid(expand=True)
             progress_table.add_row(progress)
 
@@ -274,6 +275,7 @@ class RSEA():
                             task_id=task_progress_ids[i],
                             completed=state['progress'],
                             total=state['total'],
+                            description=state['status'],
                             metrics=dict2str(state['info'])                            
                         )
                         # bar = pbars[i]
