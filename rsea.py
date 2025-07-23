@@ -241,7 +241,7 @@ class RSEA():
             #     pbars.append(bar)
 
             processes = []
-            for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
+            for rank in tqdm(range(world_size),desc="正在启动进程"):
                 p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
                 p.start()
                 processes.append(p)
