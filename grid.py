@@ -24,6 +24,7 @@ import rasterio
 from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 from torchvision import transforms
+import kornia.augmentation as K
 from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
@@ -60,10 +61,16 @@ class Grid():
         # print(f"\n Grid range: x: {self.border[0]:.2f} ~ {self.border[2]:.2f} \t y: {self.border[1]:.2f} ~ {self.border[3]:.2f}\n")
         self.output_path = output_path
         self.elements:List[Element] = []
-        self.transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-            ])
+        # self.transform = transforms.Compose([
+        #     transforms.ToTensor(),
+        #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+        #     ])
+        self.transform = nn.Sequential(
+            K.Normalize(
+                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                std=torch.tensor([0.229, 0.224, 0.225])
+            )
+        )
         self.train_data = []
         self.SAMPLE_FACTOR = 16
         self.pred_resolution = .7
@@ -233,6 +240,7 @@ class Grid():
                                         cooldown = 0.0
                                         )
         criterion = CriterionTrainGrid()
+        bce = nn.BCELoss()
         self.mapper.train()
         if self.options.use_gpu:
             self.mapper.to(self.device)
@@ -280,7 +288,7 @@ class Grid():
                                                         torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
                                                         torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
-                    dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=4)
+                    dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     valid_mask = dists.max(dim=1).values < 256
                     # print(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     # break
@@ -312,16 +320,35 @@ class Grid():
                 objs_p3 = objs_p3[inside_border_mask]
                 locals_p2 = locals_p2[inside_border_mask]
 
+                patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
                 features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
-            
+
                 # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
                 # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
                 
-                output_16p1 = self.mapper(features_1Dp1)
+                #===================生成负样本特征=====================
+
+                negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
+                negative_features = element.buffer['features'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,D
+                negative_locals = element.buffer['locals'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,2
+                negative_avg_feature = torch.mean(negative_features,dim=1) # p,D
+                negative_avg_local = torch.mean(negative_locals,dim=1) # p,2
+                dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
+                negative_noise_amp =  100. / dis
+                negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape),dim=1) # p,D
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
+
+                #=====================================================
+
+
+                output_16p1,valid_score_positive = self.mapper(features_1Dp1)
+                _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
+                
                 output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
                 log_sigma_xyh_p3 = output_p6[:,3:]
@@ -334,6 +361,12 @@ class Grid():
                                                                                                       locals_p2,
                                                                                                       objs_p3,
                                                                                                       element.rpc)
+                
+                valid_pred = torch.concatenate([valid_score_positive,valid_score_nagetive],dim=0)
+                valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0) # positive,negative
+                loss_valid = bce(valid_pred,valid_label) * 100.
+
+                loss = loss + loss_valid
                 loss.backward()
 
                 total_loss += loss.item()
@@ -367,6 +400,7 @@ class Grid():
                             'photo':f'{loss_photo.item():.2f}',
                             'h':f'{loss_height.item():.2f}',
                             'reg':f'{loss_reg:.2f}',
+                            'v':f'{loss_valid:.2f}',
                             'min':f'{min_photo_loss:.2f}'
                         }
                     })
@@ -560,22 +594,29 @@ class Grid():
             crop_step = self.options.crop_step
         else:
             crop_step = int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 150.))
-        crop_imgs_NHW,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step,local=local_hw2)
+        crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step,local=local_hw2)
         print("Tranforming Images")
-        imgs_NHW = torch.stack([self.transform(img) for img in tqdm(crop_imgs_NHW)]) # N,H,W
+        imgs_NCHW = torch.from_numpy(crop_imgs_NHWC).permute(0,3,1,2)
+        imgs_NCHW = imgs_NCHW.float() / 255.0
+        imgs_NCHW = imgs_NCHW.to(self.device)
+        self.transform = self.transform.to(self.device)
+        with torch.no_grad():
+            batch_num = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
+            imgs_NCHW = [self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size]) for b in range(batch_num)]
+            imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
-        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,mode='avg')
+        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg',device=self.device)
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
 
-        batch_num = int(np.ceil(len(crop_imgs_NHW) / self.options.batch_size))
+        batch_num = int(np.ceil(len(crop_imgs_NHWC) / self.options.batch_size))
         features_PD = []
         confs_P1 = []
         locals_P2 = []
 
         print("Extracting Features")
         for batch_idx in trange(batch_num):
-            batch_imgs = imgs_NHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_imgs = imgs_NHWC[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
             # features_NDhw.append(feat)
@@ -598,18 +639,20 @@ class Grid():
         print("Predicting Geographic Coordinates")
         mu_xyh_preds = []
         sigma_xyh_preds = []
+        valid_scores = []
         for batch_idx in trange(batch_num):
             features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]
-            output_16p1 = self.mapper(features_1Dp1)
+            output_16p1,valid_score = self.mapper(features_1Dp1)
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)
+            valid_scores.append(valid_score)
         
         mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
         sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
-
+        valid_scores_P1 = torch.concatenate(valid_scores,dim=0)
         # kd_tree = build_kd_tree(locals_P2,device='cuda')
 
         # yxh_preds = []
@@ -666,10 +709,11 @@ class Grid():
             'sigma_xyh_P3':sigma_xyh_P3,
             'locals_P2':locals_P2,
             'confs_P1':confs_P1,
+            'valid_score_P1':valid_scores_P1
         }
-        crop_imgs_NHW = None
+        crop_imgs_NHWC = None
         crop_locals_NHW2 = None
-        imgs_NHW = None
+        imgs_NHWC = None
 
         return res
     

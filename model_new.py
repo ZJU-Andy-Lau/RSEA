@@ -245,6 +245,12 @@ class Decoder(nn.Module):
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,2,1,1,0)
         )
+        self.score_head = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,1,1,1,0),
+            nn.Sigmoid()
+        )
         # self.bn = bnac(in_channels)
 
 
@@ -257,12 +263,13 @@ class Decoder(nn.Module):
             res = res + x
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
+        valid_score = self.score_head(res)
         mu_xy = F.tanh(xy_res[:,:2])
         log_sigma_xy = F.tanh(xy_res[:,2:]) * 10.
         mu_h = F.tanh(height_res[:,:1])
         log_sigma_h = F.tanh(height_res[:,1:]) * 10.
 
-        return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
+        return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1),valid_score
 
 
 class AffineFitter:

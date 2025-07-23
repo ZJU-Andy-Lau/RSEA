@@ -290,19 +290,24 @@ class RSEA():
         br = np.array([min(br1[0],br2[0]),max(br1[1],br2[1])])
         return np.stack([tl,br],axis=0)
 
-    def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,confs:torch.Tensor) -> torch.Tensor:
+    def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,valid_scores:torch.Tensor) -> torch.Tensor:
 
-        print(f"confs: {confs.min()} \t {confs.max()} \t {confs.mean()} \t {confs.median()}")
+        print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"avg_sigma:{avg_sigma.item()}")
 
+        valid_mask = valid_scores > .5
+        src = src[valid_mask]
+        tgt_mu = tgt_mu[valid_mask]
+        tgt_sigma = tgt_sigma[valid_mask]
+
         fitter = AffineFitter(learning_rate=0.0001, num_iterations=-1)
-        total_num = len(confs)
-        conf_valid_idx = confs > self.options.conf_threshold
+        total_num = len(valid_scores)
+        conf_valid_idx = valid_scores > self.options.conf_threshold
         src = src[conf_valid_idx]
         tgt_mu = tgt_mu[conf_valid_idx]
         tgt_sigma = tgt_sigma[conf_valid_idx]
-        confs = confs[conf_valid_idx]
+        valid_scores = valid_scores[conf_valid_idx]
         print(f"conf filter :{conf_valid_idx.sum()}/{total_num}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
@@ -336,7 +341,7 @@ class RSEA():
             all_src = []
             all_tgt_mu = []
             all_tgt_sigma = []
-            all_confs = []
+            all_valid_scores = []
             for grid_idx,grid in enumerate(self.grids):
                 print(f"processing grid {grid_idx}")
                 overlap_diag = self.__overlap__(grid.diag[0],image.corner_xys[0],grid.diag[1],image.corner_xys[3])
@@ -351,17 +356,18 @@ class RSEA():
                 mu_linesamp,sigma_linesamp = image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
                 local_linesamp = pred_res['locals_P2']
                 conf = pred_res['confs_P1']
+                valid_score = pred_res['valid_score_P1']
 
                 all_src.append(local_linesamp)
                 all_tgt_mu.append(mu_linesamp)
                 all_tgt_sigma.append(sigma_linesamp)
-                all_confs.append(conf)
+                all_valid_scores.append(valid_score)
             all_src = torch.concatenate(all_src,dim=0).detach()
             all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0).detach()
             all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0).detach()
-            all_confs = torch.concatenate(all_confs,dim=0).detach()
+            all_valid_scores = torch.concatenate(all_valid_scores,dim=0).detach()
 
-            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_confs)
+            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_valid_scores)
             image.rpc.Update_Adjust(transform)
             print(image.rpc.adjust_params.cpu().numpy())
 
