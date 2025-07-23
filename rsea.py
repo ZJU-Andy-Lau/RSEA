@@ -1,5 +1,7 @@
 import os
 import logging
+
+from sklearn import metrics
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 logging.basicConfig(level=logging.ERROR)
 import time
@@ -18,6 +20,9 @@ from utils import mercator2lonlat
 import queue
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
+from rich.live import Live
+from rich.table import Table
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, track
 import torch.nn.functional as F
 from orthorectify import orthorectify_image
 from torch_kdtree import build_kd_tree
@@ -81,7 +86,14 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id})
 
-
+def dict2str(dict):
+    output = ""
+    keys = dict.keys()
+    if len(keys) == 0:
+        return output
+    for key in keys:
+        output += f"{key}={dict[key]},"
+    return output[:-1]
 
 class RSEA():
     def __init__(self,options):
@@ -217,57 +229,65 @@ class RSEA():
             for _ in range(world_size):
                 task_queue.put(None)
             
-            process_start_bar = tqdm(total=world_size,
-                                     desc = "创建进程：")
 
-            pbars = []
-            for i in range(grid_num):
-                task_id = i + 1
-                # print(f"============================== Grid {task_id} ==============================")
-                bar = tqdm(total=1,
-                           desc=f"Grid {task_id} 状态：等待初始化",
-                           position=i * 2 + 1,
-                           leave=True)
-                pbars.append(bar)
-            
+            # pbars = []
+            # for i in range(grid_num):
+            #     task_id = i + 1
+            #     # print(f"============================== Grid {task_id} ==============================")
+            #     bar = tqdm(total=1,
+            #                desc=f"Grid {task_id} 状态：等待初始化",
+            #                position=i * 2 + 1,
+            #                leave=True)
+            #     pbars.append(bar)
+
             processes = []
-            for rank in range(world_size):
+            for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
                 p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
                 p.start()
                 processes.append(p)
-                process_start_bar.update(1)
-                for i in range(grid_num):
-                    task_id = i + 1
-                    state = task_states[task_id]
-                    bar = pbars[i]
-                    bar.set_description(f"{state['status']}")
-                    bar.total = state['total']
-                    bar.n = state['progress']
-                    bar.set_postfix(state['info'])
-                    bar.refresh() 
 
-            acitive_workers = world_size
-            while acitive_workers > 0:
-                acitive_workers = 0
+            progress = Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                "[progress.percentage]{task.percentage:>3.1f}%",
+                "•",
+                TextColumn("[bold yellow]{task.fields[metrics]}")
+            )
+            task_progress_ids = [progress.add_task(f"{i+1}", total=1) for i in range(grid_num)]
+            progress_table = Table.grid(expand=True)
+            progress_table.add_row(progress)
+
+            
+
+            with Live(progress_table, refresh_per_second=10, screen=True) as live:
+                acitive_workers = world_size
+                while acitive_workers > 0:
+                    acitive_workers = 0
+                    for p in processes:
+                        if p.is_alive():
+                            acitive_workers += 1
+                    
+                    for i in range(grid_num):
+                        task_id = i + 1
+                        state = task_states[task_id]
+                        progress.update(
+                            task_id=task_progress_ids[i],
+                            completed=state['progress'],
+                            total=state['total'],
+                            metrics=dict2str(state['info'])                            
+                        )
+                        # bar = pbars[i]
+                        # bar.set_description(f"{state['status']}")
+                        # bar.total = state['total']
+                        # bar.n = state['progress']
+                        # bar.set_postfix(state['info'])
+                        # bar.refresh() 
+                    time.sleep(0.1) 
+
+            # for bar in pbars:
+            #     bar.close()
                 for p in processes:
-                    if p.is_alive():
-                        acitive_workers += 1
-                
-                for i in range(grid_num):
-                    task_id = i + 1
-                    state = task_states[task_id]
-                    bar = pbars[i]
-                    bar.set_description(f"{state['status']}")
-                    bar.total = state['total']
-                    bar.n = state['progress']
-                    bar.set_postfix(state['info'])
-                    bar.refresh() 
-                time.sleep(0.1)
-
-            for bar in pbars:
-                bar.close()
-            for p in processes:
-                p.join()                   
+                    p.join()                   
             # round_num = int(np.ceil(grid_num / world_size))
             # for round_idx in range(round_num):
             #     grids_to_train = self.grids[round_idx * world_size : (round_idx + 1) * world_size]
