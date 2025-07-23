@@ -339,7 +339,7 @@ class Grid():
                 negative_avg_local = torch.mean(negative_locals,dim=1) # p,2
                 dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
                 negative_noise_amp =  100. / dis
-                negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape),dim=1) # p,D
+                negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
                 negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
