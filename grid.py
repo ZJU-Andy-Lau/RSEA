@@ -362,7 +362,7 @@ class Grid():
                                                                                                       objs_p3,
                                                                                                       element.rpc)
                 
-                valid_pred = torch.concatenate([valid_score_positive,valid_score_nagetive],dim=0)
+                valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0) # positive,negative
                 loss_valid = bce(valid_pred,valid_label) * 100.
 
