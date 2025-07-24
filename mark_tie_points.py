@@ -54,8 +54,9 @@ class ImageViewer(tk.Canvas):
     """
     一个支持平移和缩放图像的高级画布。
     """
-    def __init__(self, master, **kwargs):
+    def __init__(self, master, app_controller=None, **kwargs):
         super().__init__(master, **kwargs)
+        self.app = app_controller # 保存主应用的引用
         self.image_tk = None
         self.pil_image = None
         self.scale = 1.0
@@ -79,6 +80,7 @@ class ImageViewer(tk.Canvas):
     def _fit_to_screen(self):
         """计算缩放比例和位置以使图像适应画布。"""
         if not self.pil_image:
+            self._redraw()
             return
         
         canvas_w = self.winfo_width()
@@ -104,24 +106,27 @@ class ImageViewer(tk.Canvas):
 
         canvas_w = self.winfo_width()
         canvas_h = self.winfo_height()
-
-        # 计算要显示的图像部分
-        box_x1 = int(self.view_x)
-        box_y1 = int(self.view_y)
-        box_x2 = int(self.view_x + canvas_w / self.scale)
-        box_y2 = int(self.view_y + canvas_h / self.scale)
-
-        # 将图像裁剪到视图
-        disp_img = self.pil_image.crop((box_x1, box_y1, box_x2, box_y2))
         
-        # 调整大小以适应画布
-        resized_w = int((box_x2 - box_x1) * self.scale)
-        resized_h = int((box_y2 - box_y1) * self.scale)
+        if canvas_w <= 0 or canvas_h <= 0:
+            return
+
+        # BUG修复: 使用仿射变换进行高精度重绘，消除抖动
+        # 计算从画布坐标到源图像坐标的变换矩阵
+        # x_src = (1/scale) * x_canvas + view_x
+        # y_src = (1/scale) * y_canvas + view_y
+        transform_matrix = (1/self.scale, 0, self.view_x, 0, 1/self.scale, self.view_y)
+
+        # 使用仿射变换生成精确的视图
+        # Image.BICUBIC 提供了较好的重采样质量
+        disp_img = self.pil_image.transform(
+            (canvas_w, canvas_h),
+            Image.AFFINE,
+            transform_matrix,
+            Image.BICUBIC  # 使用双三次插值以获得更好的视觉效果
+        )
         
-        if resized_w > 0 and resized_h > 0:
-            disp_img = disp_img.resize((resized_w, resized_h), Image.LANCZOS)
-            self.image_tk = ImageTk.PhotoImage(disp_img)
-            self.create_image(0, 0, anchor=tk.NW, image=self.image_tk, tags="image")
+        self.image_tk = ImageTk.PhotoImage(disp_img)
+        self.create_image(0, 0, anchor=tk.NW, image=self.image_tk, tags="image")
 
     def _on_right_press(self, event):
         """处理右键拖动的开始事件。"""
@@ -137,10 +142,12 @@ class ImageViewer(tk.Canvas):
         self._drag_data["x"] = event.x
         self._drag_data["y"] = event.y
         self._redraw()
-        self.master.master.master._redraw_all_points() # 触发主程序重绘所有点
+        if self.app:
+            self.app._redraw_all_points()
 
     def _on_mouse_wheel(self, event):
         """处理鼠标滚轮滚动以缩放图像。"""
+        if not self.pil_image: return
         # 缩放前获取鼠标指针下的图像坐标
         img_x, img_y = self.canvas_to_image_coords(event.x, event.y)
 
@@ -157,12 +164,14 @@ class ImageViewer(tk.Canvas):
         self.view_y = img_y - event.y / self.scale
         
         self._redraw()
-        self.master.master.master._redraw_all_points() # 触发主程序重绘所有点
+        if self.app:
+            self.app._redraw_all_points()
 
     def _on_resize(self, event):
         """处理画布尺寸调整事件。"""
-        self._redraw()
-        self.master.master.master._redraw_all_points()
+        self._fit_to_screen()
+        if self.app:
+            self.app._redraw_all_points()
 
     def canvas_to_image_coords(self, canvas_x, canvas_y):
         """将画布坐标转换为原始图像坐标。"""
@@ -184,6 +193,7 @@ class TiePointPickerApp:
 
         # --- 数据存储 ---
         self.image_paths = []
+        self.full_loaded_images = [] # BUG修复1: 缓存加载后的完整影像
         self.loaded_image_patches = {} # {影像索引: PIL 图像}
         self.patch_origin_coords = {} # {影像索引: (r1, c1)}
         self.image_shapes = []
@@ -194,9 +204,9 @@ class TiePointPickerApp:
         self.point_files = []
         
         # --- 刺点数据 ---
-        self.saved_points: List[List[Tuple[int, int]]] = [] # 存储从文件加载的点
-        self.current_group_points: List[Optional[Tuple[int, int]]] = [] # 存储当前正在标记的组的点
-        self.selected_point_info: Optional[Dict] = None # 有关当前选定点以进行微调的信息
+        self.saved_points: List[List[Tuple[float, float]]] = []
+        self.current_group_points: List[Optional[Tuple[float, float]]] = []
+        self.selected_point_info: Optional[Dict] = None
         self.tie_point_group_counter = 1
         
         # --- UI 状态 ---
@@ -234,7 +244,8 @@ class TiePointPickerApp:
         self.img_left_label = ttk.Label(left_controls, text="影像: -")
         self.img_left_label.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         
-        self.viewer_left = ImageViewer(left_panel, bg="gray")
+        # BUG修复4: 添加 takefocus=True 使画布可以接收键盘焦点
+        self.viewer_left = ImageViewer(left_panel, app_controller=self, bg="gray", takefocus=True)
         self.viewer_left.pack(fill=tk.BOTH, expand=True)
         self.viewer_left.bind("<Button-1>", lambda event: self._on_canvas_click(event, self.viewer_left, 0))
 
@@ -249,7 +260,7 @@ class TiePointPickerApp:
         self.img_right_label = ttk.Label(right_controls, text="影像: -")
         self.img_right_label.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         
-        self.viewer_right = ImageViewer(right_panel, bg="gray")
+        self.viewer_right = ImageViewer(right_panel, app_controller=self, bg="gray", takefocus=True)
         self.viewer_right.pack(fill=tk.BOTH, expand=True)
         self.viewer_right.bind("<Button-1>", lambda event: self._on_canvas_click(event, self.viewer_right, 1))
 
@@ -265,6 +276,7 @@ class TiePointPickerApp:
         """为主窗口绑定键盘快捷键。"""
         self.master.bind("<Control-s>", lambda event: self._save_current_group())
         self.master.bind("<Control-z>", lambda event: self._undo_last_point())
+        # BUG修复3: 微调的步长是屏幕上的1个像素
         self.master.bind("<Up>", lambda event: self._finetune_point(-1, 0))
         self.master.bind("<Down>", lambda event: self._finetune_point(1, 0))
         self.master.bind("<Left>", lambda event: self._finetune_point(0, -1))
@@ -277,19 +289,16 @@ class TiePointPickerApp:
         )
         if not paths: return
 
+        self._reset_state()
         self.image_paths = list(paths)
         self.num_images = len(self.image_paths)
-        self.image_shapes = []
-        self.point_files = []
-        self.image_rpcs = []
-        self.heights = []
-        loaded_images_for_windows = []
-
+        
         try:
             for p in self.image_paths:
+                # BUG修复1: 将影像读入内存
                 img = cv2.imread(p, cv2.IMREAD_COLOR)
                 if img is None: raise ValueError(f"无法读取影像: {p}")
-                loaded_images_for_windows.append(img)
+                self.full_loaded_images.append(img)
                 self.image_shapes.append(img.shape)
                 
                 rpc_path = os.path.splitext(p)[0] + '.rpc'
@@ -305,7 +314,7 @@ class TiePointPickerApp:
                 self.point_files.append(f"{base}_points.txt")
 
             self.windows = find_windows(self.image_shapes, self.image_rpcs, self.heights, 1000, 500)
-            if self.windows.shape[1] == 0:
+            if self.windows.ndim < 2 or self.windows.shape[1] == 0:
                 messagebox.showwarning("无窗口", "未能根据参数生成任何窗口。请检查find_windows函数和输入数据。")
 
         except Exception as e:
@@ -317,7 +326,8 @@ class TiePointPickerApp:
         self._load_saved_points()
 
         # 更新UI
-        self.k_spinbox.config(to=max(0, self.windows.shape[1] - 1))
+        if self.windows.ndim > 1:
+            self.k_spinbox.config(to=max(0, self.windows.shape[1] - 1))
         self.img_left_spinbox.config(to=max(0, self.num_images - 1))
         self.img_right_spinbox.config(to=max(0, self.num_images - 1))
 
@@ -333,6 +343,7 @@ class TiePointPickerApp:
         """重置整个应用程序的状态。"""
         self.image_paths = []
         self.num_images = 0
+        self.full_loaded_images = [] # BUG修复1: 重置缓存
         self._reset_point_data()
         self.viewer_left.set_image(None)
         self.viewer_right.set_image(None)
@@ -355,14 +366,14 @@ class TiePointPickerApp:
                         for line in f:
                             parts = line.strip().split()
                             if len(parts) >= 2:
-                                r, c = int(parts[0]), int(parts[1])
+                                r, c = float(parts[0]), float(parts[1])
                                 self.saved_points[i].append((r, c))
                 except Exception as e:
                     print(f"读取点文件 {filepath} 时出错: {e}")
         print("已加载的保存点:", self.saved_points)
 
     def _on_window_k_change(self):
-        if self.num_images == 0 or self.windows.shape[1] == 0: return
+        if self.num_images == 0 or self.windows.ndim < 2 or self.windows.shape[1] == 0: return
         k = self.current_window_k.get()
         
         try:
@@ -382,10 +393,8 @@ class TiePointPickerApp:
             if not (r1 < r2 and c1 < c2):
                 continue
             
-            # 按需加载完整影像以获取图块
-            full_img = cv2.imread(self.image_paths[i], cv2.IMREAD_COLOR)
-            if full_img is None: continue
-
+            # BUG修复1: 直接从内存中的完整影像裁切图块
+            full_img = self.full_loaded_images[i]
             patch_bgr = full_img[r1:r2, c1:c2]
             if patch_bgr.size == 0: continue
 
@@ -432,7 +441,6 @@ class TiePointPickerApp:
 
     def _draw_points_on_viewer(self, viewer: ImageViewer, image_idx: int):
         """在单个查看器上绘制所有相关的点。"""
-        # 这是一个小技巧，用于在不清除图像的情况下清除点
         viewer.delete("point") 
         
         patch_origin = self.patch_origin_coords.get(image_idx)
@@ -440,33 +448,34 @@ class TiePointPickerApp:
             return
         
         patch_r1, patch_c1 = patch_origin
-        patch_h, patch_w = viewer.pil_image.height, viewer.pil_image.width
+        patch_img = self.loaded_image_patches.get(image_idx)
+        if not patch_img: return
+        patch_h, patch_w = patch_img.height, patch_img.width
         patch_r2, patch_c2 = patch_r1 + patch_h, patch_c1 + patch_w
 
         # 绘制已保存的点 (绿色)
-        for r, c in self.saved_points[image_idx]:
-            if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
-                self._draw_single_point(viewer, r, c, patch_r1, patch_c1, "green")
+        if image_idx < len(self.saved_points):
+            for r, c in self.saved_points[image_idx]:
+                if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
+                    self._draw_single_point(viewer, r, c, patch_r1, patch_c1, "green")
 
         # 绘制当前组的点 (蓝色或红色)
-        point_coords = self.current_group_points[image_idx]
-        if point_coords:
-            r, c = point_coords
-            color = "blue"
-            # 检查这是否是选定的点
-            if self.selected_point_info and self.selected_point_info["image_idx"] == image_idx:
-                color = "red"
-            
-            if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
-                self._draw_single_point(viewer, r, c, patch_r1, patch_c1, color)
+        if image_idx < len(self.current_group_points):
+            point_coords = self.current_group_points[image_idx]
+            if point_coords:
+                r, c = point_coords
+                color = "blue"
+                if self.selected_point_info and self.selected_point_info["image_idx"] == image_idx:
+                    color = "red"
+                
+                if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
+                    self._draw_single_point(viewer, r, c, patch_r1, patch_c1, color)
     
     def _draw_single_point(self, viewer: ImageViewer, abs_r, abs_c, patch_r1, patch_c1, color):
         """根据绝对坐标绘制单个点的辅助函数。"""
-        # 将绝对图像坐标转换为图块相对坐标
         patch_y = abs_r - patch_r1
         patch_x = abs_c - patch_c1
         
-        # 将图块坐标转换为画布坐标
         canvas_x, canvas_y = viewer.image_to_canvas_coords(patch_x, patch_y)
         
         size = 4
@@ -485,8 +494,8 @@ class TiePointPickerApp:
         patch_x, patch_y = viewer.canvas_to_image_coords(event.x, event.y)
         patch_r1, patch_c1 = self.patch_origin_coords[image_idx]
 
-        abs_c = int(round(patch_c1 + patch_x))
-        abs_r = int(round(patch_r1 + patch_y))
+        abs_c = patch_c1 + patch_x
+        abs_r = patch_r1 + patch_y
 
         img_h, img_w = self.image_shapes[image_idx][:2]
         if not (0 <= abs_r < img_h and 0 <= abs_c < img_w):
@@ -499,7 +508,8 @@ class TiePointPickerApp:
             "panel_id": panel_id
         }
         
-        print(f"面板 {panel_id}, 影像 {image_idx}: 点击 -> 绝对坐标 ({abs_r},{abs_c})")
+        viewer.focus_set() # BUG修复4: 点击画布后，将焦点设置到该画布
+        print(f"面板 {panel_id}, 影像 {image_idx}: 点击 -> 绝对坐标 ({abs_r:.2f},{abs_c:.2f})")
 
         self._redraw_all_points()
         self._update_status_label()
@@ -515,10 +525,8 @@ class TiePointPickerApp:
         self.current_group_points[image_idx_to_undo] = None
         self.selected_point_info = None # 清除选择
 
-        # 找到要选择的新的“最后一个”点
         for i in range(self.num_images - 1, -1, -1):
             if self.current_group_points[i] is not None:
-                # 如果左侧查看器显示的是这个影像，则认为它在左侧面板
                 panel_id = 0 if self.img_idx_left.get() == i else 1 
                 self.selected_point_info = {"image_idx": i, "panel_id": panel_id}
                 break
@@ -528,19 +536,32 @@ class TiePointPickerApp:
         self._update_status_label()
         self._update_ui_state()
 
-    def _finetune_point(self, dr, dc):
-        """使用箭头键调整所选点的位置。"""
+    def _finetune_point(self, dr_screen, dc_screen):
+        """使用箭头键按屏幕像素微调所选点的位置。"""
+        # BUG修复4: 检查焦点，只有当焦点在图像视图上时才执行微调
+        focused_widget = self.master.focus_get()
+        if focused_widget not in [self.viewer_left, self.viewer_right]:
+            return
+            
         if self.selected_point_info is None: return
         
+        panel_id = self.selected_point_info["panel_id"]
+        viewer = self.viewer_left if panel_id == 0 else self.viewer_right
+        
+        if not viewer.pil_image: return
+
         idx = self.selected_point_info["image_idx"]
         r, c = self.current_group_points[idx]
         
-        new_r, new_c = r + dr, c + dc
+        # BUG修复2&3: 根据缩放比例计算在绝对坐标系中的移动量
+        dr_abs = dr_screen / viewer.scale
+        dc_abs = dc_screen / viewer.scale
         
-        # 边界检查
+        new_r, new_c = r + dr_abs, c + dc_abs
+        
         img_h, img_w = self.image_shapes[idx][:2]
         if not (0 <= new_r < img_h and 0 <= new_c < img_w):
-            return # 不要移出边界
+            return 
             
         self.current_group_points[idx] = (new_r, new_c)
         self._redraw_all_points()
@@ -555,13 +576,13 @@ class TiePointPickerApp:
             for img_idx, coords in enumerate(self.current_group_points):
                 filepath = self.point_files[img_idx]
                 with open(filepath, 'a') as f:
-                    f.write(f"{coords[0]} {coords[1]}\n")
-                # 将点从当前组移动到已保存的点
+                    r, c = coords
+                    # 保存时四舍五入为整数
+                    f.write(f"{int(round(r))} {int(round(c))}\n")
                 self.saved_points[img_idx].append(coords)
             
             messagebox.showinfo("保存成功", f"第 {self.tie_point_group_counter} 组刺点已保存。")
 
-            # 为下一组重置
             self.tie_point_group_counter += 1
             self.current_group_points = [None] * self.num_images
             self.selected_point_info = None
@@ -581,7 +602,10 @@ class TiePointPickerApp:
         status_parts = []
         for i in range(self.num_images):
             coords = self.current_group_points[i]
-            status_parts.append(f"影像{i}: {'未标' if coords is None else str(coords)}")
+            if coords:
+                status_parts.append(f"影像{i}: ({coords[0]:.1f}, {coords[1]:.1f})")
+            else:
+                status_parts.append(f"影像{i}: 未标")
         
         status_text = f"第 {self.tie_point_group_counter} 组 | K={self.current_window_k.get()} | " + " | ".join(status_parts)
         self.status_label.config(text=status_text)
@@ -589,13 +613,13 @@ class TiePointPickerApp:
     def _update_ui_state(self):
         """根据当前状态启用/禁用UI组件。"""
         has_images = self.num_images > 0
-        has_windows = self.windows.shape[1] > 0
+        has_windows = self.windows.ndim > 1 and self.windows.shape[1] > 0
         
         self.k_spinbox.config(state=tk.NORMAL if has_images and has_windows else tk.DISABLED)
         self.img_left_spinbox.config(state=tk.NORMAL if has_images else tk.DISABLED)
         self.img_right_spinbox.config(state=tk.NORMAL if self.num_images > 1 else tk.DISABLED)
         
-        can_save = all(p is not None for p in self.current_group_points)
+        can_save = self.num_images > 0 and all(p is not None for p in self.current_group_points)
         self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
         
         can_undo = self.selected_point_info is not None
