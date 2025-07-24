@@ -646,9 +646,10 @@ class Grid():
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
+            valid_score_p1 = valid_score.reshape(-1)
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)
-            valid_scores.append(valid_score)
+            valid_scores.append(valid_score_p1)
         
         mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
         sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
