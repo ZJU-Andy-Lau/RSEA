@@ -25,7 +25,7 @@ def stretch_array_to_uint8(image_array: np.ndarray,
     这是将遥感影像数据从高动态范围压缩到8位以便于可视化的最常用和科学的方法之一。
 
     Args:
-        image_array (np.ndarray): 输入的二维(H, W)或三维(H, W, C)NumPy数组。
+        image_array (np.ndarray): 输入的二维(H, W)或三维(B, H, W)NumPy数组。
                                   函数会自动处理多波段情况。
         lower_percent (int, optional): 用于截断的最低百分位数。默认为 2。
         upper_percent (int, optional): 用于截断的最高百分位数。默认为 98。
@@ -46,9 +46,11 @@ def stretch_array_to_uint8(image_array: np.ndarray,
     # 处理多波段影像的情况
     if image_array.ndim == 3:
         # 对每个波段独立进行拉伸
-        for i in range(image_array.shape[2]):
-            band = image_array[..., i]
-            stretched_array[..., i] = stretch_array_to_uint8(band, lower_percent, upper_percent, nodata_value)
+        for i in range(image_array.shape[0]):
+            band = image_array[i]
+            stretched_array[i] = stretch_array_to_uint8(band, lower_percent, upper_percent, nodata_value)
+        if stretched_array.shape[0] > 1:
+            stretched_array = np.mean(stretched_array,axis=0,keepdims=True)
         return stretched_array.astype(np.uint8)
 
     # --- 以下为单波段处理逻辑 ---
@@ -102,8 +104,8 @@ def read_tif(tif_path):
 
 def get_data(src,line,samp):
     window = Window(samp,line,1,1)
-    value = src.read(window = window)
-    return value[0][0][0]
+    value = src.read(window = window).reshape(-1)[0]
+    return value
 
 def find_intersection(quads_array: np.ndarray) -> np.ndarray:
     """
@@ -177,12 +179,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--root',type=str)
     parser.add_argument('--output_path',type=str)
+    parser.add_argument('--max_size',type=int,default=-1)
     args = parser.parse_args()
 
     root = args.root
     output_path = args.output_path
+    max_size = args.max_size
     os.makedirs(output_path,exist_ok=True)
-    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i]
 
 
     imgs = []
@@ -198,7 +202,7 @@ if __name__ == '__main__':
         H,W = img.height,img.width
         rpc = RPCModelParameterTorch()
         rpc.load_from_file(os.path.join(root,f'{name}.rpc'))
-        corner_lats,corner_lons = rpc.RPC_PHOTO2OBJ([0,0,W-1,W-1],[0,H-1,H-1,0],[get_data(dem,0,0),get_data(dem,H-1,0),get_data(dem,H-1,W-1),get_data(dem,W-1,0)])
+        corner_lats,corner_lons = rpc.RPC_PHOTO2OBJ([0,0,W-1,W-1],[0,H-1,H-1,0],[get_data(dem,0,0),get_data(dem,H-1,0),get_data(dem,H-1,W-1),get_data(dem,0,W-1)])
         corner_yxs.append(project_mercator(torch.stack([corner_lats,corner_lons],dim=-1)).numpy())
         imgs.append(img)
         dems.append(dem)
@@ -209,7 +213,6 @@ if __name__ == '__main__':
     print("load imgs done")
 
     intersection_yxs = find_intersection(corner_yxs)
-    print(intersection_yxs)
     intersection_latlons = mercator2lonlat(torch.from_numpy(intersection_yxs)).numpy()
     intersection_heights = [val[0] for val in dem_full.sample(intersection_latlons[:,[1,0]])]
     
@@ -220,30 +223,48 @@ if __name__ == '__main__':
                                               int(min(hws[i][0]-1,intersection_lines.max())),\
                                               int(max(0,intersection_samps.min())),\
                                               int(min(hws[i][1]-1,intersection_samps.max()))
+        if max_size > 0 :
+            line_center = (line_min + line_max) // 2
+            samp_center = (samp_min + samp_max) // 2
+            line_min = max(line_center - max_size // 2,line_min)
+            line_max = min(line_center + max_size // 2,line_max)
+            samp_min = max(samp_center - max_size // 2,samp_min)
+            samp_max = min(samp_center + max_size // 2,samp_max)
+            
+        print(f"\n({line_min},{samp_min}) - ({line_max},{samp_max})  ({line_max - line_min},{samp_max - samp_min})")
         window = Window(samp_min,line_min,samp_max - samp_min,line_max - line_min)
-        img_output = imgs[i].read(window = window)[0]
+        img_output = imgs[i].read(window = window)
+
+        if img_output.ndim == 2: # 如果是单波段影像，手动增加一个维度
+            img_output = np.expand_dims(img_output, axis=0)
+        
+        print(img_output.shape)
+        num_bands, height, width = img_output.shape
 
         with rasterio.open(
-            os.path.join(output_path,f'{names[i]}.tif'),
+            os.path.join(output_path, f'{names[i]}.tif'),
             'w',
             driver='GTiff',
-            height=img_output.shape[0],
-            width=img_output.shape[1],
-            count=1,
+            height=height,
+            width=width,
+            count=1, 
             dtype=img_output.dtype,
+            # 如果原图有坐标系和变换信息，也应继承过来
+            # crs=imgs[i].crs,
+            # transform=imgs[i].window_transform(window)
         ) as dst:
-            dst.write(img_output,1)
+            dst.write(img_output[0],1) # 直接写入所有波段
 
-        # img_output = stretch_array_to_uint8(img_output)
+        # img_output = stretch_array_to_uint8(img_output)[0]
 
         # cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
         
         # dem_output = dems[i].read(window = window).astype(np.float32)
         # np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
 
-        # rpc.LINE_OFF -= line_min
-        # rpc.SAMP_OFF -= samp_min
-        # rpc.save_rpc_to_file(os.path.join(output_path,f'{names[i]}.rpc'))
+        rpc.LINE_OFF -= line_min
+        rpc.SAMP_OFF -= samp_min
+        rpc.save_rpc_to_file(os.path.join(output_path,f'{names[i]}.rpc'))
         
 
 

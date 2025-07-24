@@ -132,7 +132,7 @@ if __name__ == '__main__':
     root = args.root
 
     start_time = time.time()
-    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i]
     for name in names:
         rpc = RPCModelParameterTorch()
         rpc.load_from_file(os.path.join(root,f'{name}.rpc'))

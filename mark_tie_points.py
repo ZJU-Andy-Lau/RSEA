@@ -173,7 +173,7 @@ class TiePointPickerApp:
                 self.heights.append(height[0])
                 base, ext = os.path.splitext(p)
                 self.point_files.append(f"{base}_points.txt")
-            self.windows = find_windows(self.image_shapes,self.image_rpcs,self.heights,5000,500)
+            self.windows = find_windows(self.image_shapes,self.image_rpcs,self.heights,1000,500)
             print(f"Total Window Num:{self.windows.shape[1]}")
 
         except Exception as e:

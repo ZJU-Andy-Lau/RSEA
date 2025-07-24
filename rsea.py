@@ -260,7 +260,7 @@ class RSEA():
 
             
 
-            with Live(progress_table, refresh_per_second=10, screen=True) as live:
+            with Live(progress_table, refresh_per_second=50, screen=True) as live:
                 acitive_workers = world_size
                 while acitive_workers > 0:
                     acitive_workers = 0
@@ -284,7 +284,7 @@ class RSEA():
                         # bar.n = state['progress']
                         # bar.set_postfix(state['info'])
                         # bar.refresh() 
-                    time.sleep(0.1) 
+                    time.sleep(0.02) 
 
             # for bar in pbars:
             #     bar.close()
@@ -346,10 +346,16 @@ class RSEA():
         if path is None:
             path = os.path.join(self.root,'grids')
         grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
+        good_grids_num = 0
+        bad_grids_num = 0
         for grid_path in grid_paths:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
-            self.grids.append(new_grid)
-        print(f"{len(grid_paths)} grids loaded \t total {len(self.grids)} grids in RSEA now")
+            if new_grid.status == new_grid.STATES.WELL_TRAINED:
+                self.grids.append(new_grid)
+                good_grids_num += 1
+            else:
+                bad_grids_num += 1
+        print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
     
 
     def adjust(self,image_folders:List[str]):        

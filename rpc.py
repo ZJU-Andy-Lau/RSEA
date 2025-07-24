@@ -614,9 +614,9 @@ class RPCModelParameterTorch:
         addition1 = ['pixels', 'pixels', 'degrees', 'degrees', 'meters', 'pixels', 'pixels', 'degrees', 'degrees',
                      'meters']
         
-        addition2 = ['CL0:','CLS:','CLL:','CS0:','CSS:','CSL:']
+        # addition2 = ['CL0:','CLS:','CLL:','CS0:','CSS:','CSL:']
 
-        corection_params = [self.adjust_params[0,2],self.adjust_params[0,1],self.adjust_params[0,0] - 1.,self.adjust_params[1,2],self.adjust_params[1,1] - 1.,self.adjust_params[1,0]]
+        # corection_params = [self.adjust_params[0,2],self.adjust_params[0,1],self.adjust_params[0,0] - 1.,self.adjust_params[1,2],self.adjust_params[1,1] - 1.,self.adjust_params[1,0]]
 
         text = ""
 
@@ -648,11 +648,11 @@ class RPCModelParameterTorch:
         for i in range(150, 170):
             text += addition0[i] + " " + str(self.LONDEM[i - 150].item()) + "\n"
         
-        if corection_params != [0.,0.,1.,0.,1.,0.]:
-            text += "\nRFM CORRECTION PARAMETERS:\n"
+        # if corection_params != [0.,0.,1.,0.,1.,0.]:
+        #     text += "\nRFM CORRECTION PARAMETERS:\n"
 
-            for i in range(6):
-                text += addition2[i] + " " + str(corection_params[i].item()) + "\n"
+        #     for i in range(6):
+        #         text += addition2[i] + " " + str(corection_params[i].item()) + "\n"
 
         f = open(filepath, "w")
         f.write(text)
