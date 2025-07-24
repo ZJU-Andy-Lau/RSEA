@@ -194,10 +194,10 @@ if __name__ == '__main__':
     rpcs = []
     hws = []
     corner_yxs = []
-    dem_full = rasterio.open(os.path.join(root,'dtm_egm.tif'),'r')
+    dem_full = rasterio.open(os.path.join(root,'dem_egm.tif'),'r')
 
     for name in tqdm(names):
-        img = rasterio.open(os.path.join(root,f'{name}.tiff'),'r')
+        img = rasterio.open(os.path.join(root,f'{name}.tif'),'r')
         dem = rasterio.open(os.path.join(root,f'{name}_height.tif'),'r')
         H,W = img.height,img.width
         rpc = RPCModelParameterTorch()
@@ -255,12 +255,12 @@ if __name__ == '__main__':
         ) as dst:
             dst.write(img_output[0],1) # 直接写入所有波段
 
-        # img_output = stretch_array_to_uint8(img_output)[0]
+        img_output = stretch_array_to_uint8(img_output)[0]
 
-        # cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
+        cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
         
-        # dem_output = dems[i].read(window = window).astype(np.float32)
-        # np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
+        dem_output = dems[i].read(window = window).astype(np.float32)
+        np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
 
         rpc.LINE_OFF -= line_min
         rpc.SAMP_OFF -= samp_min

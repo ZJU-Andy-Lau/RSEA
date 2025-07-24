@@ -338,7 +338,9 @@ class AffineFitter:
         best_params = self.params
         
         # 使用 Adam 优化器
-        optimizer = torch.optim.Adam([self.params], lr=self.lr)
+        # optimizer = torch.optim.Adam([self.params], lr=self.lr)
+
+        optimizer = torch.optim.LBFGS([self.params], lr=self.lr)
 
         # --- 3. 计算NLL损失的权重 ---
         # 权重 = 1 / sigma^2。增加一个小的 epsilon 防止除以零。
@@ -347,6 +349,24 @@ class AffineFitter:
         # --- 4. 优化循环 ---
         if self.verbose:
             print(f"开始拟合... 总共 {self.iterations if self.iterations > 0 else 'no limit'} 次迭代。")
+
+        def closure():
+            # 每次调用闭包时，都需要清空梯度
+            optimizer.zero_grad()
+            
+            # 应用仿射变换
+            transformed_points = source_homogeneous @ self.params.T
+
+            # 计算损失 (与之前完全相同)
+            error = transformed_points - pred_means
+            weighted_squared_error = error.pow(2) * weights
+            loss = weighted_squared_error.sum()
+            
+            # 计算梯度
+            loss.backward()
+            
+            # 闭包必须返回损失值
+            return loss
         
         min_loss = 1e9
         iter_count = 0
@@ -354,30 +374,31 @@ class AffineFitter:
 
         while(True):
             iter_count += 1
-            optimizer.zero_grad()
+            # optimizer.zero_grad()
 
-            # 应用仿射变换: (N, 3) @ (3, 2) -> (N, 2)
-            # [x, y, 1] @ [[a, d], [b, e], [c, f]] = [ax+by+c, dx+ey+f]
-            transformed_points = source_homogeneous @ self.params.T
+            # # 应用仿射变换: (N, 3) @ (3, 2) -> (N, 2)
+            # # [x, y, 1] @ [[a, d], [b, e], [c, f]] = [ax+by+c, dx+ey+f]
+            # transformed_points = source_homogeneous @ self.params.T
 
-            # 计算损失 (加权MSE，等价于NLL)
-            # L = sum( (x'_i - mu_xi)^2 / sigma_xi^2 + (y'_i - mu_yi)^2 / sigma_yi^2 )
-            error = transformed_points - pred_means
-            weighted_squared_error = error.pow(2) * weights
-            loss = weighted_squared_error.mean()
+            # # 计算损失 (加权MSE，等价于NLL)
+            # # L = sum( (x'_i - mu_xi)^2 / sigma_xi^2 + (y'_i - mu_yi)^2 / sigma_yi^2 )
+            # error = transformed_points - pred_means
+            # weighted_squared_error = error.pow(2) * weights
+            # loss = weighted_squared_error.mean()
 
-            if loss < min_loss:
-                min_loss = loss.item()
-                best_params = self.params
-                no_update_count = 0
-            else:
-                no_update_count += 1
+            # if loss < min_loss:
+            #     min_loss = loss.item()
+            #     best_params = self.params
+            #     no_update_count = 0
+            # else:
+            #     no_update_count += 1
 
-            # 反向传播和优化
-            loss.backward()
-            optimizer.step()
+            # # 反向传播和优化
+            # loss.backward()
+            loss = optimizer.step(closure)
+            # optimizer.step()
 
-            if self.verbose and (iter_count % 1000 == 0 or iter_count == self.iterations - 1 or no_update_count > 5000):
+            if self.verbose and (iter_count % 10 == 0 or iter_count == self.iterations - 1 or no_update_count > 50):
                 if self.iterations > 0:
                     print(f"iter {iter_count:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
                 else:
@@ -386,7 +407,7 @@ class AffineFitter:
             if self.iterations > 0 and iter_count >= self.iterations:
                 break
 
-            if no_update_count > 5000:
+            if no_update_count > 50:
                 if self.verbose:
                     print("no update for 5000 iterations, early stop")
                 break
