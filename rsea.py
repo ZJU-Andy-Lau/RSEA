@@ -325,7 +325,7 @@ class RSEA():
 
         fitter = AffineFitter(learning_rate=0.0001, num_iterations=-1)
         total_num = len(valid_scores)
-        conf_valid_idx = valid_scores > self.options.conf_threshold
+        conf_valid_idx = valid_scores > .5
         src = src[conf_valid_idx]
         tgt_mu = tgt_mu[conf_valid_idx]
         tgt_sigma = tgt_sigma[conf_valid_idx]
