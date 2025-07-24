@@ -361,9 +361,11 @@ class RSEA():
     def adjust(self,image_folders:List[str]):        
         adjust_images:List[RSImage] = []
         
-        for image_id,image_folder in enumerate(image_folders):
+        print("Loading Adjust Images")
+        for image_id,image_folder in tqdm(enumerate(image_folders)):
             image = RSImage(self.options,image_folder,image_id)
             adjust_images.append(image)
+        print(f"{len(adjust_images)} adjust images loaded")
         
         for img_idx,image in enumerate(adjust_images):
             all_src = []

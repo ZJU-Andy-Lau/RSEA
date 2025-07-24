@@ -616,7 +616,7 @@ class Grid():
 
         print("Extracting Features")
         for batch_idx in trange(batch_num):
-            batch_imgs = imgs_NHWC[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
             # features_NDhw.append(feat)
@@ -713,7 +713,7 @@ class Grid():
         }
         crop_imgs_NHWC = None
         crop_locals_NHW2 = None
-        imgs_NHWC = None
+        imgs_NCHW = None
 
         return res
     
