@@ -240,6 +240,8 @@ class Element():
             feat,conf = self.encoder(batch_imgs) # B,D,H,W
 
             feat = feat.permute(0,2,3,1).flatten(0,2)
+            if not self.options.use_global_feature:
+                feat = feat[:,:self.encoder.patch_feature_channels]
             conf = conf.squeeze().flatten(0,2)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]  

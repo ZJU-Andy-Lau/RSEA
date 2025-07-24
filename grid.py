@@ -44,7 +44,6 @@ class Grid():
 
         self.options = options
         self.encoder = encoder
-        self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         self.status = self.STATES.NOT_INIT
         if diag is None and grid_path is None:
             raise ValueError("Grid loaded error: Neither diag nor grid path is given")
@@ -55,6 +54,10 @@ class Grid():
                 'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
                 'h':None
             }
+            if options.use_global_feature:
+                self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
+            else:
+                self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=options.mapper_blocks_num)
         else:
             self.load_grid(grid_path)
         self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()]) #[min_x,min_y,max_x,max_y]
@@ -323,9 +326,11 @@ class Grid():
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
-                features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
+
+                if self.options.use_global_feature:
+                    global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                    features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
 
                 # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
                 # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
@@ -486,6 +491,8 @@ class Grid():
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
             'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),
+            'use_global_feature':self.options.use_global_feature,
+            'num_blocks':self.options.mapper_blocks_num,
             'status':self.status
         }
         torch.save(state_dict,os.path.join(self.output_path,'grid_data.pth'))
@@ -493,6 +500,12 @@ class Grid():
     def load_grid(self,path:str):
         state_dict = torch.load(os.path.join(path,'grid_data.pth'))
         name = os.path.basename(path)
+        self.options.use_global_feature = state_dict['use_global_feature']
+        self.options.mapper_blocks_num = state_dict['num_blocks']
+        if self.options.use_global_feature:
+            self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=self.options.mapper_blocks_num)
+        else:
+            self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=self.options.mapper_blocks_num)
         self.mapper.load_state_dict(state_dict['mapper'])
         self.diag = state_dict['diag'].cpu().numpy()
         self.map_coeffs = {
@@ -501,6 +514,8 @@ class Grid():
             'h':state_dict['map_coeffs_h'].cpu().numpy(),
         }
         self.status = state_dict['status']
+        
+        
         print(f"Grid '{name} loaded succesfully'")
     
     @torch.no_grad()
@@ -622,6 +637,8 @@ class Grid():
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
+            if not self.options.use_global_feature:
+                feat = feat[:,:self.encoder.patch_feature_channels]
             conf = conf.squeeze().flatten(0,2)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]

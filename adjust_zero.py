@@ -1,5 +1,7 @@
 import os
 import logging
+
+from utils import str2bool
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 logging.basicConfig(level=logging.ERROR)
 import warnings
@@ -45,6 +47,8 @@ if __name__ == '__main__':
     
     parser.add_argument('--patches_per_batch', type=int, default=2 ** 13,
                         help='number of patches in a batch')
+    
+    parser.add_argument('--use_global_feature',type=str2bool,default=False)
     
 
     #=============================Element Training Params=============================
