@@ -386,16 +386,17 @@ class AffineFitter:
             # weighted_squared_error = error.pow(2) * weights
             # loss = weighted_squared_error.mean()
 
-            # if loss < min_loss:
-            #     min_loss = loss.item()
-            #     best_params = self.params
-            #     no_update_count = 0
-            # else:
-            #     no_update_count += 1
+            
 
             # # 反向传播和优化
             # loss.backward()
-            loss = optimizer.step(closure)
+            loss = optimizer.step(closure) / num_points
+            if loss < min_loss:
+                min_loss = loss.item()
+                best_params = self.params
+                no_update_count = 0
+            else:
+                no_update_count += 1
             # optimizer.step()
 
             if self.verbose and (iter_count % 10 == 0 or iter_count == self.iterations - 1 or no_update_count > 50):
