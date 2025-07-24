@@ -325,12 +325,12 @@ class RSEA():
 
         fitter = AffineFitter(learning_rate=0.0001, num_iterations=-1)
         total_num = len(valid_scores)
-        conf_valid_idx = valid_scores > .5
-        src = src[conf_valid_idx]
-        tgt_mu = tgt_mu[conf_valid_idx]
-        tgt_sigma = tgt_sigma[conf_valid_idx]
-        valid_scores = valid_scores[conf_valid_idx]
-        print(f"conf filter :{conf_valid_idx.sum()}/{total_num}")
+        # conf_valid_idx = valid_scores > .5
+        # src = src[conf_valid_idx]
+        # tgt_mu = tgt_mu[conf_valid_idx]
+        # tgt_sigma = tgt_sigma[conf_valid_idx]
+        # valid_scores = valid_scores[conf_valid_idx]
+        print(f"valid filter :{valid_mask.sum()}/{total_num}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
         # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
