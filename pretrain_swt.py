@@ -451,7 +451,7 @@ def pretrain(args):
             if total_loss_obj < min_loss:
                 min_loss = total_loss_obj
                 encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
-                torch.save(encoder_state_dict,os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
+                torch.save(encoder_state_dict,os.path.join(args.encoder_output_path,'backbone.pth'))
                 # torch.save(encoder.state_dict(),args.encoder_output_path)
                 # if not args.freeze_decoder:
                 # for dataset_idx in range(dataset_num):
