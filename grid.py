@@ -287,7 +287,6 @@ class Grid():
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
-                self.fprint(f"{task_info['id']}\t{iter_idx}\t 1")
                 if iter_idx % 5 != 0:
                     sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
                                                             min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
@@ -299,7 +298,6 @@ class Grid():
                                                         torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
                                                         torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
                     torch.cuda.synchronize()
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     try:
@@ -307,38 +305,21 @@ class Grid():
                     except Exception as e:
                         self.fprint(f'{e}')
                     torch.cuda.synchronize()
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
-                    self.fprint(f"dist shape:{dists.shape} \t idxs shape:{idxs.shape}")
-                    self.fprint(f"{dists.max(dim=1)}")
                     valid_mask = dists.max(dim=1).values < 256
-                    self.fprint(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     # break
                     dists = 1. / (dists[valid_mask] + 1e-6)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 4")
                     idxs = idxs[valid_mask]
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 5")
                     dists = dists / torch.mean(dists,dim=-1,keepdim=True)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 6")
                     features_pD = element.buffer['features'][idxs].contiguous()
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 7")
                     confs_p1 = element.buffer['confs'][idxs].contiguous()
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 8")
                     objs_p3 = element.buffer['objs'][idxs].contiguous()
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 9")
                     locals_p2 = sample_linesamps[valid_mask]
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 10")
                     features_pD = features_pD * dists.unsqueeze(-1)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 11")
                     confs_p1 = confs_p1 * dists
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 12")
                     objs_p3 = objs_p3 * dists.unsqueeze(-1)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 13")
                     features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 14")
                     confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 15")
                     objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
-                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 16")
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
                     features_pD = element.buffer['features'][sample_idxs].contiguous()
