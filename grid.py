@@ -303,6 +303,7 @@ class Grid():
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
                     dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
+                    self.fprint(f"dist shape:{dists.shape} \t idxs shape:{idxs.shape}")
                     valid_mask = dists.max(dim=1).values < 256
                     self.fprint(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     # break
