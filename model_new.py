@@ -60,7 +60,7 @@ class DistilledVisionTransformer(VisionTransformer):
 
 class Encoder(nn.Module):
 
-    def __init__(self,cfg = {},verbose = 1):
+    def __init__(self,cfg = {},verbose = 1,output_global_feature = True):
         super().__init__()
         default_cfg = {
             'input_channels':3,
@@ -82,6 +82,7 @@ class Encoder(nn.Module):
         self.patch_feature_channels = self.cfg['patch_feature_channels']
         self.global_feature_channels = self.cfg['global_feature_channels']
         self.output_channels = self.cfg['patch_feature_channels'] + self.cfg['global_feature_channels']
+        self.output_global_feature = output_global_feature
 
         self.backbone = SwinTransformerV2(img_size=self.cfg['img_size'],
                                         drop_path_rate=self.cfg['drop_path_rate'],
@@ -148,11 +149,14 @@ class Encoder(nn.Module):
         feat = self.cnn(feat_backbone)
         conf = self.conf_head(F.normalize(feat_backbone,dim=1))
 
-        global_feat = self.r2former(self.resize(x)) #F.interpolate(x,size=[480,640],mode='bilinear')
-        global_feat = global_feat[:,:,None,None].repeat(1,1,feat.shape[-2],feat.shape[-1])
         feat = F.normalize(feat,p=2,dim=1)
-        
-        return torch.cat([feat,global_feat],dim=1),conf
+
+        if self.output_global_feature:
+            global_feat = self.r2former(self.resize(x)) #F.interpolate(x,size=[480,640],mode='bilinear')
+            global_feat = global_feat[:,:,None,None].repeat(1,1,feat.shape[-2],feat.shape[-1])
+            return torch.cat([feat,global_feat],dim=1),conf
+        else:
+            return feat,conf
     
 class ProjectHead(nn.Module):
     def __init__(self,input_channels,output_channels = None):

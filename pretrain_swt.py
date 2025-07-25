@@ -243,7 +243,7 @@ def pretrain(args):
     
 
     args.patch_feature_channels = encoder.patch_feature_channels
-    args.output_channels = encoder.output_channels
+    args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
 
 
     encoder = encoder.to(args.device)

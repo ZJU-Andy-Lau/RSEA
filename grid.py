@@ -58,7 +58,7 @@ class Grid():
                 'h':None
             }
             if options.use_global_feature:
-                self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
+                self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=options.mapper_blocks_num)
             else:
                 self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=options.mapper_blocks_num)
         else:
@@ -363,9 +363,12 @@ class Grid():
 
                 #=====================================================
 
-
-                output_16p1,valid_score_positive = self.mapper(features_1Dp1)
-                _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
+                features_input_1Dq1 = torch.concatenate([features_1Dp1,negative_feature_1Dp1],dim=2)
+                output_16q1,valid_score_11q1 = self.mapper(features_input_1Dq1)
+                output_16p1 = output_16q1[:,:,:patch_num]
+                valid_score_positive,valid_score_nagetive = valid_score_11q1[:,:,:patch_num],valid_score_11q1[:,:,patch_num:]
+                # output_16p1,valid_score_positive = self.mapper(features_1Dp1)
+                # _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
                 
                 output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
@@ -518,7 +521,7 @@ class Grid():
         self.options.use_global_feature = state_dict['use_global_feature']
         self.options.mapper_blocks_num = state_dict['num_blocks']
         if self.options.use_global_feature:
-            self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=self.options.mapper_blocks_num)
+            self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=self.options.mapper_blocks_num)
         else:
             self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=self.options.mapper_blocks_num)
         self.mapper.load_state_dict(state_dict['mapper'])
@@ -652,8 +655,8 @@ class Grid():
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
-            if not self.options.use_global_feature:
-                feat = feat[:,:self.encoder.patch_feature_channels]
+            # if not self.options.use_global_feature:
+            #     feat = feat[:,:self.encoder.patch_feature_channels]
             conf = conf.squeeze().flatten(0,2)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]

@@ -71,7 +71,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
         task_id,diag,output_path = task_config
         task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
         os.makedirs(output_path,exist_ok=True)
-        encoder = Encoder(cfg_large,verbose=0)
+        encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
         encoder.load_state_dict(encoder_state_dict)
         grid = Grid(options = options,
                     encoder = encoder,
@@ -104,7 +104,7 @@ class RSEA():
         random.seed(42)
         self.imgs:List[RSImage] = []
         self.grids:List[Grid] = []
-        self.encoder = Encoder(cfg_large,verbose=0)
+        self.encoder = Encoder(cfg_large,verbose=0,output_global_feature=self.options.use_global_feature)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
         self.root = options.root
