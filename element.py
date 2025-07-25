@@ -24,7 +24,8 @@ from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 from torchvision import transforms
 import kornia.augmentation as K
-from torch_kdtree import build_kd_tree
+# from torch_kdtree import build_kd_tree
+from pykeops.torch import LazyTensor
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
@@ -95,7 +96,7 @@ class Element():
         self.crop_imgs_NHWC,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size,crop_step)
         self.crop_img_num = len(self.crop_imgs_NHWC)
         self.SAMPLE_FACTOR = self.encoder.SAMPLE_FACTOR
-        self.buffer,self.kd_tree = self.__extract_features__()
+        self.buffer,self.point_base = self.__extract_features__()
         self.map_coeffs = self.__calculate_map_coeffs__()
         self.ransac_threshold = self.options.ransac_threshold
         self.batch_num = int(np.ceil(self.patch_num / self.options.patches_per_batch))
@@ -271,11 +272,12 @@ class Element():
         }
         self.patch_num = len(features_PD)
 
-        kd_tree = build_kd_tree(locals_P2,device=self.device)
+        # kd_tree = build_kd_tree(locals_P2,device=self.device)
+        points_base = LazyTensor(locals_P2.unsqueeze(0))
 
         self._log(f"Extract features done in {time.perf_counter() - start_time} seconds \t {self.patch_num} patches in total")
         
-        return buffer,kd_tree
+        return buffer,points_base
     
     def __calculate_map_coeffs__(self):
         map_coeffs = {
@@ -284,6 +286,15 @@ class Element():
             'z':get_map_coef(self.buffer['objs'][:,2].cpu().numpy())
         }
         return map_coeffs
+    
+    def query_point_base(self,query_points:torch.Tensor,k=3):
+        """
+        query_points: (N,2)
+        """
+        query = LazyTensor(query_points.unsqueeze(1))
+        dist_ij = ((query - self.point_base) ** 2).sum(-1)
+        dists,idxs = dist_ij.Kmin_argmin(K=k, dim=1)
+        return dists,idxs
 
     def warp_by_poly(self,raw,coefs):
         x = apply_polynomial(raw[:,0],coefs['x'])
@@ -740,9 +751,9 @@ class Element():
     
     def clear_buffer(self):
         del self.buffer
-        del self.kd_tree
+        del self.point_base
         self.buffer = None
-        self.kd_tree = None
+        self.point_base = None
 
     def to_device(self,device):
         self.device = device

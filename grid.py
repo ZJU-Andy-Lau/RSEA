@@ -25,7 +25,6 @@ from scipy.interpolate import RegularGridInterpolator
 from copy import deepcopy
 from torchvision import transforms
 import kornia.augmentation as K
-from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
@@ -302,7 +301,11 @@ class Grid():
                                                         dim=0)
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
                     torch.cuda.synchronize()
-                    dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
+                    # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
+                    try:
+                        dists,idxs = element.query_point_base(sample_linesamps,k=3)
+                    except Exception as e:
+                        self.fprint(f'{e}')
                     torch.cuda.synchronize()
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
                     self.fprint(f"dist shape:{dists.shape} \t idxs shape:{idxs.shape}")

@@ -25,7 +25,6 @@ from rich.table import Table
 from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, track
 import torch.nn.functional as F
 from orthorectify import orthorectify_image
-from torch_kdtree import build_kd_tree
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
