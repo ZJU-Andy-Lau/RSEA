@@ -1,125 +1,77 @@
-import torch
-import torch.nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-class MultiStageOneCycleLR:
-    def __init__(self, 
-                 optimizer, 
-                 max_lr, 
-                 steps_per_epoch, 
-                 n_epochs_per_stage,
-                 gamma = None, 
-                 gamma_factor = 1.0,
-                 min_lr = None,
-                 lr_decay = 1.0,
-                 epoch_decay = 1.0, 
-                 pct_start = 0.3,
-                 pct_decay = 0.8,
-                 summit_hold = 0.1,
-                 cooldown = 0.1, 
-                 anneal_strategy='cos'):
-        """
-        自定义多阶段 OneCycleLR 调度器
+from torch.optim.optimizer import Optimizer
+from torch.optim.lr_scheduler import _LRScheduler
+import math
+from typing import List
+class MultiStageOneCycleLR(_LRScheduler):
+    """
+    一个自定义的学习率调度器，它结合了线性预热、保持和余弦退火。
+
+    该调度器将学习率在训练过程中分为三个阶段进行调整：
+    1. 线性预热：在前 `warmup_steps` 步中，学习率从0线性增加到 `base_lr`。
+    2. 保持阶段：在预热之后，学习率保持为 `base_lr`。
+    3. 余弦退火：在最后的 `cooldown_steps` 步中，学习率按余弦曲线从 `base_lr` 衰减到0。
+
+    Args:
+        optimizer (Optimizer): 被包装的优化器。
+        total_steps (int): 训练过程的总步数。
+        warmup_ratio (float): 用于线性预热的步数占总步数的比例。
+        cooldown_ratio (float): 用于余弦退火的步数占总步数的比例。
+        last_epoch (int, optional): 最后一个周期的索引。默认为 -1。
+        verbose (bool, optional): 如果为 True，则每次更新时打印一条信息。默认为 False。
+    """
+    def __init__(self, optimizer: Optimizer, total_steps: int, warmup_ratio: float, cooldown_ratio: float, last_epoch: int = -1, verbose: bool = False):
+        # 计算各个阶段的步数
+        self.total_steps = total_steps
+        self.warmup_steps = int(total_steps * warmup_ratio)
+        self.cooldown_steps = int(total_steps * cooldown_ratio)
         
-        Args:
-            optimizer: 优化器
-            max_lr: 初始阶段的最大学习率
-            steps_per_epoch: 每个epoch的 step 数
-            n_epochs_per_stage: 每个阶段的 epoch 数
-            w: 每阶段的学习率衰减因子（如 0.1)
-            pct_start: OneCycleLR 中学习率上升占比
-            anneal_strategy: OneCycleLR 的学习率下降策略 ('cos' 或 'linear')
+        # 计算保持阶段的步数
+        self.constant_steps = total_steps - self.warmup_steps - self.cooldown_steps
+        
+        # 进行合法性检查
+        if self.constant_steps < 0:
+            raise ValueError("预热比例和退火比例的总和不能超过1。")
+
+        # 计算退火阶段的起始步
+        self.cooldown_start_step = self.warmup_steps + self.constant_steps
+
+        super().__init__(optimizer, last_epoch, verbose)
+
+    def get_lr(self) -> List[float]:
         """
-        self.optimizer = optimizer
-        self.base_max_lr = max_lr
-        self.steps_per_epoch = steps_per_epoch
-        self.n_epochs_per_stage = n_epochs_per_stage
-        self.lr_decay = lr_decay
-        self.min_lr = min_lr
-        self.epoch_decay = epoch_decay
-        self.pct_start = pct_start
-        self.pct_decay = pct_decay
-        self.anneal_strategy = anneal_strategy
-        self.summit_hold = summit_hold
-        self.cooldown = cooldown
-        self.gamma_factor = gamma_factor
+        根据当前步数计算学习率。
+        这是 _LRScheduler 的核心方法，由 step() 方法在内部调用。
+        """
+        # self.last_epoch 是由 _LRScheduler 基类管理的当前步数（从0开始）
+        current_step = self.last_epoch
 
-        # 当前阶段和调度器
-        self.current_stage = 0
-        self.epoch_count = 0
-        self.step_count = 0
-        self.scheduler = None
-        self.scheduler_type = 0
-        self.cooldown_started = False
-        self.manual_cooldown = False
-        self.gamma = 0.3 ** (1. / (10 * self.steps_per_epoch)) if gamma is None else gamma
-        if not self.min_lr is None:
-            exp_steps = self.steps_per_epoch * self.n_epochs_per_stage * (1. - self.pct_start - self.summit_hold)
-            self.gamma = (self.min_lr / self.base_max_lr) ** (1. / exp_steps)
-        self._create_new_scheduler()
+        # --- 阶段1: 线性预热 ---
+        # 仅在 warmup_steps > 0 且当前步数在预热阶段内时执行
+        if self.warmup_steps > 0 and current_step < self.warmup_steps:
+            # 计算预热比例因子
+            # +1 是为了确保在第0步时学习率不为0（如果需要），但通常从0开始更常见
+            warmup_factor = float(current_step + 1) / float(self.warmup_steps)
+            return [base_lr * warmup_factor for base_lr in self.base_lrs]
 
-    def _create_new_scheduler(self):
-        """初始化当前阶段的 OneCycleLR 调度器"""
-        stage_max_lr = self.base_max_lr * (self.lr_decay ** self.current_stage)
-        # print(f"Stage {self.current_stage + 1}: max_lr = {stage_max_lr:.6f} n_epochs = {self.n_epochs_per_stage} pct_start = {self.pct_start} gamma = {self.gamma} gamma_factor = {self.gamma_factor}")
+        # --- 阶段3: 余弦退火 ---
+        # 如果当前步数已经进入或超过了退火的起始步
+        elif current_step >= self.cooldown_start_step:
+            # 计算当前在退火阶段的进度
+            step_in_cooldown = current_step - self.cooldown_start_step
+            
+            # 避免在 cooldown_steps 为 0 时出现除零错误
+            if self.cooldown_steps == 0:
+                cooldown_progress = 1.0
+            else:
+                # 确保进度在 [0, 1] 范围内
+                cooldown_progress = min(float(step_in_cooldown) / float(self.cooldown_steps), 1.0)
+            
+            # 使用余弦退火公式计算衰减因子
+            cooldown_factor = 0.5 * (1.0 + math.cos(math.pi * cooldown_progress))
+            
+            return [base_lr * cooldown_factor for base_lr in self.base_lrs]
 
-        # 计算当前阶段的步数
-        self.scheduler = lr_scheduler.OneCycleLR(
-            self.optimizer,
-            max_lr=stage_max_lr,
-            steps_per_epoch= self.steps_per_epoch,
-            epochs=self.n_epochs_per_stage,
-            pct_start=self.pct_start,
-            anneal_strategy=self.anneal_strategy,
-            cycle_momentum=False,
-            final_div_factor=40
-        )
-    
-    def _create_exp_scheduler(self):
-
-        # 计算当前阶段的步数
-        self.scheduler = lr_scheduler.ExponentialLR(self.optimizer,self.gamma)
-    
-
-    def step(self):
-        """更新学习率"""
-        if self.step_count < self.steps_per_epoch * self.n_epochs_per_stage * (self.pct_start) or self.step_count >= self.steps_per_epoch * self.n_epochs_per_stage * (self.pct_start + self.summit_hold) or self.manual_cooldown:
-            self.scheduler.step()
-        self.step_count += 1
-
-        if self.scheduler_type == 0 and (self.step_count >= self.steps_per_epoch * self.n_epochs_per_stage * (self.pct_start + self.summit_hold) or self.manual_cooldown):
-            self._create_exp_scheduler()
-            self.scheduler_type = 1
-            # print('switch to exp scheduler')
-
-        if self.scheduler_type == 1 and self.cooldown_started == False and self.step_count >= self.steps_per_epoch * self.n_epochs_per_stage * (1. - self.cooldown):
-            self.scheduler.gamma = self.gamma ** 5
-            self.cooldown_started = True
-            # print('start cooldown')
-
-        if self.step_count % self.steps_per_epoch == 0:
-            self.epoch_count += 1
-            if self.scheduler_type == 1:
-                self.scheduler.gamma = min(1.,self.scheduler.gamma * self.gamma_factor)
-        if self.epoch_count >= self.n_epochs_per_stage:
-            self.n_epochs_per_stage = int(self.n_epochs_per_stage * self.epoch_decay)
-            self.pct_start *= self.pct_decay
-            self.new_stage()
-    
-    def cool_down(self,adjust_gamma = True):
-        self.manual_cooldown = True
-        if not self.min_lr is None and adjust_gamma:
-            exp_steps = self.steps_per_epoch * self.n_epochs_per_stage - self.step_count
-            self.gamma = (self.min_lr / self.base_max_lr) ** (1. / exp_steps)
-
-    def new_stage(self):
-        """进入下一个阶段"""
-        self.current_stage += 1
-        self.step_count = 0
-        self.epoch_count = 0
-        self.scheduler_type = 0
-        self._create_new_scheduler()
-
-    def get_last_lr(self):
-        """获取当前学习率"""
-        return self.scheduler.get_last_lr()
+        # --- 阶段2: 保持阶段 ---
+        # 如果不处于预热或退火阶段，则学习率保持为基础学习率
+        else:
+            return [base_lr for base_lr in self.base_lrs]

@@ -192,20 +192,39 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:DecoderFinetune,project
 def pretrain(args):
     os.makedirs('./log',exist_ok=True)
     os.makedirs(os.path.dirname(args.encoder_output_path),exist_ok=True)
-    os.makedirs(args.decoder_output_path,exist_ok=True)
+    os.makedirs(args.checkpoints_path,exist_ok=True)
     pprint = partial(print_on_main, rank=dist.get_rank())
+    num_gpus = dist.get_world_size()
+    pprint(f"Using {num_gpus} GPUS")
     pprint("Loading Dataset")
     rank = dist.get_rank()
     
-    dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
-    if rank == 0:
-        with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
-            total_num = len(f.keys())
-        dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
-        indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
-        indices_str = " ".join(indices_str)
-        with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
-            f.write(f"{indices_str}\n")
+    if args.resume_training:
+        training_configs = torch.load(os.path.join(args.checkpoints_path,'training_configs.pth'))
+        min_loss = training_configs['min_loss']
+        last_loss = training_configs['last_loss']
+        epoch = training_configs['epoch']
+        dataset_indices = training_configs['dataset_indices'].to(args.device)
+        log_name = training_configs['log_name']
+        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],log_name)
+    else:
+        training_configs = None
+        min_loss = args.min_loss
+        last_loss = None
+        epoch = 0
+        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],f'{args.log_prefix}_finetune_log')
+
+
+    if not args.resume_training:
+        dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
+        if rank == 0:
+            with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
+                total_num = len(f.keys())
+            dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
+            indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
+            indices_str = " ".join(indices_str)
+            with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
+                f.write(f"{indices_str}\n")
 
     dist.barrier()
     dist.broadcast(dataset_indices,src=0)
@@ -227,33 +246,32 @@ def pretrain(args):
 
     encoder = Encoder(cfg)
     projector = ProjectHead(encoder.patch_feature_channels,128)
-    if not args.encoder_path is None:
-        encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth'),map_location='cpu').items()},strict=True)
-        pprint('Encoder Loaded')
+    encoder = encoder.to(args.device)
+    projector = projector.to(args.device)
+    if num_gpus > 1:
+        encoder = distibute_model(encoder,args.local_rank)
+        projector = distibute_model(projector,args.local_rank)
 
     encoder_optimizer = optim.AdamW(params=list(encoder.get_unfreeze_parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
-                                             max_lr=args.lr_encoder_max,
-                                             steps_per_epoch=dataset_num,
-                                             n_epochs_per_stage=args.max_epoch,
-                                             summit_hold=0,
-                                             gamma=.5 ** (1. / (300 * dataset_num)),
-                                             pct_start=100. / args.max_epoch)
+                                             total_steps=dataset_num * args.max_epoch,
+                                             warmup_ratio=100. / args.max_epoch,
+                                             cooldown_ratio=.5)
     
+    if args.resume_training:
+        encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'encoder.pth'),map_location='cpu').items()},strict=True)
+        projector.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'projector.pth')))
+        encoder_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_optimizer.pth')))
+        encoder_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_scheduler.pth')))
+        
+    elif not args.encoder_path is None:
+        encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth'),map_location='cpu').items()},strict=True)
+        pprint('Encoder Loaded')
 
     args.patch_feature_channels = encoder.patch_feature_channels
     args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
 
-
-    encoder = encoder.to(args.device)
-    projector = projector.to(args.device)
-    num_gpus = dist.get_world_size()
-    pprint(f"Using {num_gpus} GPUS")
-    if num_gpus > 1:
-        encoder = distibute_model(encoder,args.local_rank)
-        projector = distibute_model(projector,args.local_rank)
-    
     pprint("Building Decoders")     
 
     decoders = []
@@ -261,10 +279,6 @@ def pretrain(args):
     schedulers = []
     for dataset_idx in trange(dataset_num):
         decoder = DecoderFinetune(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
-
-        if not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
-            decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})
-
         decoder = decoder.to(args.device)
         if num_gpus > 1:
             decoder = distibute_model(decoder,args.local_rank)
@@ -278,18 +292,25 @@ def pretrain(args):
                                             summit_hold=0,
                                             gamma=.5 ** (1. / 300),
                                             pct_start=100. / args.max_epoch)
+        
+        if args.resume_training:
+            decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})
+            optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_optimizer_{dataset_idx}.pth')))
+            scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_scheduler_{dataset_idx}.pth')))
+
+        elif not args.decoder_path is None and os.path.exists(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth')):
+            decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,f'decoder_{dataset_idx}.pth')).items()})
+        
         optimizers.append(optimizer)
         schedulers.append(scheduler)
         decoders.append(decoder)
 
-    min_loss = args.min_loss
-    last_loss = None
+    
     start_time = time.perf_counter()
     criterion = CriterionFinetune()
-    logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],f'{args.log_prefix}_finetune_log')
-    
+    step_count = 0
     # torch.autograd.set_detect_anomaly(True)
-    for epoch in range(args.max_epoch):
+    for epoch in range(epoch,args.max_epoch):
         pprint(f'\nEpoch:{epoch}')
         sampler.set_epoch(epoch)
         # valid(epoch)
@@ -369,6 +390,7 @@ def pretrain(args):
             total_loss_conf += loss_conf_rec
             total_loss_feat += loss_feat_rec
             count += 1
+            step_count += 1
             # print(f"\n6---------debug:{dist.get_rank()}\n")
 
 
@@ -383,8 +405,8 @@ def pretrain(args):
 
             if dist.get_rank() == 0:
                 curtime = time.perf_counter()
-                curstep = epoch * dataset_num + count
-                remain_step = args.max_epoch  * dataset_num - curstep
+                curstep = step_count
+                remain_step = (args.max_epoch - epoch)  * dataset_num - count
                 cost_time = curtime - start_time
                 remain_time = remain_step * cost_time / curstep
 
@@ -433,9 +455,37 @@ def pretrain(args):
                 torch.save(encoder_state_dict,os.path.join(os.path.join(args.encoder_output_path,'backbone.pth')))
                 # torch.save(encoder.state_dict(),args.encoder_output_path)
                 # if not args.freeze_decoder:
-                for dataset_idx in range(dataset_num):
-                    torch.save(decoders[dataset_idx].state_dict(),os.path.join(args.encoder_output_path,f'decoder_{dataset_idx}.pth'))
+                # for dataset_idx in range(dataset_num):
+                #     torch.save(decoders[dataset_idx].state_dict(),os.path.join(args.decoder_output_path,f'decoder_{dataset_idx}.pth'))
                 print('best updated')
+            
+            if epoch % 5 == 0:
+                path = args.checkpoints_path
+                encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
+                encoder_optimizer_state_dict = encoder_optimizer.state_dict()
+                encoder_scheduler_state_dict = encoder_scheduler.state_dict()
+                projector_state_dict = projector.state_dict()
+                torch.save(encoder_state_dict,os.path.join(path,'encoder.pth'))
+                torch.save(encoder_optimizer_state_dict,os.path.join(path,'encoder_optimizer.pth'))
+                torch.save(encoder_scheduler_state_dict,os.path.join(path,'encoder_scheduler'))
+                torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
+                for i in range(dataset_num):
+                    decoder_state_dict = {k:v.detach().cpu() for k,v in decoders[i].state_dict().items()}
+                    decoder_optimizer_state_dict = optimizers[i].state_dict()
+                    decoder_scheduler_state_dict = schedulers[i].state_dict()
+                    torch.save(decoder_state_dict,os.path.join(path,f'decoder_{i}.pth'))
+                    torch.save(decoder_optimizer_state_dict,os.path.join(path,f'decoder_optimizer_{i}.pth'))
+                    torch.save(decoder_scheduler_state_dict,os.path.join(path,f'decoder_scheduler_{i}.pth'))
+                training_configs = {
+                    'dataset_indices':torch.from_numpy(dataset_indices),
+                    'epoch':torch.tensor(epoch),
+                    'min_loss':torch.tensor(min_loss),
+                    'last_loss':torch.tensor(last_loss),
+                    'log_name':logger.file_name
+                }
+                torch.save(training_configs,os.path.join(path,'training_config.pth'))
+
+        
             logger.update({
                 'epoch':epoch,
                 'loss':total_loss,
@@ -456,12 +506,11 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_path',type=str,default='./datasets')
     parser.add_argument('--dataset_num',type=int,default=None)
     parser.add_argument('--encoder_path',type=str,default=None)
-    parser.add_argument('--decoder_path',type=str,default=None)
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
-    parser.add_argument('--decoder_output_path',type=str,default=None)
+    parser.add_argument('--checkpoints_path',type=str,default=None)
     parser.add_argument('--batch_size',type=int,default=8)
     parser.add_argument('--decoder_block_num',type=int,default=1)
-    parser.add_argument('--use_gpu',type=bool,default=True)
+    parser.add_argument('--resume_training',type=str2bool,default=False)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_encoder_max',type=float,default=1e-4)
@@ -486,12 +535,6 @@ if __name__ == '__main__':
     # args.batch_size = args.batch_size // 4
 
     pprint = partial(print_on_main, rank=dist.get_rank())
-
-    if not os.path.exists(args.encoder_output_path):
-        os.mkdir(args.encoder_output_path)
-
-    if not os.path.exists(args.decoder_output_path):
-        os.mkdir(args.decoder_output_path)
 
     # torch.manual_seed(42)
     # np.random.seed(42)

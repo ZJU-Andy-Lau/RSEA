@@ -185,18 +185,26 @@ def calculate_errors(T_true, T_pred):
     return rotation_error, translation_error
 
 class TableLogger():
-    def __init__(self,folder_path:str,columns:list,prefix:str = 'log'):
+    def __init__(self,folder_path:str,columns:list,prefix:str = 'log',name = None):
         self.df = pd.DataFrame(columns=columns)
-        self.folder = Path(folder_path)
-        self.file_name = f"{prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
-        self.df.to_csv(self.folder / self.file_name,index=False)
+        self.folder = folder_path
+        if name is None:
+            self.file_name = f"{prefix}_{datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+        else:
+            self.file_name = name
+        self.path = os.path.join(self.folder,self.file_name)
+        
+        if not os.path.exists(self.path):
+            self.df.to_csv(self.path,index=False)
+        else:
+            self.df = pd.read_csv(self.path)
     def update(self,row):
         try:
             self.df = self.df._append(row,ignore_index=True)
-            self.df.to_csv(self.folder / self.file_name,index=False)
+            self.df.to_csv(self.path,index=False)
         except:
             self.df = self.df.append(row,ignore_index=True)
-            self.df.to_csv(self.folder / self.file_name,index=False)
+            self.df.to_csv(self.path,index=False)
 
 def average_downsample_matrix(matrix:np.ndarray, n):
     """

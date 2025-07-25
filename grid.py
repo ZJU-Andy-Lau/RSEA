@@ -61,6 +61,12 @@ class Grid():
                 self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=options.mapper_blocks_num)
             else:
                 self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=options.mapper_blocks_num)
+            self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
+            self.scheduler = MultiStageOneCycleLR(optimizer=optimizer,
+                                                total_steps=self.options.grid_training_iters,
+                                                warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+                                                cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+            self.train_iter_idx = 0
         else:
             self.load_grid(grid_path)
         self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()]) #[min_x,min_y,max_x,max_y]
@@ -240,16 +246,20 @@ class Grid():
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
         optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-        scheduler = MultiStageOneCycleLR(optimizer = optimizer,
-                                        max_lr = self.options.grid_train_lr_max,
-                                        min_lr = self.options.grid_train_lr_min,
-                                        n_epochs_per_stage = self.options.grid_training_iters,
-                                        steps_per_epoch = 1,
-                                        pct_start = self.options.grid_warmup_iters / self.options.grid_training_iters,
-                                        summit_hold = self.options.grid_summit_hold_iters / self.options.grid_training_iters,
-                                        #gamma = self.options.lr_decay_per_100_epochs ** (1. / 100.),
-                                        cooldown = 0.0
-                                        )
+        # scheduler = MultiStageOneCycleLR(optimizer = optimizer,
+        #                                 max_lr = self.options.grid_train_lr_max,
+        #                                 min_lr = self.options.grid_train_lr_min,
+        #                                 n_epochs_per_stage = self.options.grid_training_iters,
+        #                                 steps_per_epoch = 1,
+        #                                 pct_start = self.options.grid_warmup_iters / self.options.grid_training_iters,
+        #                                 summit_hold = self.options.grid_summit_hold_iters / self.options.grid_training_iters,
+        #                                 #gamma = self.options.lr_decay_per_100_epochs ** (1. / 100.),
+        #                                 cooldown = 0.0
+        #                                 )
+        scheduler = MultiStageOneCycleLR(optimizer=optimizer,
+                                         total_steps=self.options.grid_training_iters,
+                                         warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+                                         cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         criterion = CriterionTrainGrid()
         bce = nn.BCELoss()
         self.mapper.train()
@@ -283,7 +293,8 @@ class Grid():
                 'total':self.options.grid_training_iters * len(self.elements)
             })
         progress = 0
-        for iter_idx in range(self.options.grid_training_iters):
+        for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
+            iter_idx = self.train_iter_idx
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
@@ -398,18 +409,6 @@ class Grid():
                 total_reg += loss_reg
                 count += 1
                 progress += 1 
-                # print(f"iter:{iter_idx + 1} \t img:{element.id}/{len(self.elements)} \t loss:{loss.item():.2f} \t l_obj:{loss_obj.item():.2f} \t l_photo:{loss_photo.item():.2f} \t l_real:{loss_photo_real.item():.2f} \t l_height:{loss_height.item():.2f} \t bias:{loss_bias:.2f} \t reg:{loss_reg:.2f} \t lr:{scheduler.get_last_lr()[0]:.7f}")
-                # pbar.update(1)
-                # pbar.set_postfix({
-                #     'lr':f'{scheduler.get_last_lr()[0]:.2e}',
-                #     'dist':f'{loss_distribution.item():.2f}',
-                #     's':f'{sigma_avg:.2f}',
-                #     'obj':f'{loss_obj.item():.2f}',
-                #     'photo':f'{loss_photo.item():.2f}',
-                #     'h':f'{loss_height.item():.2f}',
-                #     'reg':f'{loss_reg:.2f}',
-                #     'min':f'{min_photo_loss:.2f}'
-                # })
 
                 if not task_info is None:
                     self.update_task_state(task_info,{
@@ -463,7 +462,7 @@ class Grid():
                 else:
                     no_update_count += 1
                 
-                if no_update_count >= 100 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
+                if no_update_count >= 200 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
                     self.mapper.load_state_dict(best_mapper_state_dict['model'])
                     optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                     scheduler.cool_down(adjust_gamma=False)
@@ -505,6 +504,9 @@ class Grid():
     def save_grid(self):
         state_dict = {
             'mapper':self.mapper.state_dict(),
+            'optimizer':self.optimizer.state_dict(),
+            'scheduler':self.scheduler.state_dict(),
+            'train_iter_idx':self.train_iter_idx,
             'diag':torch.from_numpy(self.diag),
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
@@ -525,6 +527,14 @@ class Grid():
         else:
             self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=self.options.mapper_blocks_num)
         self.mapper.load_state_dict(state_dict['mapper'])
+        self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
+        self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+                                            total_steps=self.options.grid_training_iters,
+                                            warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+                                            cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        self.optimizer.load_state_dict(state_dict['optimizer'])
+        self.scheduler.load_state_dict(state_dict['scheduler'])
+        self.train_iter_idx = state_dict['train_iter_idx']
         self.diag = state_dict['diag'].cpu().numpy()
         self.map_coeffs = {
             'x':state_dict['map_coeffs_x'].cpu().numpy(),

@@ -315,115 +315,70 @@ class AffineFitter:
         Returns:
             torch.Tensor: 拟合得到的 (2, 3) 仿射变换矩阵。
         """
+        if self.verbose:
+            print("开始求解仿射变换")
+
         # --- 1. 数据校验与准备 ---
         if not (source_points.shape == pred_means.shape == pred_stds.shape and source_points.dim() == 2 and source_points.shape[1] == 2):
             raise ValueError("所有输入张量的形状必须为 (N, 2)。")
         
         device = source_points.device
+        dtype = source_points.dtype
         num_points = source_points.shape[0]
 
-        # 将源点转换为齐次坐标 (N, 3)，方便矩阵乘法
-        # (x, y) -> (x, y, 1)
-        source_homogeneous = torch.cat(
-            [source_points, torch.ones(num_points, 1, device=device)], 
-            dim=1
-        )
+        # 仿射变换参数有6个: p = [a, b, c, d, e, f]^T
+        # 初始化 H (在文献中常称为 A^T A) 和 b (在文献中常称为 A^T y)
+        H = torch.zeros((6, 6), device=device, dtype=dtype)
+        b = torch.zeros((6, 1), device=device, dtype=dtype)
 
-        # --- 2. 初始化变换参数和优化器 ---
-        # 初始化一个 (2, 3) 的仿射矩阵 [a, b, c; d, e, f]
-        # 最佳实践是初始化为单位变换
-        affine_matrix = torch.tensor([[1.0, 0.0, 0.0],
-                                      [0.0, 1.0, 0.0]], device=device, dtype=source_points.dtype)
-        
-        
-        # 将其封装为可学习参数
-        self.params = nn.Parameter(affine_matrix)
-
-        best_params = self.params
-        
-        # 使用 Adam 优化器
-        # optimizer = torch.optim.Adam([self.params], lr=self.lr)
-
-        optimizer = torch.optim.LBFGS([self.params], lr=self.lr)
-
-        # --- 3. 计算NLL损失的权重 ---
+        # --- 2. 计算权重 ---
         # 权重 = 1 / sigma^2。增加一个小的 epsilon 防止除以零。
         weights = 1.0 / (pred_stds.pow(2) + 1e-8)
-
-        # --- 4. 优化循环 ---
-        if self.verbose:
-            print(f"开始拟合... 总共 {self.iterations if self.iterations > 0 else 'no limit'} 次迭代。")
-
-        def closure():
-            # 每次调用闭包时，都需要清空梯度
-            optimizer.zero_grad()
-            
-            # 应用仿射变换
-            transformed_points = source_homogeneous @ self.params.T
-
-            # 计算损失 (与之前完全相同)
-            error = transformed_points - pred_means
-            weighted_squared_error = error.pow(2) * weights
-            loss = weighted_squared_error.sum()
-            
-            # 计算梯度
-            loss.backward()
-            
-            # 闭包必须返回损失值
-            return loss
+        w_x = weights[:, 0]
+        w_y = weights[:, 1]
         
-        min_loss = 1e9
-        iter_count = 0
-        no_update_count = 0
+        mu_x = pred_means[:, 0]
+        mu_y = pred_means[:, 1]
 
-        while(True):
-            iter_count += 1
-            # optimizer.zero_grad()
+        # --- 3. 构建线性方程组 Hp = b ---
+        # 遍历所有点，累加信息到 H 和 b 中
+        for i in range(num_points):
+            x_orig, y_orig = source_points[i]
 
-            # # 应用仿射变换: (N, 3) @ (3, 2) -> (N, 2)
-            # # [x, y, 1] @ [[a, d], [b, e], [c, f]] = [ax+by+c, dx+ey+f]
-            # transformed_points = source_homogeneous @ self.params.T
+            # 构造与该点相关的向量 u_i 和 v_i
+            # x' = u_i^T * p
+            # y' = v_i^T * p
+            u_i = torch.tensor([x_orig, y_orig, 1, 0, 0, 0], device=device, dtype=dtype).unsqueeze(1) # 6x1
+            v_i = torch.tensor([0, 0, 0, x_orig, y_orig, 1], device=device, dtype=dtype).unsqueeze(1) # 6x1
 
-            # # 计算损失 (加权MSE，等价于NLL)
-            # # L = sum( (x'_i - mu_xi)^2 / sigma_xi^2 + (y'_i - mu_yi)^2 / sigma_yi^2 )
-            # error = transformed_points - pred_means
-            # weighted_squared_error = error.pow(2) * weights
-            # loss = weighted_squared_error.mean()
-
+            # 累加到Hessian矩阵 H
+            # H = sum(w_xi * u_i*u_i^T + w_yi * v_i*v_i^T)
+            H += w_x[i] * (u_i @ u_i.T) + w_y[i] * (v_i @ v_i.T)
             
+            # 累加到向量 b
+            # b = sum(w_xi * mu_xi * u_i + w_yi * mu_yi * v_i)
+            b += w_x[i] * mu_x[i] * u_i + w_y[i] * mu_y[i] * v_i
 
-            # # 反向传播和优化
-            # loss.backward()
-            loss = optimizer.step(closure) / num_points
-            if loss < min_loss:
-                min_loss = loss.item()
-                best_params = self.params
-                no_update_count = 0
-            else:
-                no_update_count += 1
-            # optimizer.step()
+        # --- 4. 求解线性方程组 ---
+        if self.verbose:
+            print("线性方程组构建完成，正在求解 Hp = b ...")
+        
+        try:
+            # 使用torch.linalg.solve求解器，它比手动求逆更稳定、更高效
+            params_vec = torch.linalg.solve(H, b, out=None) # PyTorch 1.10+
+            # 对于旧版本PyTorch，可以使用: params_vec, _ = torch.solve(b, H)
+        except torch.linalg.LinAlgError as e:
+            print("错误：矩阵H是奇异的或接近奇异的，无法求解。")
+            print("这通常发生在输入点共线或点数量过少的情况下。")
+            raise e
 
-            if self.verbose and (iter_count % 10 == 0 or iter_count == self.iterations - 1 or no_update_count > 50):
-                if self.iterations > 0:
-                    print(f"iter {iter_count:5d}/{self.iterations}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
-                else:
-                    print(f"iter {iter_count:5d}, loss: {loss.item():.4f}, min_loss: {min_loss:.4f}")
-            
-            if self.iterations > 0 and iter_count >= self.iterations:
-                break
-
-            if no_update_count > 50:
-                if self.verbose:
-                    print("no update for 5000 iterations, early stop")
-                break
-            
-
-        # --- 5. 保存并返回结果 ---
-        # detach() 以防止后续操作被追踪梯度
-        self.transformation_matrix = best_params.detach().clone()
+        # --- 5. 格式化并保存结果 ---
+        # 将解向量 p (6x1) 变形为 2x3 的仿射矩阵
+        self.transformation_matrix = params_vec.reshape(2, 3)
+        
         
         if self.verbose:
-            print("拟合完成！")
+            print("求解完成！")
             ori_dis = torch.norm(source_points - pred_means,dim=-1).mean()
             trans_points = self.transform(source_points)
             trans_dis = torch.norm(trans_points - pred_means,dim=-1).mean()

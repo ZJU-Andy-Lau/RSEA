@@ -67,18 +67,31 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
                 break
         except queue.Empty:
             break
-        
-        task_id,diag,output_path = task_config
-        task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
-        os.makedirs(output_path,exist_ok=True)
-        encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
-        encoder.load_state_dict(encoder_state_dict)
-        grid = Grid(options = options,
-                    encoder = encoder,
-                    diag = diag,
-                    output_path = output_path,
-                    device = device
-                    )
+
+        if options.resume_training:
+            task_id,grid_path,output_path = task_config
+            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+            os.makedirs(output_path,exist_ok=True)
+            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+            encoder.load_state_dict(encoder_state_dict)
+            grid = Grid(options = options,
+                        encoder = encoder,
+                        grid_path = grid_path,
+                        output_path = output_path,
+                        device = device
+                        )
+        else:
+            task_id,diag,output_path = task_config
+            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+            os.makedirs(output_path,exist_ok=True)
+            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+            encoder.load_state_dict(encoder_state_dict)
+            grid = Grid(options = options,
+                        encoder = encoder,
+                        diag = diag,
+                        output_path = output_path,
+                        device = device
+                        )
         for img in imgs:
             grid.add_img(img = img)
         grid.to_device(device)
@@ -168,40 +181,21 @@ class RSEA():
             
             return diags
 
-        corners = np.stack([image.corner_xys for image in self.imgs])
-        grid_diags = find_grids(corners,grid_size) # M,2,2
-        if max_grid_num > 0:
-            grid_diags = grid_diags[:max_grid_num]
-        
-        print(f"{len(grid_diags)} grids is going to be created")
+        if self.options.resume_training:
+            grid_paths = [os.path.join(self.grid_root,i) for i in os.listdir(self.grid_root)]
+            grid_num = len(grid_paths)
+            print(f"{len(grid_paths)} grids is going to resume creating")
+        else:
+            corners = np.stack([image.corner_xys for image in self.imgs])
+            grid_diags = find_grids(corners,grid_size) # M,2,2
+            if max_grid_num > 0:
+                grid_diags = grid_diags[:max_grid_num]
+            grid_num = len(grid_diags)
+            print(f"{len(grid_diags)} grids is going to be created")
 
-        # for grid_idx,diag in enumerate(grid_diags):
-        #     print(f"Creating grid {grid_idx}")
-        #     grid_output_path = os.path.join(self.grid_root,f"grid_{grid_idx}")
-        #     os.makedirs(grid_output_path,exist_ok=True)
-
-        #     new_grid = Grid(options = self.options,
-        #                     encoder = self.encoder,
-        #                     diag = diag,
-        #                     output_path = grid_output_path)
-
-        #     for img_idx,image in enumerate(self.imgs):
-        #         new_grid.add_img(img = image,
-        #                         #  output_path = new_grid.output_path,
-        #                          )
-        #     new_grid.to_device('cpu')
-        #     # new_grid.valid_features()
-        #     # new_grid.train_elements()
-        #     # new_grid.valid_mappers()
-        #     # new_grid.adjust_elements()
-        #     self.grids.append(new_grid)
-        #     # new_grid.train_mapper()
-        #     # if grid_idx + 1 >= 12:
-        #     #     break
         try:
             mp.set_start_method("spawn", force=True)
             gpu_num = torch.cuda.device_count()
-            grid_num = len(grid_diags)
             world_size = min(gpu_num,grid_num)
             manager = mp.Manager()
             task_queue = manager.Queue()
@@ -209,7 +203,10 @@ class RSEA():
 
             for i in range(grid_num):
                 task_id = i + 1
-                task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
+                if self.options.resume_training:
+                    task_queue.put((task_id,grid_paths[i],os.path.join(self.grid_root,f"grid_{task_id}")))
+                else:
+                    task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
                 task_states[task_id] = {
                     "status":f"Grid {task_id}:等待分配GPU",
                     "progress":0,
