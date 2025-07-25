@@ -246,12 +246,6 @@ def pretrain(args):
 
     encoder = Encoder(cfg)
     projector = ProjectHead(encoder.patch_feature_channels,128)
-    encoder = encoder.to(args.device)
-    projector = projector.to(args.device)
-    if num_gpus > 1:
-        encoder = distibute_model(encoder,args.local_rank)
-        projector = distibute_model(projector,args.local_rank)
-
     encoder_optimizer = optim.AdamW(params=list(encoder.get_unfreeze_parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
@@ -268,6 +262,12 @@ def pretrain(args):
     elif not args.encoder_path is None:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'backbone.pth'),map_location='cpu').items()},strict=True)
         pprint('Encoder Loaded')
+
+    encoder = encoder.to(args.device)
+    projector = projector.to(args.device)
+    if num_gpus > 1:
+        encoder = distibute_model(encoder,args.local_rank)
+        projector = distibute_model(projector,args.local_rank)
 
     args.patch_feature_channels = encoder.patch_feature_channels
     args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
