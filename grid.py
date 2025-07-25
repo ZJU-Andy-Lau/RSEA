@@ -305,6 +305,7 @@ class Grid():
                     torch.cuda.synchronize() 
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
                     self.fprint(f"dist shape:{dists.shape} \t idxs shape:{idxs.shape}")
+                    self.fprint(f"{dists.max(dim=1)}")
                     valid_mask = dists.max(dim=1).values < 256
                     self.fprint(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     # break
