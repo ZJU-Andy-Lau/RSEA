@@ -482,7 +482,7 @@ def pretrain(args):
                     'last_loss':torch.tensor(last_loss),
                     'log_name':logger.file_name
                 }
-                torch.save(training_configs,os.path.join(path,'training_config.pth'))
+                torch.save(training_configs,os.path.join(path,'training_configs.pth'))
 
         
             logger.update({
