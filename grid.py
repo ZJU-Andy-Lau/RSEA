@@ -300,23 +300,38 @@ class Grid():
                                                         torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
                                                         torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
                     dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
                     valid_mask = dists.max(dim=1).values < 256
                     # print(f"dist shape:{dists.shape} \t valid_mask shape:{valid_mask.shape} \t idxs shape:{idxs.shape}")
                     # break
                     dists = 1. / (dists[valid_mask] + 1e-6)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 4")
                     idxs = idxs[valid_mask]
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 5")
                     dists = dists / torch.mean(dists,dim=-1,keepdim=True)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 6")
                     features_pD = element.buffer['features'][idxs].contiguous()
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 7")
                     confs_p1 = element.buffer['confs'][idxs].contiguous()
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 8")
                     objs_p3 = element.buffer['objs'][idxs].contiguous()
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 9")
                     locals_p2 = sample_linesamps[valid_mask]
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 10")
                     features_pD = features_pD * dists.unsqueeze(-1)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 11")
                     confs_p1 = confs_p1 * dists
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 12")
                     objs_p3 = objs_p3 * dists.unsqueeze(-1)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 13")
                     features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 14")
                     confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 15")
                     objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
+                    self.fprint(f"{task_info['id']}\t{iter_idx}\t 16")
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
                     features_pD = element.buffer['features'][sample_idxs].contiguous()
@@ -325,7 +340,7 @@ class Grid():
                     locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
                     valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
 
-                self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
+                
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
                 features_pD = features_pD[inside_border_mask]
@@ -345,7 +360,6 @@ class Grid():
                 # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
                 # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
                 
-                self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -368,8 +382,7 @@ class Grid():
                 output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
                 log_sigma_xyh_p3 = output_p6[:,3:]
-                
-                self.fprint(f"{task_info['id']}\t{iter_idx}\t 4")
+
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg,sigma_avg = criterion(iter_idx,
                                                                                                       self.options.element_training_iters,
                                                                                                       mu_xyh_p3,
@@ -406,7 +419,7 @@ class Grid():
                 #     'reg':f'{loss_reg:.2f}',
                 #     'min':f'{min_photo_loss:.2f}'
                 # })
-                self.fprint(f"{task_info['id']}\t{iter_idx}\t 5")
+
                 if not task_info is None:
                     self.update_task_state(task_info,{
                         'progress':progress,
@@ -423,7 +436,6 @@ class Grid():
                             'min':f'{min_photo_loss:.2f}'
                         }
                     })
-            self.fprint(f"{task_info['id']}\t{iter_idx}\t 6")
             optimizer.step()
 
             scheduler.step()
@@ -436,7 +448,6 @@ class Grid():
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
 
-            self.fprint(f"{task_info['id']}\t{iter_idx}\t 7")
 
             if (iter_idx + 1) % 10 == 0:
                 total_loss /= count
