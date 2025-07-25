@@ -301,8 +301,9 @@ class Grid():
                                                         torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 2")
+                    torch.cuda.synchronize()
                     dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
-                    torch.cuda.synchronize() 
+                    torch.cuda.synchronize()
                     self.fprint(f"{task_info['id']}\t{iter_idx}\t 3")
                     self.fprint(f"dist shape:{dists.shape} \t idxs shape:{idxs.shape}")
                     self.fprint(f"{dists.max(dim=1)}")
