@@ -292,8 +292,8 @@ class Element():
         query_points: (N,2)
         """
         query = LazyTensor(query_points.unsqueeze(1))
-        dist_ij = ((query - self.point_base) ** 2).sum(-1)
-        dists,idxs = dist_ij.Kmin_argmin(K=k, dim=1)
+        dist_ij:LazyTensor = ((query - self.point_base) ** 2).sum(-1)
+        dists,idxs = dist_ij.Kmin_argKmin(K=k, dim=1)
         return dists,idxs
 
     def warp_by_poly(self,raw,coefs):
