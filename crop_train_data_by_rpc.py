@@ -97,7 +97,7 @@ if __name__ == '__main__':
     root = args.root
     output_path = args.output_path
     os.makedirs(output_path,exist_ok=True)
-    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i and 'PAN' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i]
     total_num = len(names)
 
     print("Loading Images")

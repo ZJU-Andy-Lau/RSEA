@@ -658,7 +658,9 @@ class RPCModelParameterTorch:
         f.write(text)
         f.close()
 
-def load_rpc(rpc_path:str) -> RPCModelParameterTorch:
+def load_rpc(rpc_path:str,to_gpu=False) -> RPCModelParameterTorch:
     rpc = RPCModelParameterTorch()
     rpc.load_from_file(rpc_path)
+    if to_gpu:
+        rpc.to_gpu()
     return rpc

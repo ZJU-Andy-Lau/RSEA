@@ -259,7 +259,7 @@ if __name__ == '__main__':
 
         cv2.imwrite(os.path.join(output_path,f'{names[i]}.png'),img_output)
         
-        dem_output = dems[i].read(window = window).astype(np.float32)
+        dem_output = dems[i].read(window = window).astype(np.float32)[0]
         np.save(os.path.join(output_path,f'{names[i]}_height.npy'),dem_output)
 
         rpc.LINE_OFF -= line_min

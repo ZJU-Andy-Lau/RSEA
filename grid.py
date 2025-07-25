@@ -279,7 +279,7 @@ class Grid():
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
-                
+                print(f"{task_info['id']}\t{iter_idx}\t 1")
                 if iter_idx % 5 != 0:
                     sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
                                                             min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
@@ -316,6 +316,7 @@ class Grid():
                     locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
                     valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
 
+                print(f"{task_info['id']}\t{iter_idx}\t 2")
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
                 features_pD = features_pD[inside_border_mask]
@@ -335,6 +336,7 @@ class Grid():
                 # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
                 # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
                 
+                print(f"{task_info['id']}\t{iter_idx}\t 3")
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -358,6 +360,7 @@ class Grid():
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
                 log_sigma_xyh_p3 = output_p6[:,3:]
                 
+                print(f"{task_info['id']}\t{iter_idx}\t 4")
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg,sigma_avg = criterion(iter_idx,
                                                                                                       self.options.element_training_iters,
                                                                                                       mu_xyh_p3,
@@ -394,22 +397,24 @@ class Grid():
                 #     'reg':f'{loss_reg:.2f}',
                 #     'min':f'{min_photo_loss:.2f}'
                 # })
+                print(f"{task_info['id']}\t{iter_idx}\t 5")
                 if not task_info is None:
                     self.update_task_state(task_info,{
                         'progress':progress,
                         'info':{
+                            'i':f'{progress}',
                             'lr':f'{scheduler.get_last_lr()[0]:.2e}',
-                            'dist':f'{loss_distribution.item():.2f}',
+                            'd':f'{loss_distribution.item():.2f}', 
                             's':f'{sigma_avg:.2f}',
-                            'obj':f'{loss_obj.item():.2f}',
-                            'photo':f'{loss_photo.item():.2f}',
+                            'o':f'{loss_obj.item():.2f}',
+                            'p':f'{loss_photo.item():.2f}',
                             'h':f'{loss_height.item():.2f}',
-                            'reg':f'{loss_reg:.2f}',
+                            'r':f'{loss_reg:.2f}',
                             'v':f'{loss_valid:.2f}',
                             'min':f'{min_photo_loss:.2f}'
                         }
                     })
-
+            print(f"{task_info['id']}\t{iter_idx}\t 6")
             optimizer.step()
 
             scheduler.step()
@@ -421,6 +426,8 @@ class Grid():
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+
+            print(f"{task_info['id']}\t{iter_idx}\t 7")
 
             if (iter_idx + 1) % 10 == 0:
                 total_loss /= count
