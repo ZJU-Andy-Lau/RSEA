@@ -253,6 +253,9 @@ def pretrain(args):
                                              warmup_ratio=100. / args.max_epoch,
                                              cooldown_ratio=.5)
     
+    args.patch_feature_channels = encoder.patch_feature_channels
+    args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
+    
     if args.resume_training:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'encoder.pth'),map_location='cpu').items()},strict=True)
         projector.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'projector.pth')))
@@ -269,8 +272,7 @@ def pretrain(args):
         encoder = distibute_model(encoder,args.local_rank)
         projector = distibute_model(projector,args.local_rank)
 
-    args.patch_feature_channels = encoder.patch_feature_channels
-    args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
+    
 
     pprint("Building Decoders")     
 
