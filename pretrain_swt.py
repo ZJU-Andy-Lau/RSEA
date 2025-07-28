@@ -206,7 +206,7 @@ def pretrain(args):
         epoch = training_configs['epoch']
         dataset_indices = training_configs['dataset_indices'].to(args.device)
         log_name = training_configs['log_name']
-        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],log_name)
+        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
     else:
         training_configs = None
         min_loss = args.min_loss
