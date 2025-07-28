@@ -312,7 +312,7 @@ class Grid():
                     torch.cuda.synchronize()
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     try:
-                        dists,idxs = element.query_point_base(sample_linesamps,k=3)
+                        dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
                     except Exception as e:
                         self.fprint(f'{e}')
                     torch.cuda.synchronize()
