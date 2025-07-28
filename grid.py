@@ -309,13 +309,13 @@ class Grid():
                                                         torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
                                                         torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     try:
                         dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
                     except Exception as e:
                         self.fprint(f'{e}')
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()
                     valid_mask = dists.max(dim=1).values < 256
                     # break
                     dists = 1. / (dists[valid_mask] + 1e-6)
