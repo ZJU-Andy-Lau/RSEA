@@ -206,14 +206,19 @@ def pretrain(args):
         epoch = training_configs['epoch']
         dataset_indices = training_configs['dataset_indices'].to(args.device)
         log_name = training_configs['log_name']
-        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
+        if rank == 0:
+            logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
+        else:
+            logger = None
     else:
         training_configs = None
         min_loss = args.min_loss
         last_loss = None
         epoch = 0
-        logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],f'{args.log_prefix}_finetune_log')
-
+        if rank == 0:
+            logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],prefix = f'{args.log_prefix}_finetune_log')
+        else:
+            logger = None
 
     if not args.resume_training:
         dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
