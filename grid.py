@@ -704,57 +704,7 @@ class Grid():
         mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
         sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
         valid_scores_P1 = torch.concatenate(valid_scores,dim=0)
-        # kd_tree = build_kd_tree(locals_P2,device='cuda')
-
-        # yxh_preds = []
-        # locals = []
-        # confs = []
-
-        # block_line_num = int(np.ceil(H / 256.))
-        # block_samp_num = int(np.ceil(W / 256.))
-        
-        # print("Decoding")
-        # pbar = tqdm(total=block_line_num * block_samp_num)
-        # for block_line in range(block_line_num):
-        #     for block_samp in range(block_samp_num):
-        #         tl_line = block_line * 256 + .5
-        #         tl_samp = block_samp * 256 + .5
-        #         sample_linesamps = torch.from_numpy(np.stack(np.meshgrid(np.arange(tl_line,min(tl_line + 256,H)),np.arange(tl_samp,min(tl_samp + 256,W)),indexing='ij')
-        #                                                             ,axis=-1)).to(dtype=locals_P2.dtype,device=locals_P2.device).reshape(-1,2)
-        #         dists,idxs = kd_tree.query(sample_linesamps,nr_nns_searches=4)
-        #         valid_mask = (dists.max(dim=1).values < 64) 
-        #         if valid_mask.sum() == 0:
-        #             continue
-        #         dists = 1. / (dists[valid_mask] + 1e-6)
-        #         idxs = idxs[valid_mask]
-        #         dists = dists / torch.mean(dists,dim=-1,keepdim=True)
-        #         features_pD = features_PD[idxs].contiguous()
-        #         confs_p1 = confs_P1[idxs].contiguous()
-        #         features_pD = features_pD * dists.unsqueeze(-1)
-        #         confs_p1 = confs_p1 * dists
-        #         features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
-        #         confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
-        #         locals_p2 = sample_linesamps[valid_mask]
-
-        #         features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
-        #         output_13p1 = self.mapper(features_1Dp1)
-        #         output_p3 = output_13p1.permute(0,2,3,1).flatten(0,2)
-        #         yxh_pred_p3 = warp_by_extend(output_p3,self.extend)
-        #         yxh_preds.append(yxh_pred_p3)
-        #         locals.append(locals_p2)
-        #         confs.append(confs_p1)
-                
-        #         pbar.update(1)
-
-        # yxh_P3 = torch.cat(yxh_preds,dim=0)
-        # locals_P2 = torch.cat(locals,dim=0)
-        # confs_P1 = torch.cat(confs,dim=0)
-
-
-        # pred_raw_N3hw = self.mapper(features_NDhw)
-        # pred_raw_P3 = pred_raw_N3hw.permute(0,2,3,1).flatten(0,2)
-        # yxh_P3 = warp_by_extend(pred_raw_P3,self.extend)
-        
+       
         res = {
             'mu_xyh_P3':mu_xyh_P3,
             'sigma_xyh_P3':sigma_xyh_P3,

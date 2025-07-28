@@ -88,12 +88,12 @@ class Element():
             self.encoder.to(self.device)
             self.mapper.to(self.device)
         
-        if options.crop_step > 0:
-            crop_step = options.crop_step
-        else:
-            crop_step = int(np.sqrt((self.H - options.crop_size) * (self.W - options.crop_size) / 150.))
+        # if options.crop_step > 0:
+        #     crop_step = options.crop_step
+        # else:
+        #     crop_step = int(np.sqrt((self.H - options.crop_size) * (self.W - options.crop_size) / 150.))
 
-        self.crop_imgs_NHWC,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size,crop_step)
+        self.crop_imgs_NHWC,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size)
         self.crop_img_num = len(self.crop_imgs_NHWC)
         self.SAMPLE_FACTOR = self.encoder.SAMPLE_FACTOR
         self.buffer,self.point_base = self.__extract_features__()
@@ -126,10 +126,11 @@ class Element():
         if self.verbose:
             self._log("[Element]:", *args, **kwargs)
 
-    def __crop_img__(self,crop_size = 256,step = 256 // 2,random_ratio = 1.):
+    def __crop_img__(self,crop_size = 256):
 
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
+        size_ratio = [.5,1.,2.]
         cut_number = 0
         row_num = 0
         col_num = 0
@@ -137,45 +138,53 @@ class Element():
         crop_locals = []
         crop_dems = []
 
-        if self.verbose > 0:
-            pbar = tqdm(total=int((H - crop_size ) / step + 1) * int((W - crop_size) / step + 1))
+        for ratio in size_ratio:
+            raw_size = int(crop_size * ratio)
+            step = int(np.sqrt((H - raw_size) * (W - raw_size) / 100.))
 
-        for row in range(0, H - crop_size, step):
-            for col in range(0, W - crop_size, step):
-                if row + crop_size + step > H:
-                    if col + crop_size > W:
-                        row_start,row_end,col_start,col_end = H - crop_size, H, W - crop_size, W
+            if self.verbose > 0:
+                pbar = tqdm(total=int((H - raw_size ) / step + 1) * int((W - raw_size) / step + 1))
+
+            for row in range(0, H - raw_size, step):
+                for col in range(0, W - raw_size, step):
+                    if row + raw_size + step > H:
+                        if col + raw_size > W:
+                            row_start,row_end,col_start,col_end = H - raw_size, H, W - raw_size, W
+                        else:
+                            row_start,row_end,col_start,col_end = H - raw_size, H, col, col+raw_size
                     else:
-                        row_start,row_end,col_start,col_end = H - crop_size, H, col, col+crop_size
-                else:
-                    if col + crop_size + step > W:
-                        row_start,row_end,col_start,col_end = row, row+crop_size, W - crop_size, W
-                    else:
-                        row_start,row_end,col_start,col_end = row, row+crop_size, col, col+crop_size
-                if row_num % 2 == 1:
-                    col_start,col_end = W - col_end,W - col_start
-                if col_num % 2 == 1:
-                    row_start,row_end = H - row_end,H - row_start
+                        if col + raw_size + step > W:
+                            row_start,row_end,col_start,col_end = row, row+raw_size, W - raw_size, W
+                        else:
+                            row_start,row_end,col_start,col_end = row, row+raw_size, col, col+raw_size
+                    if row_num % 2 == 1:
+                        col_start,col_end = W - col_end,W - col_start
+                    if col_num % 2 == 1:
+                        row_start,row_end = H - row_end,H - row_start
+                    
+                    img_crop = cv2.resize(self.img_raw[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
+                    local_crop = cv2.resize(self.local_raw[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
+                    dem_crop = cv2.resize(self.dem[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
 
-                crop_imgs.append(self.img_raw[row_start:row_end,col_start:col_end])
-                crop_locals.append(self.local_raw[row_start:row_end,col_start:col_end])
-                crop_dems.append(self.dem[row_start:row_end,col_start:col_end])
+                    crop_imgs.append(img_crop)
+                    crop_locals.append(local_crop)
+                    crop_dems.append(dem_crop)
 
-                cut_number += 1
-                col_num += 1
-                if self.verbose > 0:
-                    pbar.update(1)
-            row_num += 1
-            col_num -= 1
+                    cut_number += 1
+                    col_num += 1
+                    if self.verbose > 0:
+                        pbar.update(1)
+                row_num += 1
+                col_num -= 1
 
-        random_num = int(cut_number * random_ratio)
+        # random_num = int(cut_number * random_ratio)
 
-        for i in range(random_num):
-            col = np.random.randint(0,W - crop_size)
-            row = np.random.randint(0,H - crop_size)
-            crop_imgs.append(self.img_raw[row:row + crop_size,col:col + crop_size])
-            crop_locals.append(self.local_raw[row:row + crop_size,col:col + crop_size])
-            crop_dems.append(self.dem[row:row + crop_size,col:col + crop_size])
+        # for i in range(random_num):
+        #     col = np.random.randint(0,W - crop_size)
+        #     row = np.random.randint(0,H - crop_size)
+        #     crop_imgs.append(self.img_raw[row:row + crop_size,col:col + crop_size])
+        #     crop_locals.append(self.local_raw[row:row + crop_size,col:col + crop_size])
+        #     crop_dems.append(self.dem[row:row + crop_size,col:col + crop_size])
         
         crop_imgs = np.stack(crop_imgs)
         crop_locals = np.stack(crop_locals)
