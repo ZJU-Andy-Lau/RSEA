@@ -440,7 +440,7 @@ class Grid():
                 if no_update_count > 0:
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
-                    early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+                    early_stop_iter = iter_idx + self.options.grid_cooldown_iters
 
 
             if (iter_idx + 1) % 10 == 0:
@@ -471,7 +471,7 @@ class Grid():
                     optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                     scheduler.cool_down(adjust_gamma=False)
                     no_update_count = -1e9 #防止重复启动
-                    early_stop_iter = iter_idx + self.options.grid_cool_down_iters
+                    early_stop_iter = iter_idx + self.options.grid_cooldown_iters
 
                 last_mapper_state_dict = {
                         'model':deepcopy(self.mapper.state_dict()),
