@@ -130,7 +130,8 @@ class Element():
 
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
-        size_ratio = [.67,1.,1.5]
+        # size_ratio = [.67,1.,1.5]
+        size_ratio = [1.]
         cut_number = 0
         row_num = 0
         col_num = 0
@@ -179,12 +180,12 @@ class Element():
 
         # random_num = int(cut_number * random_ratio)
 
-        # for i in range(random_num):
-        #     col = np.random.randint(0,W - crop_size)
-        #     row = np.random.randint(0,H - crop_size)
-        #     crop_imgs.append(self.img_raw[row:row + crop_size,col:col + crop_size])
-        #     crop_locals.append(self.local_raw[row:row + crop_size,col:col + crop_size])
-        #     crop_dems.append(self.dem[row:row + crop_size,col:col + crop_size])
+        for i in range(cut_number * 2):
+            col = np.random.randint(0,W - crop_size)
+            row = np.random.randint(0,H - crop_size)
+            crop_imgs.append(self.img_raw[row:row + crop_size,col:col + crop_size])
+            crop_locals.append(self.local_raw[row:row + crop_size,col:col + crop_size])
+            crop_dems.append(self.dem[row:row + crop_size,col:col + crop_size])
         
         crop_imgs = np.stack(crop_imgs)
         crop_locals = np.stack(crop_locals)
