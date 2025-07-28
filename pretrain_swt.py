@@ -258,7 +258,7 @@ def pretrain(args):
     
     if args.resume_training:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'encoder.pth'),map_location='cpu').items()},strict=True)
-        projector.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'projector.pth')))
+        projector.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'projector.pth'),map_location='cpu').items()})
         encoder_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_optimizer.pth')))
         encoder_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_scheduler.pth')))
         
