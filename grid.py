@@ -438,7 +438,7 @@ class Grid():
                 self.mapper.load_state_dict(best_mapper_state_dict['model'])
                 optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                 if no_update_count > 0:
-                    scheduler.cool_down(adjust_gamma=False)
+                    scheduler.trigger_cooldown()
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cooldown_iters
 
@@ -469,7 +469,7 @@ class Grid():
                 if no_update_count >= 200 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
                     self.mapper.load_state_dict(best_mapper_state_dict['model'])
                     optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
-                    scheduler.cool_down(adjust_gamma=False)
+                    scheduler.trigger_cooldown()
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cooldown_iters
 
