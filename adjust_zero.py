@@ -108,6 +108,8 @@ if __name__ == '__main__':
                         help='number of epochs for lr staying lr_max after warmup')
     
     parser.add_argument('--resume_training',type=str2bool,default=False)
+
+    parser.add_argument('--nearest_neighbor_num',type=int,default=3)
     
     # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
     #                     help='factor of lr decay in every 10 epochs')
