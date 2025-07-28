@@ -288,7 +288,7 @@ def pretrain(args):
         decoder.train()
         optimizer = optim.AdamW(params=decoder.parameters(),lr = args.lr_decoder_max)
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
-                                        total_steps=dataset_num * args.max_epoch,
+                                        total_steps=args.max_epoch,
                                         warmup_ratio=100. / args.max_epoch,
                                         cooldown_ratio=.5)
         
