@@ -52,8 +52,9 @@ class MultiStageOneCycleLR(_LRScheduler):
         if not self.cooldown_triggered:
             # 新的总步数 = 当前步数 + 预设的退火步数
             new_total_steps = self.last_epoch + self.cooldown_steps
-            print(f"INFO: Cooldown manually triggered at step {self.last_epoch}.")
-            print(f"INFO: Original total_steps was {self.total_steps}. New total_steps is {new_total_steps}.")
+            if self.verbose:
+                print(f"INFO: Cooldown manually triggered at step {self.last_epoch}.")
+                print(f"INFO: Original total_steps was {self.total_steps}. New total_steps is {new_total_steps}.")
             
             self.cooldown_triggered = True
             self.cooldown_trigger_step = self.last_epoch
