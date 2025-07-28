@@ -244,7 +244,7 @@ class RSEA():
 
             progress = Progress(
                 TextColumn("[bold blue]{task.description}"),
-                BarColumn(bar_width=None),
+                BarColumn(bar_width=None,finished_style='green'),
                 "[progress.percentage]{task.percentage:>3.1f}%",
                 "•",
                 TextColumn("[bold yellow]{task.fields[metrics]}"),

@@ -130,7 +130,7 @@ class Element():
 
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
-        size_ratio = [.5,1.,2.]
+        size_ratio = [.67,1.,1.5]
         cut_number = 0
         row_num = 0
         col_num = 0
@@ -140,7 +140,7 @@ class Element():
 
         for ratio in size_ratio:
             raw_size = int(crop_size * ratio)
-            step = int(np.sqrt((H - raw_size) * (W - raw_size) / 100.))
+            step = int(np.sqrt((H - raw_size) * (W - raw_size) / 150.))
 
             if self.verbose > 0:
                 pbar = tqdm(total=int((H - raw_size ) / step + 1) * int((W - raw_size) / step + 1))
