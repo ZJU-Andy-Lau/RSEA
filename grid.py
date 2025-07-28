@@ -1,5 +1,7 @@
 from enum import Enum
 import warnings
+
+import scheduler
 warnings.filterwarnings('ignore')
 import argparse
 import torch
@@ -62,7 +64,7 @@ class Grid():
             else:
                 self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=options.mapper_blocks_num)
             self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-            self.scheduler = MultiStageOneCycleLR(optimizer=optimizer,
+            self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
                                                 total_steps=self.options.grid_training_iters,
                                                 warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
                                                 cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
@@ -245,7 +247,7 @@ class Grid():
     def train_mapper(self,task_info = None):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
-        optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
+        # optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
         # scheduler = MultiStageOneCycleLR(optimizer = optimizer,
         #                                 max_lr = self.options.grid_train_lr_max,
         #                                 min_lr = self.options.grid_train_lr_min,
@@ -256,10 +258,12 @@ class Grid():
         #                                 #gamma = self.options.lr_decay_per_100_epochs ** (1. / 100.),
         #                                 cooldown = 0.0
         #                                 )
-        scheduler = MultiStageOneCycleLR(optimizer=optimizer,
-                                         total_steps=self.options.grid_training_iters,
-                                         warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
-                                         cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        # scheduler = MultiStageOneCycleLR(optimizer=optimizer,
+        #                                  total_steps=self.options.grid_training_iters,
+        #                                  warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+        #                                  cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        optimizer = self.optimizer
+        scheduler = self.scheduler
         criterion = CriterionTrainGrid()
         bce = nn.BCELoss()
         self.mapper.train()
