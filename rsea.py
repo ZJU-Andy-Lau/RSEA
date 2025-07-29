@@ -182,7 +182,9 @@ class RSEA():
             return diags
 
         if self.options.resume_training:
-            grid_paths = [os.path.join(self.grid_root,i) for i in os.listdir(self.grid_root)]
+            grid_names = os.listdir(self.grid_root)
+            grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
+            grid_paths = [os.path.join(self.grid_root,i) for i in grid_names]
             grid_num = len(grid_paths)
             print(f"{len(grid_paths)} grids is going to resume creating")
         else:
