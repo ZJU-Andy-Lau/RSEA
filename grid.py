@@ -285,7 +285,7 @@ class Grid():
         total_loss_obj = 0
         total_loss_height = 0
         total_loss_photo = 0
-        total_reg = 0
+        # total_reg = 0
         count = 0
         no_update_count = 0
         early_stop_iter = -1
@@ -389,14 +389,14 @@ class Grid():
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
                 log_sigma_xyh_p3 = output_p6[:,3:]
 
-                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_bias,loss_reg,sigma_avg = criterion(iter_idx,
-                                                                                                      self.options.element_training_iters,
-                                                                                                      mu_xyh_p3,
-                                                                                                      log_sigma_xyh_p3,
-                                                                                                      confs_p1,
-                                                                                                      locals_p2,
-                                                                                                      objs_p3,
-                                                                                                      element.rpc)
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
+                                                                                            self.options.element_training_iters,
+                                                                                            mu_xyh_p3,
+                                                                                            log_sigma_xyh_p3,
+                                                                                            confs_p1,
+                                                                                            locals_p2,
+                                                                                            objs_p3,
+                                                                                            element.rpc) #,loss_bias,loss_reg
                 
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0).to(valid_pred.device) # positive,negative
@@ -410,7 +410,7 @@ class Grid():
                 total_loss_obj += loss_obj.item()
                 total_loss_photo += loss_photo.item()
                 total_loss_height += loss_height.item()
-                total_reg += loss_reg
+                # total_reg += loss_reg
                 count += 1
                 progress += 1 
 
@@ -425,7 +425,7 @@ class Grid():
                             'o':f'{loss_obj.item():.2f}',
                             'p':f'{loss_photo.item():.2f}',
                             'h':f'{loss_height.item():.2f}',
-                            'r':f'{loss_reg:.2f}',
+                            # 'r':f'{loss_reg:.2f}',
                             'v':f'{loss_valid:.2f}',
                             'min':f'{min_photo_loss:.2f}'
                         }
@@ -449,7 +449,7 @@ class Grid():
                 total_loss_obj /= count
                 total_loss_height /= count
                 total_loss_photo /= count
-                total_reg /= count
+                # total_reg /= count
                 
                 # cost_time = int(time.perf_counter() - start_time)
                 # print(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
@@ -483,7 +483,7 @@ class Grid():
                 total_loss_obj = 0
                 total_loss_height = 0
                 total_loss_photo = 0
-                total_reg = 0
+                # total_reg = 0
                 count = 0
 
             if early_stop_iter > 0 and iter_idx >= early_stop_iter:
