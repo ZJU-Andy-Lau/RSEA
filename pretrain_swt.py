@@ -273,6 +273,10 @@ def pretrain(args):
 
     encoder = encoder.to(args.device)
     projector = projector.to(args.device)
+    for state in encoder_optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(args.device)
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
         projector = distibute_model(projector,args.local_rank)
@@ -298,6 +302,10 @@ def pretrain(args):
             scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_scheduler_{dataset_idx}.pth')))
 
         decoder = decoder.to(args.device)
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(args.device)
         if num_gpus > 1:
             decoder = distibute_model(decoder,args.local_rank)
 
