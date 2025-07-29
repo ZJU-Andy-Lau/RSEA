@@ -167,7 +167,7 @@ if __name__ == '__main__':
         
         ref_images_root = os.path.join(options.root,'ref_images')
         for image_folder in os.listdir(ref_images_root):
-            img = RSImage(options,os.path.join(ref_images_root,image_folder))
+            img = RSImage(options,os.path.join(ref_images_root,image_folder),id=0)
             grid.add_img(img)
         grid.create_elements()
         grid.train_mapper()
