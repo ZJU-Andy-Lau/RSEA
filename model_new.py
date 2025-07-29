@@ -413,6 +413,136 @@ class AffineFitter:
         
         return transformed_points
 
+class HomographyFitter:
+    """
+    使用非线性优化方法（L-BFGS）来拟合一个2D单应变换。
+
+    该类通过最小化加权的最小二乘损失（等价于负对数似然）来寻找
+    最佳的单应变换。由于单应变换对于其参数是非线性的，我们不能
+    使用直接解法，而是采用像L-BFGS这样的迭代优化器。
+    """
+
+    def __init__(self, max_epochs: int = 20, lr: float = 0.1, verbose: bool = True):
+        """
+        初始化拟合器。
+
+        Args:
+            max_epochs (int): 优化循环的执行次数。L-BFGS很高效，通常不需要很多轮。
+            lr (float): L-BFGS的学习率。
+            verbose (bool): 是否在拟合过程中打印信息。
+        """
+        self.max_epochs = max_epochs
+        self.lr = lr
+        self.verbose = verbose
+        # 最终得到的单应变换矩阵，3x3
+        self.transformation_matrix = None
+
+    def fit(self, 
+            source_points: torch.Tensor, 
+            pred_means: torch.Tensor, 
+            pred_stds: torch.Tensor) -> torch.Tensor:
+        """
+        执行单应变换的拟合过程。
+
+        Args:
+            source_points (torch.Tensor): 原始点坐标，形状为 (N, 2)。
+            pred_means (torch.Tensor): 预测的目标点坐标均值，形状为 (N, 2)。
+            pred_stds (torch.Tensor): 预测的目标点坐标标准差，形状为 (N, 2)。
+
+        Returns:
+            torch.Tensor: 拟合得到的 (3, 3) 单应变换矩阵。
+        """
+        if self.verbose:
+            print("开始使用L-BFGS拟合单应变换...")
+
+        # --- 1. 数据校验与准备 ---
+        if not (source_points.shape == pred_means.shape == pred_stds.shape and source_points.dim() == 2 and source_points.shape[1] == 2):
+            raise ValueError("所有输入张量的形状必须为 (N, 2)。")
+        
+        device = source_points.device
+        dtype = source_points.dtype
+        num_points = source_points.shape[0]
+
+        source_homogeneous = torch.cat(
+            [source_points, torch.ones(num_points, 1, device=device, dtype=dtype)], 
+            dim=1
+        )
+
+        # --- 2. 初始化变换参数和优化器 ---
+        # 单应变换有8个自由参数。我们初始化为单位变换。
+        # p = [h11, h12, h13, h21, h22, h23, h31, h32]
+        initial_params = torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], device=device, dtype=dtype)
+        self.params = nn.Parameter(initial_params)
+        
+        optimizer = torch.optim.LBFGS([self.params], lr=self.lr)
+
+        # --- 3. 计算NLL损失的权重 ---
+        weights = 1.0 / (pred_stds.pow(2) + 1e-8)
+
+        # --- 4. 优化循环 ---
+        # 定义闭包函数
+        def closure():
+            optimizer.zero_grad()
+            
+            # 从8个参数构建完整的3x3单应矩阵
+            # H = [[h11, h12, h13],
+            #      [h21, h22, h23],
+            #      [h31, h32, 1.0]]
+            h_matrix = torch.cat([self.params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
+
+            # 应用单应变换
+            # (N, 3) @ (3, 3) -> (N, 3)
+            transformed_homogeneous = source_homogeneous @ h_matrix.T
+            
+            # 从齐次坐标转回2D坐标 (执行透视除法)
+            # 添加一个小的epsilon防止除以零
+            w = transformed_homogeneous[:, 2].unsqueeze(1)
+            transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
+
+            # 计算损失 (与仿射变换情况相同)
+            error = transformed_points - pred_means
+            weighted_squared_error = error.pow(2) * weights
+            loss = weighted_squared_error.sum()
+            
+            loss.backward()
+            return loss
+
+        for i in range(self.max_epochs):
+            loss = optimizer.step(closure)
+            if self.verbose:
+                print(f"轮次 {i+1:2d}/{self.max_epochs}, 损失: {loss.item():.4f}")
+
+        # --- 5. 保存并返回结果 ---
+        final_params = self.params.detach().clone()
+        self.transformation_matrix = torch.cat([final_params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
+        
+        if self.verbose:
+            print("拟合完成！")
+            
+        return self.transformation_matrix
+
+    def transform(self, points: torch.Tensor) -> torch.Tensor:
+        """
+        使用拟合好的变换矩阵来变换新的点。
+        """
+        if self.transformation_matrix is None:
+            raise RuntimeError("必须先调用 .fit() 方法进行拟合，然后才能进行变换。")
+        
+        device = points.device
+        dtype = points.dtype
+        num_points = points.shape[0]
+        
+        points_homogeneous = torch.cat(
+            [points, torch.ones(num_points, 1, device=device, dtype=dtype)],
+            dim=1
+        )
+        
+        transformed_homogeneous = points_homogeneous @ self.transformation_matrix.T
+        
+        w = transformed_homogeneous[:, 2].unsqueeze(1)
+        transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
+        
+        return transformed_points
 
 # self.cnn = nn.Sequential(
 #             nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),

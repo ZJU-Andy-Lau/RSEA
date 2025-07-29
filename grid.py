@@ -616,14 +616,15 @@ class Grid():
             row_num += 1
             col_num -= 1
 
-        random_num = int(cut_number * random_ratio)
+        if cut_number > 1:
+            random_num = int(cut_number * random_ratio)
 
-        for i in range(random_num):
-            col = np.random.randint(0,W - crop_size)
-            row = np.random.randint(0,H - crop_size)
-            crop_imgs.append(img[row:row + crop_size,col:col + crop_size])
-            crop_locals.append(local[row:row + crop_size,col:col + crop_size])
-        
+            for i in range(random_num):
+                col = np.random.randint(0,W - crop_size)
+                row = np.random.randint(0,H - crop_size)
+                crop_imgs.append(img[row:row + crop_size,col:col + crop_size])
+                crop_locals.append(local[row:row + crop_size,col:col + crop_size])
+            
         crop_imgs = np.stack(crop_imgs)
         crop_locals = np.stack(crop_locals)
 
