@@ -179,7 +179,7 @@ if __name__ == '__main__':
                     grid_path = options.grid_path)
     
     align_image_path = [os.path.join(options.root,'ref_images',i) for i in os.listdir(os.path.join(options.root,'ref_images'))][-1]
-    align_image = RSImage(options,align_image_path)
+    align_image = RSImage(options,align_image_path,id=0)
 
     image_rgb = cv2.imread(options.localize_image_path)
     image_gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
