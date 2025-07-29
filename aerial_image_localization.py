@@ -153,7 +153,7 @@ if __name__ == '__main__':
     device = 'cuda'
 
     if options.create_grids:
-        os.makedirs(options.grid_path)
+        os.makedirs(options.grid_path,exist_ok=True)
         diag = np.array([
             [-1.3580166e+07,4.4906410e+06],
             [-1.3578166e+07,4.4886410e+06]
