@@ -478,6 +478,7 @@ class Grid():
                         'optimizer':deepcopy(optimizer.state_dict())
                     }
 
+                self.save_grid()
                 total_loss = 0
                 total_loss_dist = 0
                 total_loss_obj = 0
