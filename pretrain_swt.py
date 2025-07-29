@@ -298,8 +298,8 @@ def pretrain(args):
         
         if args.resume_training:
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})
-            optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_optimizer_{dataset_idx}.pth',map_location='cpu')))
-            scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_scheduler_{dataset_idx}.pth',map_location='cpu')))
+            optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_optimizer_{dataset_idx}.pth'),map_location='cpu'))
+            scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_scheduler_{dataset_idx}.pth'),map_location='cpu'))
 
         decoder = decoder.to(args.device)
         for state in optimizer.state.values():
