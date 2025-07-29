@@ -180,7 +180,7 @@ class Element():
 
         # random_num = int(cut_number * random_ratio)
 
-        for i in range(cut_number * 2):
+        for i in range(cut_number // 2):
             col = np.random.randint(0,W - crop_size)
             row = np.random.randint(0,H - crop_size)
             rot_time = np.random.randint(0,4)
