@@ -471,7 +471,7 @@ def pretrain(args):
                 projector_state_dict = projector.state_dict()
                 torch.save(encoder_state_dict,os.path.join(path,'encoder.pth'))
                 torch.save(encoder_optimizer_state_dict,os.path.join(path,'encoder_optimizer.pth'))
-                torch.save(encoder_scheduler_state_dict,os.path.join(path,'encoder_scheduler'))
+                torch.save(encoder_scheduler_state_dict,os.path.join(path,'encoder_scheduler.pth'))
                 torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
                 for i in range(dataset_num):
                     decoder_state_dict = {k:v.detach().cpu() for k,v in decoders[i].state_dict().items()}
