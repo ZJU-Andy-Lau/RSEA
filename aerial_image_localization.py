@@ -300,7 +300,7 @@ if __name__ == '__main__':
 
     print(f"avg sigma:{conf_score.mean()}")
 
-    _,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean())
+    _,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
     inliers = mask.ravel() == 1
     print(f"inlier: {inliers.sum()}/{len(inliers)}")
     mu_linesamp = mu_linesamp[inliers]
