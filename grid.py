@@ -296,7 +296,9 @@ class Grid():
                 'status':f"Grid {task_info['id']}:Decoder训练",
                 'total':self.options.grid_training_iters * len(self.elements)
             })
-        progress = 0
+        else:
+            pbar = tqdm(total=self.options.grid_training_iters * len(self.elements),progress=self.train_iter_idx * len(self.elements))
+        progress = self.train_iter_idx * len(self.elements)
         for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
             iter_idx = self.train_iter_idx
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
@@ -413,23 +415,26 @@ class Grid():
                 # total_reg += loss_reg
                 count += 1
                 progress += 1 
-
+                info = {
+                        'i':f'{progress}',
+                        'lr':f'{scheduler.get_last_lr()[0]:.2e}',
+                        'd':f'{loss_distribution.item():.2f}', 
+                        's':f'{sigma_avg:.2f}',
+                        'o':f'{loss_obj.item():.2f}',
+                        'p':f'{loss_photo.item():.2f}',
+                        'h':f'{loss_height.item():.2f}',
+                        # 'r':f'{loss_reg:.2f}',
+                        'v':f'{loss_valid:.2f}',
+                        'min':f'{min_photo_loss:.2f}'
+                    }
                 if not task_info is None:
                     self.update_task_state(task_info,{
                         'progress':progress,
-                        'info':{
-                            'i':f'{progress}',
-                            'lr':f'{scheduler.get_last_lr()[0]:.2e}',
-                            'd':f'{loss_distribution.item():.2f}', 
-                            's':f'{sigma_avg:.2f}',
-                            'o':f'{loss_obj.item():.2f}',
-                            'p':f'{loss_photo.item():.2f}',
-                            'h':f'{loss_height.item():.2f}',
-                            # 'r':f'{loss_reg:.2f}',
-                            'v':f'{loss_valid:.2f}',
-                            'min':f'{min_photo_loss:.2f}'
-                        }
+                        'info':info
                     })
+                else:
+                    pbar.update(1)
+                    pbar.set_postfix(info)
             optimizer.step()
 
             scheduler.step()

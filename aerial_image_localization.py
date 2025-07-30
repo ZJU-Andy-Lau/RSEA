@@ -145,6 +145,8 @@ if __name__ == '__main__':
     encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(options.encoder_path).items()})
     encoder.eval()
 
+    print("Encoder Loaded")
+
     transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
@@ -153,6 +155,7 @@ if __name__ == '__main__':
     device = 'cuda'
 
     if options.create_grids:
+        print("Creating Grid")
         os.makedirs(options.grid_path,exist_ok=True)
         diag = np.array([
             [-1.3580166e+07,4.4906410e+06],
@@ -166,13 +169,15 @@ if __name__ == '__main__':
                     device=device)
         
         ref_images_root = os.path.join(options.root,'ref_images')
-        for image_folder in os.listdir(ref_images_root):
+        print("Loading Ref Images")
+        for image_folder in tqdm(os.listdir(ref_images_root)):
             img = RSImage(options,os.path.join(ref_images_root,image_folder),id=0)
             grid.add_img(img)
         grid.create_elements()
         grid.train_mapper()
     
     else:
+        print("Loading Grid")
         grid = Grid(options = options,
                     encoder = encoder,
                     output_path = options.grid_path,
@@ -181,17 +186,23 @@ if __name__ == '__main__':
     align_image_path = [os.path.join(options.root,'ref_images',i) for i in os.listdir(os.path.join(options.root,'ref_images'))][-1]
     align_image = RSImage(options,align_image_path,id=0)
 
+    print("Align Image loaded")
+
     image_rgb = cv2.imread(options.localize_image_path)
     image_gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
     image_gray = np.stack([image_gray] * 3,axis=-1)
     H,W = image_gray.shape[:2]
     local_hw2 = get_coord_mat(H,W)
     
+    print("Predictiong XYH")
+
     pred_res = grid.pred_xyh(image_gray,local_hw2)
     mu_linesamp,sigma_linesamp = align_image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
     local_linesamp = pred_res['locals_P2']
     conf = pred_res['confs_P1']
     valid_score = pred_res['valid_score_P1']
+
+    print("Fitting Homography")
 
     fitter = HomographyFitter(max_epochs=100,lr=0.01)
     valid_mask = valid_score > .5

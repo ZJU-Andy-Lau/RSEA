@@ -98,7 +98,7 @@ class Element():
         self.SAMPLE_FACTOR = self.encoder.SAMPLE_FACTOR
         self.buffer,self.point_base = self.__extract_features__()
         self.map_coeffs = self.__calculate_map_coeffs__()
-        self.ransac_threshold = self.options.ransac_threshold
+        # self.ransac_threshold = self.options.ransac_threshold
         self.batch_num = int(np.ceil(self.patch_num / self.options.patches_per_batch))
         self.vis_patches_idx = torch.randperm(self.patch_num)[:100000]
         self.vis_patches_locs = []
