@@ -292,14 +292,15 @@ class Grid():
         early_stop_iter = -1
         last_mapper_state_dict = None
         # pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
+        progress = self.train_iter_idx * len(self.elements)
         if not task_info is None:
             self.update_task_state(task_info,{
                 'status':f"Grid {task_info['id']}:Decoder训练",
                 'total':self.options.grid_training_iters * len(self.elements)
             })
         else:
-            pbar = tqdm(total=self.options.grid_training_iters * len(self.elements),progress=self.train_iter_idx * len(self.elements))
-        progress = self.train_iter_idx * len(self.elements)
+            pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
+            pbar.update(progress)
         for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
             iter_idx = self.train_iter_idx
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
