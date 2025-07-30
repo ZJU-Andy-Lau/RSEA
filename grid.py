@@ -590,14 +590,25 @@ class Grid():
         if local.shape[:2] != img.shape[:2]:
             raise ValueError(f"img shape {img.shape} does not match local shape {local.shape}")
         
-        if step <= 0 :
-            return img[None],local[None]
         
         cut_number = 0
         row_num = 0
         col_num = 0
         crop_imgs = []
         crop_locals = []
+
+        if step <= 0 :
+            img = cv2.resize(img,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
+            local = cv2.resize(local,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
+            for i in range(self.encoder.SAMPLE_FACTOR):
+                for j in range(self.encoder.SAMPLE_FACTOR):
+                    crop_imgs.append(img[i:crop_size + i,j:crop_size + j])
+                    crop_locals.append(local[i:crop_size + i,j:crop_size + j])
+            crop_imgs = np.stack(crop_imgs)
+            crop_locals = np.stack(crop_locals)
+
+            return crop_imgs,crop_locals
+            
 
         rows = np.arange(0,H - crop_size + 1,step)
         cols = np.arange(0,W - crop_size + 1,step)
