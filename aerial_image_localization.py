@@ -221,16 +221,18 @@ if __name__ == '__main__':
     local_linesamp = pred_res['locals_P2']
     conf = pred_res['confs_P1']
     valid_score = pred_res['valid_score_P1']
+    conf_score = torch.norm(sigma_linesamp,dim=-1)
 
     print("Fitting Homography")
 
     # fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
-    valid_mask = (valid_score > .5) & (sigma_linesamp < sigma_linesamp.mean()) 
+    valid_mask = (valid_score > .5) & (conf_score < conf_score.mean()) 
     mu_linesamp = mu_linesamp[valid_mask].detach()
     sigma_linesamp = sigma_linesamp[valid_mask].detach()
     local_linesamp = local_linesamp[valid_mask].detach()
+    conf_score = conf_score[valid_mask].detach()
 
-    print(f"avg sigma:{sigma_linesamp.mean()}")
+    print(f"avg sigma:{conf_score.mean()}")
 
     # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
