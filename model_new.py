@@ -495,7 +495,7 @@ class HomographyFitter:
             
             error = transformed_points - pred_means
             weighted_squared_error = error.pow(2) * weights
-            loss = weighted_squared_error.sum()
+            loss = weighted_squared_error.mean()
 
             if torch.isnan(loss) or torch.isinf(loss):
                 if self.verbose:
