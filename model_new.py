@@ -508,7 +508,7 @@ class HomographyFitter:
 
             # 打印日志
             if self.verbose and (iteration % 200 == 0 or iteration == 1):
-                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}")
+                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}, 最低: {best_loss:.6f}")
 
             # 检查早停条件
             if best_loss - loss.item() > self.tolerance:
