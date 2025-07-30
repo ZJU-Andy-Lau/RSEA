@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from utils import str2bool,get_coord_mat
-from model_new import Encoder,AffineFitter
+from model_new import Encoder,AffineFitter,HomographyFitter
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import cv2
@@ -290,30 +290,38 @@ if __name__ == '__main__':
 
     print("Fitting Affine")
 
-    fitter = AffineFitter()
-    valid_mask = (valid_score > .5) & (conf_score < conf_score.mean())
-    mu_linesamp = mu_linesamp[valid_mask].detach()
-    sigma_linesamp = sigma_linesamp[valid_mask].detach()
-    local_linesamp = local_linesamp[valid_mask].detach()
+    # fitter = AffineFitter()
+    fitter = HomographyFitter(max_epochs=-1,lr=0.001,patience=100)
+    valid_mask = (valid_score > .5)
+    mu_linesamp = mu_linesamp[valid_mask].detach()[:,[1,0]]
+    sigma_linesamp = sigma_linesamp[valid_mask].detach()[:,[1,0]]
+    local_linesamp = local_linesamp[valid_mask].detach()[:,[1,0]]
     conf_score = conf_score[valid_mask].detach()
 
     print(f"avg sigma:{conf_score.mean()}")
 
-    # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    _,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean())
+    inliers = mask.ravel() == 1
+    print(f"inlier: {inliers.sum()}/{len(inliers)}")
+    mu_linesamp = mu_linesamp[inliers]
+    sigma_linesamp = sigma_linesamp[inliers]
+    local_linesamp = local_linesamp[inliers]
+
+    H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
     # M = fitter.fit(local_linesamp[:,[1,0]],mu_linesamp[:,[1,0]],sigma_linesamp[:,[1,0]]).cpu().numpy()
-    M,inlier_num = estimate_affine_ransac(local_linesamp[:,[1,0]].cpu().numpy(),mu_linesamp[:,[1,0]].cpu().numpy(),threshold=15.)
+    # M,inlier_num = estimate_affine_ransac(local_linesamp[:,[1,0]].cpu().numpy(),mu_linesamp[:,[1,0]].cpu().numpy(),threshold=15.)
 
     pred_points = mu_linesamp.cpu().numpy().astype(int)
-    print(f"仿射矩阵：\n {M}")
-    print(f"inlier: {inlier_num}/{len(local_linesamp)}")
+    print(f"H 矩阵:{H}")
+    # print(f"inlier: {inlier_num}/{len(local_linesamp)}")
 
 
-    # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
-    mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
+    mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,True)
+    # mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
     point_img = deepcopy(align_image.image)
     for point in pred_points:
-        cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
+        cv2.circle(point_img,point,5,(0,255,0),-1)
 
     cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
     cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),point_img)
