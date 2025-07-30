@@ -594,10 +594,13 @@ class Grid():
         crop_imgs = []
         crop_locals = []
 
-        pbar = tqdm(total=int((H - crop_size ) / step + 1) * int((W - crop_size) / step + 1))
+        rows = np.arange(0,H - crop_size + 1,step)
+        cols = np.arange(0,W - crop_size + 1,step)
 
-        for row in range(0, H - crop_size, step):
-            for col in range(0, W - crop_size, step):
+        pbar = tqdm(total=len(rows) * len(cols))
+
+        for row in rows:
+            for col in cols:
                 if row + crop_size + step > H:
                     if col + crop_size > W:
                         row_start,row_end,col_start,col_end = H - crop_size, H, W - crop_size, W
