@@ -291,7 +291,7 @@ if __name__ == '__main__':
     print("Fitting Affine")
 
     # fitter = AffineFitter()
-    fitter = HomographyFitter(max_epochs=-1,lr=0.001,patience=1000)
+    fitter = HomographyFitter(max_iterations=-1,lr=0.001,patience=1000)
     valid_mask = (valid_score > .5) & (conf_score < conf_score.mean())
     mu_linesamp = mu_linesamp[valid_mask].detach()[:,[1,0]]
     sigma_linesamp = sigma_linesamp[valid_mask].detach()[:,[1,0]]
