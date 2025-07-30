@@ -536,7 +536,7 @@ class HomographyFitter:
             optimizer.step()
 
             if self.verbose and (iteration % 200 == 0 or iteration == 1):
-                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}")
+                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}，最小：{best_loss:.6f}")
 
             if best_loss - loss.item() > self.tolerance:
                 best_loss = loss.item()
@@ -556,7 +556,7 @@ class HomographyFitter:
 
         # --- 5. 反归一化并保存结果 ---
         final_h_norm = torch.cat([self.params.detach(), torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
-        self.transformation_matrix = T_target_inv @ final_h_norm @ T_source
+        self.transformation_matrix = T_target_inv.to(torch.float) @ final_h_norm.to(torch.float) @ T_source.to(torch.float)
         
         # --- 6. 计算并输出最终结果 ---
         if self.verbose:
