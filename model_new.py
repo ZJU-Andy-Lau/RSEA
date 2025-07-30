@@ -443,6 +443,28 @@ class HomographyFitter:
         # 最终得到的单应变换矩阵，3x3
         self.transformation_matrix = None
 
+    def _get_normalization_matrix(self, points: torch.Tensor) -> torch.Tensor:
+        """计算将点归一化的变换矩阵。"""
+        mean = points.mean(dim=0)
+        cx, cy = mean[0], mean[1]
+
+        # 将点移动到以原点为中心
+        centered_points = points - mean
+        
+        # 计算平均距离，并缩放使其约为sqrt(2)
+        avg_dist = (centered_points**2).sum(dim=1).sqrt().mean()
+        scale = torch.sqrt(torch.tensor(2.0)) / (avg_dist + 1e-8)
+
+        # 构建归一化矩阵
+        # T = [s, 0, -s*cx]
+        #     [0, s, -s*cy]
+        #     [0, 0, 1    ]
+        T = torch.eye(3, device=points.device, dtype=points.dtype)
+        T[0, 0] = T[1, 1] = scale
+        T[0, 2] = -scale * cx
+        T[1, 2] = -scale * cy
+        return T
+
     def fit(self,
             source_points: torch.Tensor,
             pred_means: torch.Tensor,
@@ -451,49 +473,55 @@ class HomographyFitter:
         执行单应变换的拟合过程。
         """
         if self.verbose:
-            print("开始使用AdamW拟合单应变换...")
+            print("开始使用AdamW和坐标归一化拟合单应变换...")
             if self.max_iterations <= 0:
                 print(f"早停已启用: patience={self.patience}, tolerance={self.tolerance}")
 
-        # --- 1. 数据校验与准备 ---
-        if not (source_points.shape == pred_means.shape == pred_stds.shape and source_points.dim() == 2 and source_points.shape[1] == 2):
-            raise ValueError("所有输入张量的形状必须为 (N, 2)。")
-
         device = source_points.device
         dtype = source_points.dtype
-        num_points = source_points.shape[0]
+        
+        # --- 1. 坐标归一化 (鲁棒性关键步骤) ---
+        T_source = self._get_normalization_matrix(source_points)
+        T_target = self._get_normalization_matrix(pred_means)
+        T_target_inv = torch.linalg.inv(T_target)
 
-        source_homogeneous = torch.cat(
-            [source_points, torch.ones(num_points, 1, device=device, dtype=dtype)],
-            dim=1
-        )
+        source_h = torch.cat([source_points, torch.ones(source_points.shape[0], 1, device=device, dtype=dtype)], dim=1)
+        pred_means_h = torch.cat([pred_means, torch.ones(pred_means.shape[0], 1, device=device, dtype=dtype)], dim=1)
 
+        # 应用归一化
+        norm_source_h = (T_source @ source_h.T).T
+        norm_pred_means_h = (T_target @ pred_means_h.T).T
+        
+        norm_source_points = norm_source_h[:, :2] / norm_source_h[:, 2].unsqueeze(1)
+        norm_pred_means = norm_pred_means_h[:, :2] / norm_pred_means_h[:, 2].unsqueeze(1)
+        
         # --- 2. 初始化变换参数和优化器 ---
         initial_params = torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], device=device, dtype=dtype)
         self.params = nn.Parameter(initial_params)
         optimizer = torch.optim.AdamW([self.params], lr=self.lr, weight_decay=self.weight_decay)
 
-        # --- 3. 计算NLL损失的权重 ---
+        # --- 3. 计算损失权重 ---
+        # 权重不需要归一化
         weights = 1.0 / (pred_stds.pow(2) + 1e-8)
 
-        # --- 4. 优化循环 ---
+        # --- 4. 在归一化坐标上进行优化循环 ---
         iteration = 0
         best_loss = float('inf')
         patience_counter = 0
 
-        # 使用 while True 循环来统一处理固定迭代和早停两种模式
         while True:
             iteration += 1
-
-            # 计算损失和梯度
             optimizer.zero_grad()
             
-            h_matrix = torch.cat([self.params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
-            transformed_homogeneous = source_homogeneous @ h_matrix.T
-            w = transformed_homogeneous[:, 2].unsqueeze(1)
-            transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
+            h_matrix_norm = torch.cat([self.params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
             
-            error = transformed_points - pred_means
+            # 在归一化空间中进行变换
+            transformed_h_norm = norm_source_h @ h_matrix_norm.T
+            w_norm = transformed_h_norm[:, 2].unsqueeze(1)
+            transformed_points_norm = transformed_h_norm[:, :2] / (w_norm + 1e-8)
+            
+            # 在归一化空间中计算损失
+            error = transformed_points_norm - norm_pred_means
             weighted_squared_error = error.pow(2) * weights
             loss = weighted_squared_error.mean()
 
@@ -506,18 +534,15 @@ class HomographyFitter:
             loss.backward()
             optimizer.step()
 
-            # 打印日志
             if self.verbose and (iteration % 200 == 0 or iteration == 1):
-                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}, 最低: {best_loss:.6f}")
+                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}，最小：{best_loss:.6f}")
 
-            # 检查早停条件
             if best_loss - loss.item() > self.tolerance:
                 best_loss = loss.item()
                 patience_counter = 0
             else:
                 patience_counter += 1
 
-            # 检查停止条件
             if self.max_iterations > 0 and iteration >= self.max_iterations:
                 if self.verbose:
                     print(f"达到最大迭代次数上限: {self.max_iterations}。")
@@ -528,14 +553,37 @@ class HomographyFitter:
                     print(f"\n损失在 {self.patience} 次迭代内没有显著下降，提前停止于第 {iteration} 次迭代。")
                 break
 
-        # --- 5. 保存并返回结果 ---
-        final_params = self.params.detach().clone()
-        self.transformation_matrix = torch.cat([final_params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
+        # --- 5. 反归一化并保存结果 ---
+        final_h_norm = torch.cat([self.params.detach(), torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
+        self.transformation_matrix = T_target_inv @ final_h_norm @ T_source
         
         if self.verbose:
             print(f"拟合完成于第 {iteration} 次迭代。最终损失: {best_loss:.6f}")
             
         return self.transformation_matrix
+
+    def transform(self, points: torch.Tensor) -> torch.Tensor:
+        """
+        使用拟合好的变换矩阵来变换新的点。
+        """
+        if self.transformation_matrix is None:
+            raise RuntimeError("必须先调用 .fit() 方法进行拟合，然后才能进行变换。")
+        
+        device = points.device
+        dtype = points.dtype
+        num_points = points.shape[0]
+        
+        points_homogeneous = torch.cat(
+            [points, torch.ones(num_points, 1, device=device, dtype=dtype)],
+            dim=1
+        )
+        
+        transformed_homogeneous = points_homogeneous @ self.transformation_matrix.T
+        
+        w = transformed_homogeneous[:, 2].unsqueeze(1)
+        transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
+        
+        return transformed_points
 
     def transform(self, points: torch.Tensor) -> torch.Tensor:
         """
