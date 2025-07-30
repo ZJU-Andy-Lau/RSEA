@@ -680,14 +680,13 @@ class Grid():
         for batch_idx in trange(batch_num):
             batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
-            print(batch_imgs.shape)
             feat,conf = self.encoder(batch_imgs)
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
             # if not self.options.use_global_feature:
             #     feat = feat[:,:self.encoder.patch_feature_channels]
-            conf = conf.squeeze().flatten(0,2)
+            conf = conf.permute(0,2,3,1).flatten(0,2)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]
 
