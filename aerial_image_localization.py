@@ -224,23 +224,30 @@ if __name__ == '__main__':
 
     print("Fitting Homography")
 
-    fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
-    valid_mask = valid_score > .5
+    # fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
+    valid_mask = (valid_score > .5) & (sigma_linesamp < sigma_linesamp.mean()) 
     mu_linesamp = mu_linesamp[valid_mask].detach()
     sigma_linesamp = sigma_linesamp[valid_mask].detach()
     local_linesamp = local_linesamp[valid_mask].detach()
 
     print(f"avg sigma:{sigma_linesamp.mean()}")
 
-    H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
-    transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
+    # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
+    H,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,15.)
+    inliers = mask.ravel() == 1
+    outliers = mask.ravel() == 0
+
     pred_points = mu_linesamp.cpu().numpy().astype(int)
     print(f"H 矩阵：\n {H}")
+    print(f"inlier num:{inliers.sum()} / {len(inliers)}")
 
     mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
     point_img = deepcopy(align_image.image)
-    for point in pred_points:
+    for point in pred_points[inliers]:
         cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
+    for point in pred_points[outliers]:
+        cv2.circle(point_img,point[[1,0]],5,(255,0,0),-1)
 
     cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
     cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),point_img)
