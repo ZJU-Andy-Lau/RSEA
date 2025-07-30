@@ -37,8 +37,7 @@ class RSImage():
         self.H,self.W = self.image.shape[:2]
         self.rpc = RPCModelParameterTorch()
         self.rpc.load_from_file(os.path.join(root,'rpc.txt'))
-        if options.use_gpu:
-            self.rpc.to_gpu()
+        self.rpc.to_gpu()
         # if os.path.exists(os.path.join(root,'dem.tif')):
         #     self.dem = self.__sample_dem__(os.path.join(root,'dem.tif'))
         # else:
