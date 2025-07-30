@@ -508,7 +508,7 @@ class HomographyFitter:
             return loss
 
         for i in range(self.max_epochs):
-            loss = optimizer.step(closure)
+            loss = optimizer.step(closure) / num_points
             if self.verbose:
                 print(f"轮次 {i+1:2d}/{self.max_epochs}, 损失: {loss.item():.4f}")
 
