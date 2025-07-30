@@ -17,6 +17,7 @@ from grid import Grid
 from rs_image import RSImage
 import argparse
 from copy import deepcopy
+from utils import estimate_affine_ransac
 
 cfg_large = {
         'input_channels':3,
@@ -300,10 +301,13 @@ if __name__ == '__main__':
 
     # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
-    M = fitter.fit(local_linesamp[:,[1,0]],mu_linesamp[:,[1,0]],sigma_linesamp[:,[1,0]]).cpu().numpy()
+    # M = fitter.fit(local_linesamp[:,[1,0]],mu_linesamp[:,[1,0]],sigma_linesamp[:,[1,0]]).cpu().numpy()
+    M,inlier_num = estimate_affine_ransac(local_linesamp[:,[1,0]].cpu().numpy(),mu_linesamp[:,[1,0]].cpu().numpy(),threshold=15.)
 
     pred_points = mu_linesamp.cpu().numpy().astype(int)
     print(f"仿射矩阵：\n {M}")
+    print(f"inlier: {inlier_num}/{len(local_linesamp)}")
+
 
     # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
     mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
