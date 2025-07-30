@@ -291,7 +291,7 @@ if __name__ == '__main__':
     print("Fitting Affine")
 
     # fitter = AffineFitter()
-    fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
+    # fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
     valid_mask = (valid_score > .5) & (conf_score < conf_score.mean())
     mu_linesamp = mu_linesamp[valid_mask].detach()[:,[1,0]]
     sigma_linesamp = sigma_linesamp[valid_mask].detach()[:,[1,0]]
@@ -307,7 +307,10 @@ if __name__ == '__main__':
     sigma_linesamp = sigma_linesamp[inliers]
     local_linesamp = local_linesamp[inliers]
 
-    H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    H,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=15)
+    inliers = mask.ravel() == 1
+    print(f"inlier: {inliers.sum()}/{len(inliers)}")
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
     # M = fitter.fit(local_linesamp[:,[1,0]],mu_linesamp[:,[1,0]],sigma_linesamp[:,[1,0]]).cpu().numpy()
     # M,inlier_num = estimate_affine_ransac(local_linesamp[:,[1,0]].cpu().numpy(),mu_linesamp[:,[1,0]].cpu().numpy(),threshold=15.)
