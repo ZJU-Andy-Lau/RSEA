@@ -227,9 +227,9 @@ if __name__ == '__main__':
 
     # fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
     valid_mask = (valid_score > .5) & (conf_score < conf_score.mean()) 
-    mu_linesamp = mu_linesamp[valid_mask].detach()
-    sigma_linesamp = sigma_linesamp[valid_mask].detach()
-    local_linesamp = local_linesamp[valid_mask].detach()
+    mu_linesamp = mu_linesamp[valid_mask].detach().cpu().numpy()
+    sigma_linesamp = sigma_linesamp[valid_mask].detach().cpu().numpy()
+    local_linesamp = local_linesamp[valid_mask].detach().cpu().numpy()
     conf_score = conf_score[valid_mask].detach()
 
     print(f"avg sigma:{conf_score.mean()}")
