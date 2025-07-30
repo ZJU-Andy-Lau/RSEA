@@ -244,7 +244,7 @@ class Grid():
         warped = torch.stack([x,y,h],dim=-1)
         return warped
 
-    def train_mapper(self,task_info = None):
+    def train_mapper(self,task_info = None,save_checkpoint = True):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
         # optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
@@ -484,7 +484,8 @@ class Grid():
                         'optimizer':deepcopy(optimizer.state_dict())
                     }
 
-                self.save_grid()
+                if save_checkpoint:
+                    self.save_grid()
                 total_loss = 0
                 total_loss_dist = 0
                 total_loss_obj = 0

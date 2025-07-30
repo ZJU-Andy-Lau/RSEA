@@ -258,7 +258,7 @@ if __name__ == '__main__':
             img = RSImage(options,os.path.join(ref_images_root,image_folder),id=0)
             grid.add_img(img)
         grid.create_elements()
-        grid.train_mapper()
+        grid.train_mapper(save_checkpoint=False)
     
     else:
         print("Loading Grid")
