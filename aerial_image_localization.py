@@ -234,11 +234,12 @@ if __name__ == '__main__':
 
     H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
+    pred_points = mu_linesamp.cpu().numpy().astype(int)
     print(f"H 矩阵：\n {H}")
 
     mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
     point_img = deepcopy(align_image.image)
-    for point in transformed_points:
+    for point in pred_points:
         cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
 
     cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
