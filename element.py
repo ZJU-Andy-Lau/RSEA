@@ -79,14 +79,14 @@ class Element():
         self.encoder = encoder
         self.encoder.eval()
         self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=options.mapper_blocks_num)
-        self.use_gpu = options.use_gpu
+        # self.use_gpu = options.use_gpu
         self.output_path = output_path
         
         
-        if self.use_gpu:
-            self.rpc.to_gpu(self.device)
-            self.encoder.to(self.device)
-            self.mapper.to(self.device)
+        # if self.use_gpu:
+        self.rpc.to_gpu(self.device)
+        self.encoder.to(self.device)
+        self.mapper.to(self.device)
         
         # if options.crop_step > 0:
         #     crop_step = options.crop_step
@@ -339,8 +339,8 @@ class Element():
         criterion = CriterionTrainElement()
         
         self.mapper.train()
-        if self.use_gpu:
-            self.mapper.to(self.device)
+        # if self.use_gpu:
+        self.mapper.to(self.device)
 
         min_photo_loss = 1e9
         best_mapper_state_dict = None
@@ -470,8 +470,8 @@ class Element():
         criterion = CriterionTrainElement()
         
         self.mapper.train()
-        if self.use_gpu:
-            self.mapper.to(self.device)
+        # if self.use_gpu:
+        self.mapper.to(self.device)
 
         min_photo_loss = 1e9
         best_mapper_state_dict = None
