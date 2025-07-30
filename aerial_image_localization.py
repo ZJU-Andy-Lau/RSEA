@@ -16,6 +16,7 @@ from torchvision import transforms
 from grid import Grid
 from rs_image import RSImage
 import argparse
+from copy import deepcopy
 
 cfg_large = {
         'input_channels':3,
@@ -31,30 +32,43 @@ cfg_large = {
         'unfreeze_backbone_modules':[]
     }
 
-def overlay_image_with_homography(img_A, img_B, H):
+def overlay_image_with_homography(img_A, img_B, H, H_is_for_xy=True):
     """
     根据单应性矩阵 H 将图像 B 变换并镶嵌到图像 A 上。
+    此函数可以处理两种坐标系的单应性矩阵。
 
     参数:
     img_A (numpy.ndarray): 背景图像（大图）。
     img_B (numpy.ndarray): 需要变换的前景图像（小图）。
-    H (numpy.ndarray): 3x3 的单应性变换矩阵，从 B 的坐标系变换到 A 的坐标系。
+    H (numpy.ndarray): 3x3 的单应性变换矩阵。
+    H_is_for_xy (bool): 
+        - True (默认): H 是为标准的 OpenCV 坐标系 (x, y) 计算的，其中 x=列, y=行。
+        - False: H 是为 NumPy 索引类的坐标系 (行, 列) / (line, samp) 计算的。
+                 函数将在内部将其转换为 (x, y) 格式。
 
     返回:
     numpy.ndarray: B 镶嵌在 A 上的结果图像。
     """
     # 获取背景图像 A 的尺寸
     height_A, width_A = img_A.shape[:2]
+    
+    H_cv = np.copy(H)
+    # 如果 H 是为 (行, 列) 坐标系定义的，需要转换它以适配 OpenCV 的 (x, y) 坐标系
+    if not H_is_for_xy:
+        # 转换方法是交换矩阵的第一行和第二行，然后交换第一列和第二列
+        # 这相当于 H_cv = S * H_rc * S，其中 S 是一个交换前两个坐标的矩阵
+        H_cv[[0, 1], :] = H_cv[[1, 0], :] # 交换行
+        H_cv[:, [0, 1]] = H_cv[:, [1, 0]] # 交换列
 
     # --- 1. 使用 H 对小图 B 进行透视变换 ---
     # 输出图像的尺寸 (dsize) 必须是背景图像 A 的尺寸
-    warped_B = cv2.warpPerspective(img_B, H, (width_A, height_A))
+    warped_B = cv2.warpPerspective(img_B, H_cv, (width_A, height_A))
 
     # --- 2. 创建变换后区域的掩码 (Mask) ---
     # 创建一个与小图 B 等大的全白图像
     mask_B = np.ones_like(img_B, dtype=np.uint8) * 255
     # 对该白色图像进行与 B 完全相同的变换，得到目标区域的掩码
-    mask_warped = cv2.warpPerspective(mask_B, H, (width_A, height_A))
+    mask_warped = cv2.warpPerspective(mask_B, H_cv, (width_A, height_A))
     # 将掩码转为单通道灰度图
     mask_final = cv2.cvtColor(mask_warped, cv2.COLOR_BGR2GRAY)
     # 为确保掩码是纯黑白的，进行二值化处理
@@ -219,11 +233,17 @@ if __name__ == '__main__':
     print(f"avg sigma:{sigma_linesamp.mean()}")
 
     H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
     print(f"H 矩阵：\n {H}")
 
-    mix_img = overlay_image_with_homography(align_image.image,image_rgb,H)
+    mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
+    point_img = deepcopy(align_image.image)
+    for point in transformed_points:
+        cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
 
     cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
+    cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),point_img)
+    
 
 
 
