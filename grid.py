@@ -176,7 +176,8 @@ class Grid():
                                 id = id,
                                 output_path = output_path,
                                 local_raw = data['local'],
-                                device=self.device)
+                                device=self.device,
+                                verbose=1 if task_info is None else 0)
 
             self.elements.append(new_element)
             if not task_info is None:
@@ -267,8 +268,8 @@ class Grid():
         criterion = CriterionTrainGrid()
         bce = nn.BCELoss()
         self.mapper.train()
-        if self.options.use_gpu:
-            self.mapper.to(self.device)
+        # if self.options.use_gpu:
+        self.mapper.to(self.device)
 
         min_photo_loss = 1e8
 
