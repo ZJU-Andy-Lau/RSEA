@@ -588,6 +588,10 @@ class Grid():
 
         if local.shape[:2] != img.shape[:2]:
             raise ValueError(f"img shape {img.shape} does not match local shape {local.shape}")
+        
+        if step <= 0 :
+            return img[None],local[None]
+        
         cut_number = 0
         row_num = 0
         col_num = 0
