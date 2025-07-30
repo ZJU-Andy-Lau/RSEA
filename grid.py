@@ -394,7 +394,7 @@ class Grid():
                 log_sigma_xyh_p3 = output_p6[:,3:]
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
-                                                                                            self.options.element_training_iters,
+                                                                                            self.options.grid_training_iters,
                                                                                             mu_xyh_p3,
                                                                                             log_sigma_xyh_p3,
                                                                                             confs_p1,
