@@ -124,7 +124,7 @@ class Element():
     
     def _log(self, *args, **kwargs):
         if self.verbose:
-            self._log("[Element]:", *args, **kwargs)
+            print("[Element]:", *args, **kwargs)
 
     def __crop_img__(self,crop_size = 256):
 
