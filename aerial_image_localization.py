@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from utils import str2bool,get_coord_mat
-from model_new import Encoder,HomographyFitter
+from model_new import Encoder,AffineFitter
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import cv2
@@ -72,6 +72,70 @@ def overlay_image_with_homography(img_A, img_B, H, H_is_for_xy=True):
     # 将掩码转为单通道灰度图
     mask_final = cv2.cvtColor(mask_warped, cv2.COLOR_BGR2GRAY)
     # 为确保掩码是纯黑白的，进行二值化处理
+    _, mask_final = cv2.threshold(mask_final, 1, 255, cv2.THRESH_BINARY)
+
+    # --- 3. 融合图像 ---
+    # 创建掩码的反转，用于在 A 中“挖洞”
+    mask_inv = cv2.bitwise_not(mask_final)
+
+    # 使用反转的掩码，将大图 A 中需要被覆盖的区域变黑
+    img_A_holed = cv2.bitwise_and(img_A, img_A, mask=mask_inv)
+
+    # 使用原始掩码，提取出变换后 B 中的有效像素
+    img_B_extracted = cv2.bitwise_and(warped_B, warped_B, mask=mask_final)
+
+    # 将“挖洞”后的 A 和提取出的 B 相加，完成镶嵌
+    result = cv2.add(img_A_holed, img_B_extracted)
+
+    return result
+
+def overlay_image_with_affine(img_A, img_B, M, M_is_for_xy=True):
+    """
+    根据仿射变换矩阵 M 将图像 B 变换并镶嵌到图像 A 上。
+
+    参数:
+    img_A (numpy.ndarray): 背景图像（大图）。
+    img_B (numpy.ndarray): 需要变换的前景图像（小图）。
+    M (numpy.ndarray): 2x3 的仿射变换矩阵。
+    M_is_for_xy (bool): 
+        - True (默认): M 是为标准的 OpenCV 坐标系 (x, y) 计算的，其中 x=列, y=行。
+        - False: M 是为 NumPy 索引类的坐标系 (行, 列) / (line, samp) 计算的。
+                 函数将在内部将其转换为 (x, y) 格式。
+
+    返回:
+    numpy.ndarray: B 镶嵌在 A 上的结果图像。
+    """
+    # 获取背景图像 A 的尺寸
+    height_A, width_A = img_A.shape[:2]
+    
+    M_cv = np.copy(M)
+    # 如果 M 是为 (行, 列) 坐标系定义的，需要转换它以适配 OpenCV 的 (x, y) 坐标系
+    if not M_is_for_xy:
+        # 原始映射:
+        # row' = m00*row + m01*col + m02
+        # col' = m10*row + m11*col + m12
+        # OpenCV 需要 (x=col, y=row):
+        # x' = m11*x + m10*y + m12
+        # y' = m01*x + m00*y + m02
+        m00, m01, m02 = M[0, 0], M[0, 1], M[0, 2]
+        m10, m11, m12 = M[1, 0], M[1, 1], M[1, 2]
+        M_cv = np.array([
+            [m11, m10, m12],
+            [m01, m00, m02]
+        ], dtype=np.float32)
+
+    # --- 1. 使用 M 对小图 B 进行仿射变换 ---
+    # 输出图像的尺寸 (dsize) 必须是背景图像 A 的尺寸
+    warped_B = cv2.warpAffine(img_B, M_cv, (width_A, height_A))
+
+    # --- 2. 创建变换后区域的掩码 (Mask) ---
+    # 创建一个与小图 B 等大的全白图像
+    # 注意：仿射变换没有3D效果，所以我们创建一个单通道的掩码就足够了
+    mask_B = np.ones((img_B.shape[0], img_B.shape[1]), dtype=np.uint8) * 255
+    
+    # 对该白色图像进行与 B 完全相同的变换，得到目标区域的掩码
+    mask_final = cv2.warpAffine(mask_B, M_cv, (width_A, height_A))
+    # warpAffine 直接输出单通道，无需转换，但为保险起见可以二值化
     _, mask_final = cv2.threshold(mask_final, 1, 255, cv2.THRESH_BINARY)
 
     # --- 3. 融合图像 ---
@@ -223,33 +287,29 @@ if __name__ == '__main__':
     valid_score = pred_res['valid_score_P1']
     conf_score = torch.norm(sigma_linesamp,dim=-1)
 
-    print("Fitting Homography")
+    print("Fitting Affine")
 
-    # fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
-    valid_mask = (valid_score > .5) & (conf_score < conf_score.mean()) 
-    mu_linesamp = mu_linesamp[valid_mask].detach().cpu().numpy()
-    sigma_linesamp = sigma_linesamp[valid_mask].detach().cpu().numpy()
-    local_linesamp = local_linesamp[valid_mask].detach().cpu().numpy()
+    fitter = AffineFitter()
+    valid_mask = valid_score > .5
+    mu_linesamp = mu_linesamp[valid_mask].detach()
+    sigma_linesamp = sigma_linesamp[valid_mask].detach()
+    local_linesamp = local_linesamp[valid_mask].detach()
     conf_score = conf_score[valid_mask].detach()
 
     print(f"avg sigma:{conf_score.mean()}")
 
     # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
-    H,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,15.)
-    inliers = mask.ravel() == 1
-    outliers = mask.ravel() == 0
+    M = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
 
     pred_points = mu_linesamp.astype(int)
-    print(f"H 矩阵：\n {H}")
-    print(f"inlier num:{inliers.sum()} / {len(inliers)}")
+    print(f"仿射矩阵：\n {M}")
 
-    mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
+    # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
+    mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,False)
     point_img = deepcopy(align_image.image)
-    for point in pred_points[inliers]:
+    for point in pred_points:
         cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
-    for point in pred_points[outliers]:
-        cv2.circle(point_img,point[[1,0]],5,(255,0,0),-1)
 
     cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
     cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),point_img)

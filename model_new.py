@@ -284,7 +284,7 @@ class AffineFitter:
     一个最佳的仿射变换，将源点映射到目标分布。权重由预测的标准差确定。
     """
 
-    def __init__(self, learning_rate: float = 1e-3, num_iterations: int = 2000, verbose: bool = True):
+    def __init__(self, verbose: bool = True):
         """
         初始化拟合器。
 
@@ -293,8 +293,6 @@ class AffineFitter:
             num_iterations (int): 梯度下降的迭代次数。
             verbose (bool): 是否在拟合过程中打印损失信息。
         """
-        self.lr = learning_rate
-        self.iterations = num_iterations
         self.verbose = verbose
         
         # 最终得到的仿射变换矩阵，(2, 3)
