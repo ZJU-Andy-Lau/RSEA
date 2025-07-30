@@ -422,17 +422,22 @@ class HomographyFitter:
     使用直接解法，而是采用像L-BFGS这样的迭代优化器。
     """
 
-    def __init__(self, max_epochs: int = 20, lr: float = 0.1, verbose: bool = True):
+    def __init__(self, max_epochs: int = 20, lr: float = 0.1, 
+                 patience: int = 10, tolerance: float = 1e-6, verbose: bool = True):
         """
         初始化拟合器。
 
         Args:
-            max_epochs (int): 优化循环的执行次数。L-BFGS很高效，通常不需要很多轮。
+            max_epochs (int): 优化的最大轮次。如果小于等于0，则启用早停策略。
             lr (float): L-BFGS的学习率。
+            patience (int): 早停策略的“耐心值”。当损失连续patience轮没有下降时停止。
+            tolerance (float): 用于判断损失是否“显著下降”的阈值。
             verbose (bool): 是否在拟合过程中打印信息。
         """
         self.max_epochs = max_epochs
         self.lr = lr
+        self.patience = patience
+        self.tolerance = tolerance
         self.verbose = verbose
         # 最终得到的单应变换矩阵，3x3
         self.transformation_matrix = None
@@ -443,17 +448,11 @@ class HomographyFitter:
             pred_stds: torch.Tensor) -> torch.Tensor:
         """
         执行单应变换的拟合过程。
-
-        Args:
-            source_points (torch.Tensor): 原始点坐标，形状为 (N, 2)。
-            pred_means (torch.Tensor): 预测的目标点坐标均值，形状为 (N, 2)。
-            pred_stds (torch.Tensor): 预测的目标点坐标标准差，形状为 (N, 2)。
-
-        Returns:
-            torch.Tensor: 拟合得到的 (3, 3) 单应变换矩阵。
         """
         if self.verbose:
             print("开始使用L-BFGS拟合单应变换...")
+            if self.max_epochs <= 0:
+                print(f"早停已启用: patience={self.patience}, tolerance={self.tolerance}")
 
         # --- 1. 数据校验与准备 ---
         if not (source_points.shape == pred_means.shape == pred_stds.shape and source_points.dim() == 2 and source_points.shape[1] == 2):
@@ -469,48 +468,54 @@ class HomographyFitter:
         )
 
         # --- 2. 初始化变换参数和优化器 ---
-        # 单应变换有8个自由参数。我们初始化为单位变换。
-        # p = [h11, h12, h13, h21, h22, h23, h31, h32]
         initial_params = torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], device=device, dtype=dtype)
         self.params = nn.Parameter(initial_params)
-        
         optimizer = torch.optim.LBFGS([self.params], lr=self.lr)
 
         # --- 3. 计算NLL损失的权重 ---
         weights = 1.0 / (pred_stds.pow(2) + 1e-8)
 
         # --- 4. 优化循环 ---
-        # 定义闭包函数
         def closure():
             optimizer.zero_grad()
-            
-            # 从8个参数构建完整的3x3单应矩阵
-            # H = [[h11, h12, h13],
-            #      [h21, h22, h23],
-            #      [h31, h32, 1.0]]
             h_matrix = torch.cat([self.params, torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
-
-            # 应用单应变换
-            # (N, 3) @ (3, 3) -> (N, 3)
             transformed_homogeneous = source_homogeneous @ h_matrix.T
-            
-            # 从齐次坐标转回2D坐标 (执行透视除法)
-            # 添加一个小的epsilon防止除以零
             w = transformed_homogeneous[:, 2].unsqueeze(1)
             transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
-
-            # 计算损失 (与仿射变换情况相同)
             error = transformed_points - pred_means
             weighted_squared_error = error.pow(2) * weights
             loss = weighted_squared_error.sum()
-            
             loss.backward()
             return loss
 
-        for i in range(self.max_epochs):
+        epoch = 0
+        best_loss = float('inf')
+        patience_counter = 0
+
+        while True:
             loss = optimizer.step(closure) / num_points
+            epoch += 1
+            
             if self.verbose:
-                print(f"轮次 {i+1:2d}/{self.max_epochs}, 损失: {loss.item():.4f}")
+                print(f"轮次 {epoch:3d}, 损失: {loss.item():.6f}")
+
+            # 检查早停条件
+            if best_loss - loss.item() > self.tolerance:
+                best_loss = loss.item()
+                patience_counter = 0
+            else:
+                patience_counter += 1
+
+            # 检查停止条件
+            if self.max_epochs > 0 and epoch >= self.max_epochs:
+                if self.verbose:
+                    print(f"达到最大轮次上限: {self.max_epochs}。")
+                break
+            
+            if self.max_epochs <= 0 and patience_counter >= self.patience:
+                if self.verbose:
+                    print(f"\n损失在 {self.patience} 轮内没有显著下降，提前停止于第 {epoch} 轮。")
+                break
 
         # --- 5. 保存并返回结果 ---
         final_params = self.params.detach().clone()

@@ -210,7 +210,7 @@ if __name__ == '__main__':
 
     print("Fitting Homography")
 
-    fitter = HomographyFitter(max_epochs=100,lr=0.01)
+    fitter = HomographyFitter(max_epochs=-1,lr=0.01,patience=100)
     valid_mask = valid_score > .5
     mu_linesamp = mu_linesamp[valid_mask].detach()
     sigma_linesamp = sigma_linesamp[valid_mask].detach()
