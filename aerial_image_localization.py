@@ -302,7 +302,7 @@ if __name__ == '__main__':
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
     M = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
 
-    pred_points = mu_linesamp.astype(int)
+    pred_points = mu_linesamp.cpu().numpy().astype(int)
     print(f"仿射矩阵：\n {M}")
 
     # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
