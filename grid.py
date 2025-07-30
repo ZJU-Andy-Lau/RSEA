@@ -165,16 +165,15 @@ class Grid():
             })
         for idx,data in enumerate(self.train_data):
             id = len(self.elements)
-            output_path = os.path.join(output_path,f'element_{id}')
-            if not os.path.exists(output_path):
-                os.mkdir(output_path)
+            path = os.path.join(output_path,f'element_{id}')
+            os.makedirs(path,exist_ok=True)
             new_element = Element(options = self.options,
                                 encoder = self.encoder,
                                 img_raw = data['img'],
                                 dem = data['dem'],
                                 rpc = data['rpc'],
                                 id = id,
-                                output_path = output_path,
+                                output_path = path,
                                 local_raw = data['local'],
                                 device=self.device,
                                 verbose=1 if task_info is None else 0)

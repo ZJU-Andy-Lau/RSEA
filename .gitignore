@@ -8,3 +8,4 @@ packages.txt
 adjust_multitasks.sh
 adjust_onetask.sh
 pretrain_swt.sh
+localize.sh

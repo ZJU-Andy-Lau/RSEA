@@ -141,6 +141,11 @@ if __name__ == '__main__':
     
     options = parser.parse_args()
 
+    print("==============================options==============================")
+    for k,v in vars(options).items():
+        print(f"{k}:{v}")
+    print("===================================================================")
+
     encoder = Encoder(cfg_large,output_global_feature=options.use_global_feature)
     encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(options.encoder_path).items()})
     encoder.eval()
@@ -189,6 +194,7 @@ if __name__ == '__main__':
     print("Align Image loaded")
 
     image_rgb = cv2.imread(options.localize_image_path)
+    print(f"Localize Image Loaded, shape:{image_rgb.shape}")
     image_gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
     image_gray = np.stack([image_gray] * 3,axis=-1)
     H,W = image_gray.shape[:2]
