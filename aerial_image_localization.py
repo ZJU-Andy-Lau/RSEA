@@ -240,7 +240,7 @@ if __name__ == '__main__':
     inliers = mask.ravel() == 1
     outliers = mask.ravel() == 0
 
-    pred_points = mu_linesamp.cpu().numpy().astype(int)
+    pred_points = mu_linesamp.astype(int)
     print(f"H 矩阵：\n {H}")
     print(f"inlier num:{inliers.sum()} / {len(inliers)}")
 
