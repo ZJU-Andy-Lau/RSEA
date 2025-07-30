@@ -453,7 +453,8 @@ class HomographyFitter:
         
         # 计算平均距离，并缩放使其约为sqrt(2)
         avg_dist = (centered_points**2).sum(dim=1).sqrt().mean()
-        scale = torch.sqrt(torch.tensor(2.0)) / (avg_dist + 1e-8)
+        # 修正: 确保新创建的张量与输入张量有相同的dtype和device
+        scale = torch.sqrt(torch.tensor(2.0, dtype=points.dtype, device=points.device)) / (avg_dist + 1e-8)
 
         # 构建归一化矩阵
         # T = [s, 0, -s*cx]
@@ -492,7 +493,7 @@ class HomographyFitter:
         norm_source_h = (T_source @ source_h.T).T
         norm_pred_means_h = (T_target @ pred_means_h.T).T
         
-        norm_source_points = norm_source_h[:, :2] / norm_source_h[:, 2].unsqueeze(1)
+        # 清理: 移除未使用的变量 norm_source_points
         norm_pred_means = norm_pred_means_h[:, :2] / norm_pred_means_h[:, 2].unsqueeze(1)
         
         # --- 2. 初始化变换参数和优化器 ---
@@ -523,7 +524,7 @@ class HomographyFitter:
             # 在归一化空间中计算损失
             error = transformed_points_norm - norm_pred_means
             weighted_squared_error = error.pow(2) * weights
-            loss = weighted_squared_error.mean()
+            loss = weighted_squared_error.sum()
 
             if torch.isnan(loss) or torch.isinf(loss):
                 if self.verbose:
@@ -535,7 +536,7 @@ class HomographyFitter:
             optimizer.step()
 
             if self.verbose and (iteration % 200 == 0 or iteration == 1):
-                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}，最小：{best_loss:.6f}")
+                print(f"迭代 {iteration:4d}, 损失: {loss.item():.6f}")
 
             if best_loss - loss.item() > self.tolerance:
                 best_loss = loss.item()
@@ -557,10 +558,38 @@ class HomographyFitter:
         final_h_norm = torch.cat([self.params.detach(), torch.tensor([1.0], device=device, dtype=dtype)]).reshape(3, 3)
         self.transformation_matrix = T_target_inv @ final_h_norm @ T_source
         
+        # --- 6. 计算并输出最终结果 ---
         if self.verbose:
-            print(f"拟合完成于第 {iteration} 次迭代。最终损失: {best_loss:.6f}")
+            # 新增: 计算最终的平均残差 (Reprojection Error)
+            final_transformed_points = self.transform(source_points)
+            residuals = torch.sqrt(((final_transformed_points - pred_means)**2).sum(dim=1))
+            avg_residual = residuals.mean()
+            print(f"拟合完成于第 {iteration} 次迭代。最终损失: {best_loss:.6f}, 平均残差: {avg_residual.item():.6f} 像素")
             
         return self.transformation_matrix
+
+    def transform(self, points: torch.Tensor) -> torch.Tensor:
+        """
+        使用拟合好的变换矩阵来变换新的点。
+        """
+        if self.transformation_matrix is None:
+            raise RuntimeError("必须先调用 .fit() 方法进行拟合，然后才能进行变换。")
+        
+        device = points.device
+        dtype = points.dtype
+        num_points = points.shape[0]
+        
+        points_homogeneous = torch.cat(
+            [points, torch.ones(num_points, 1, device=device, dtype=dtype)],
+            dim=1
+        )
+        
+        transformed_homogeneous = points_homogeneous @ self.transformation_matrix.T
+        
+        w = transformed_homogeneous[:, 2].unsqueeze(1)
+        transformed_points = transformed_homogeneous[:, :2] / (w + 1e-8)
+        
+        return transformed_points
 
     def transform(self, points: torch.Tensor) -> torch.Tensor:
         """
