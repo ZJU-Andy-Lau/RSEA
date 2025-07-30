@@ -212,9 +212,9 @@ if __name__ == '__main__':
 
     fitter = HomographyFitter(max_epochs=100,lr=0.01)
     valid_mask = valid_score > .5
-    mu_linesamp = mu_linesamp[valid_mask]
-    sigma_linesamp = sigma_linesamp[valid_mask]
-    local_linesamp = local_linesamp[valid_mask]
+    mu_linesamp = mu_linesamp[valid_mask].detach()
+    sigma_linesamp = sigma_linesamp[valid_mask].detach()
+    local_linesamp = local_linesamp[valid_mask].detach()
 
     print(f"avg sigma:{sigma_linesamp.mean()}")
 
