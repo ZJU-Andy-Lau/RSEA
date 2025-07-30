@@ -290,7 +290,7 @@ if __name__ == '__main__':
     print("Fitting Affine")
 
     fitter = AffineFitter()
-    valid_mask = valid_score > .5
+    valid_mask = (valid_score > .5) & (conf_score < conf_score.mean())
     mu_linesamp = mu_linesamp[valid_mask].detach()
     sigma_linesamp = sigma_linesamp[valid_mask].detach()
     local_linesamp = local_linesamp[valid_mask].detach()
@@ -300,13 +300,13 @@ if __name__ == '__main__':
 
     # H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
     # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
-    M = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    M = fitter.fit(local_linesamp[:,[1,0]],mu_linesamp[:,[1,0]],sigma_linesamp[:,[1,0]]).cpu().numpy()
 
     pred_points = mu_linesamp.cpu().numpy().astype(int)
     print(f"仿射矩阵：\n {M}")
 
     # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,False)
-    mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,False)
+    mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
     point_img = deepcopy(align_image.image)
     for point in pred_points:
         cv2.circle(point_img,point[[1,0]],5,(0,255,0),-1)
