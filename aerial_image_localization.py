@@ -219,6 +219,7 @@ if __name__ == '__main__':
     print(f"avg sigma:{sigma_linesamp.mean()}")
 
     H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
+    print(f"H 矩阵：\n {H}")
 
     mix_img = overlay_image_with_homography(align_image.image,image_rgb,H)
 
