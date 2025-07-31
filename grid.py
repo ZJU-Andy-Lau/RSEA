@@ -814,6 +814,15 @@ class Grid():
         print("Building Point Base")
         points_base = LazyTensor(locals_P2.unsqueeze(0))
 
+        def query_point_base(query_points:torch.Tensor,k=3):
+            """
+            query_points: (N,2)
+            """
+            query = LazyTensor(query_points.unsqueeze(1))
+            dist_ij:LazyTensor = ((query - points_base) ** 2).sum(-1)
+            dists,idxs = dist_ij.Kmin_argKmin(K=k, dim=1)
+            return dists,idxs
+
         patches_per_batch = self.options.patches_per_batch
         
         margin = self.encoder.SAMPLE_FACTOR // 2
@@ -832,7 +841,7 @@ class Grid():
         locals_total = []
         for batch_idx in trange(batch_num):
             sample_linesamps = linesamps[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch]
-            dists,idxs = points_base(sample_linesamps,k=self.options.nearest_neighbor_num)
+            dists,idxs = query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
             # torch.cuda.synchronize()
             valid_mask = dists.max(dim=1).values < 256
             # break
