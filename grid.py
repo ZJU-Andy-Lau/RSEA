@@ -845,6 +845,8 @@ class Grid():
             dists,idxs = query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
             # torch.cuda.synchronize()
             valid_mask = dists.max(dim=1).values < 256
+            if valid_mask.sum() == 0:
+                continue
             # break
             dists = 1. / (dists[valid_mask] + 1e-6)
             idxs = idxs[valid_mask]
