@@ -306,7 +306,7 @@ class Grid():
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
-                if iter_idx % 3 != 0:
+                if iter_idx % 2 != 0:
                     sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
                                                             min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
                                                     torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
