@@ -291,6 +291,7 @@ if __name__ == '__main__':
     local_linesamp = pred_res['locals_P2'].detach().cpu().numpy()
     conf = pred_res['confs_P1'].detach().cpu().numpy()
     valid_score = pred_res['valid_score_P1'].detach().cpu().numpy()
+    print(mu_linesamp.shape,local_linesamp.shape,valid_score.shape)
     conf_score = np.linalg.norm(sigma_linesamp,axis=-1)
 
     # fitter = AffineFitter()
