@@ -857,7 +857,7 @@ class Grid():
             features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
             confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
 
-            features_1Dp1 = features_PD.permute(1,0)[None,:,:,None]
+            features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
             output_16p1,valid_score = self.mapper(features_1Dp1)
             print("valid_score:",valid_score.shape)
             print("output_16p1:",output_16p1.shape)
