@@ -868,9 +868,10 @@ class Grid():
                 print(mu_xyh_p3.shape,sigma_xyh_p3.shape,valid_score_p1.shape)
                 raise ValueError("shape doesn't match")
 
-            print(locals_p2.shape)
-            print(valid_score_p1.shape)
-            print(features_pD.shape)
+            print("locals_p2:",locals_p2.shape)
+            print("valid_score_p1:",valid_score_p1.shape)
+            print("valid_score:",valid_score.shape)
+            print("features_pD:",features_pD.shape)
 
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)
