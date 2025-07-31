@@ -862,7 +862,9 @@ class Grid():
             print("valid_score:",valid_score.shape)
             print("output_16p1:",output_16p1.shape)
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+            print("output_p6:",output_p6.shape)
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+            print("mu_xyh_p3:",mu_xyh_p3.shape)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
             valid_score_p1 = valid_score.reshape(-1)
 
