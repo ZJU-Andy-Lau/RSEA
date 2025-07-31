@@ -832,10 +832,7 @@ class Grid():
         locals_total = []
         for batch_idx in trange(batch_num):
             sample_linesamps = linesamps[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch]
-            try:
-                dists,idxs = points_base(sample_linesamps,k=self.options.nearest_neighbor_num)
-            except Exception as e:
-                self.fprint(f'{e}')
+            dists,idxs = points_base(sample_linesamps,k=self.options.nearest_neighbor_num)
             # torch.cuda.synchronize()
             valid_mask = dists.max(dim=1).values < 256
             # break
