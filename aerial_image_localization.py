@@ -272,6 +272,8 @@ if __name__ == '__main__':
 
     print("Align Image loaded")
 
+    # whole_img = deepcopy(align_image.image)
+
     image_rgb = cv2.imread(options.localize_image_path)
     print(f"Localize Image Loaded, shape:{image_rgb.shape}")
     image_gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
@@ -283,51 +285,61 @@ if __name__ == '__main__':
 
     pred_res = grid.pred_xyh(image_gray,local_hw2)
     mu_linesamp,sigma_linesamp = align_image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
-    local_linesamp = pred_res['locals_P2']
-    conf = pred_res['confs_P1']
-    valid_score = pred_res['valid_score_P1']
-    conf_score = torch.norm(sigma_linesamp,dim=-1)
-
-    print("Fitting Affine")
+    mu_linesamp,sigma_linesamp = mu_linesamp.detach().cpu().numpy(),sigma_linesamp.detach().cpu().numpy()
+    local_linesamp = pred_res['locals_P2'].detach().cpu().numpy()
+    conf = pred_res['confs_P1'].detach().cpu().numpy()
+    valid_score = pred_res['valid_score_P1'].detach().cpu().numpy()
+    conf_score = torch.norm(sigma_linesamp,dim=-1).detach().cpu().numpy()
 
     # fitter = AffineFitter()
-    fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
+    # fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
     valid_mask = (valid_score > .5) 
-    mu_linesamp = mu_linesamp[valid_mask].detach()[:,[1,0]]
-    sigma_linesamp = sigma_linesamp[valid_mask].detach()[:,[1,0]]
-    local_linesamp = local_linesamp[valid_mask].detach()[:,[1,0]]
-    conf_score = conf_score[valid_mask].detach()
+
+    # for point in mu_linesamp[~valid_mask]:
+    #     cv2.circle(whole_img,point[[1,0]],2,(0,0,255),-1)
+    for point in local_linesamp[~valid_mask]:
+        cv2.circle(image_gray,point[[1,0]],1,(0,0,255),-1)
+
+    mu_linesamp = mu_linesamp[valid_mask]
+    sigma_linesamp = sigma_linesamp[valid_mask]
+    local_linesamp = local_linesamp[valid_mask]
+    conf_score = conf_score[valid_mask]
 
     print(f"avg sigma:{conf_score.mean()}")
 
-    _,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
+    _,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean())
     # _,mask = cv2.estimateAffine2D(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
     inliers = mask.ravel() == 1
+    outliers = mask.ravel() == 0
     print(f"inlier: {inliers.sum()}/{len(inliers)}")
-    mu_linesamp = mu_linesamp[inliers]
-    sigma_linesamp = sigma_linesamp[inliers]
-    local_linesamp = local_linesamp[inliers]
 
-    H = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp).cpu().numpy()
-    # H,mask = cv2.findHomography(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=15)
-    # transformed_points = fitter.transform(local_linesamp).cpu().numpy().astype(int)
-    # M = fitter.fit(local_linesamp,mu_linesamp,sigma_linesamp[:,[1,0]]).cpu().numpy()
-    # M,inlier_num = estimate_affine_ransac(local_linesamp[:,[1,0]].cpu().numpy(),mu_linesamp[:,[1,0]].cpu().numpy(),threshold=15.)
+    # for point in mu_linesamp[outliers]:
+    #     cv2.circle(whole_img,point[[1,0]],2,(92,92,235),-1)
+    for point in local_linesamp[outliers]:
+        cv2.circle(image_gray,point[[1,0]],1,(92,92,235),-1)
+    for point in local_linesamp[inliers]:
+        cv2.circle(image_gray,point[[1,0]],1,(0,255,0),-1)
 
-    pred_points = mu_linesamp.cpu().numpy().astype(int)
-    print(f"H 矩阵：\n{H}")
+    # mu_linesamp = mu_linesamp[inliers]
+    # sigma_linesamp = sigma_linesamp[inliers]
+    # local_linesamp = local_linesamp[inliers]
+
+
+    # pred_points = mu_linesamp.cpu().numpy().astype(int)
+    # print(f"H 矩阵：\n{H}")
     # print(f"仿射变换：\n{M}")
     # print(f"inlier: {inlier_num}/{len(local_linesamp)}")
 
 
-    mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,True)
+    # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,True)
     # mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
-    point_img = deepcopy(align_image.image)
-    for point in pred_points:
-        cv2.circle(point_img,point,5,(0,255,0),-1)
+    
+    # for point in pred_points:
+    #     cv2.circle(whole_img,point,5,(0,255,0),-1)
 
-    cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
-    cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),point_img)
+    # cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
+    # cv2.imwrite(os.path.join(options.grid_path,'whole_img.png'),whole_img)
+    cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),image_gray)
     
 
 
