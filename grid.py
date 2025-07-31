@@ -830,7 +830,7 @@ class Grid():
         samps = np.arange(margin,W - margin,1)
         lines,samps = np.meshgrid(lines,samps,indexing='ij')
         linesamps = np.stack([lines.ravel(),samps.ravel()],axis=-1)
-        linesamps = torch.from_numpy(linesamps).to(torch.float32,features_PD.device)
+        linesamps = torch.from_numpy(linesamps).to(device=features_PD.device,dtype=torch.float32)
 
         batch_num = int(np.ceil(len(linesamps) / patches_per_batch))
 
