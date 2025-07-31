@@ -134,7 +134,7 @@ class Element():
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
         # size_ratio = [.67,1.,1.5]
-        size_ratio = [.55,.6,.65]
+        size_ratio = [.9,1.,1.1]
         cut_number = 0
         row_num = 0
         col_num = 0
