@@ -298,7 +298,7 @@ if __name__ == '__main__':
     # for point in mu_linesamp[~valid_mask]:
     #     cv2.circle(whole_img,point[[1,0]],2,(0,0,255),-1)
     for point in local_linesamp[~valid_mask]:
-        cv2.circle(image_gray,point[[1,0]],1,(0,0,255),-1)
+        cv2.circle(image_gray,point[[1,0]].astype(int),1,(0,0,255),-1)
 
     mu_linesamp = mu_linesamp[valid_mask]
     sigma_linesamp = sigma_linesamp[valid_mask]
@@ -316,9 +316,9 @@ if __name__ == '__main__':
     # for point in mu_linesamp[outliers]:
     #     cv2.circle(whole_img,point[[1,0]],2,(92,92,235),-1)
     for point in local_linesamp[outliers]:
-        cv2.circle(image_gray,point[[1,0]],1,(92,92,235),-1)
+        cv2.circle(image_gray,point[[1,0]].astype(int),1,(92,92,235),-1)
     for point in local_linesamp[inliers]:
-        cv2.circle(image_gray,point[[1,0]],1,(0,255,0),-1)
+        cv2.circle(image_gray,point[[1,0]].astype(int),1,(0,255,0),-1)
 
     # mu_linesamp = mu_linesamp[inliers]
     # sigma_linesamp = sigma_linesamp[inliers]
