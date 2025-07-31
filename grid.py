@@ -638,8 +638,11 @@ class Grid():
                     if col_num % 2 == 1:
                         row_start,row_end = H - row_end,H - row_start
 
-                    crop_imgs.append(img[row_start:row_end,col_start:col_end])
-                    crop_locals.append(local[row_start:row_end,col_start:col_end])
+                    img_crop = cv2.resize(img[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
+                    local_crop = cv2.resize(local[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
+
+                    crop_imgs.append(img_crop)
+                    crop_locals.append(local_crop)
 
                     cut_number += 1
                     pbar.update(1)
