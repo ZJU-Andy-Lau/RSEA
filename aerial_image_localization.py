@@ -292,7 +292,7 @@ if __name__ == '__main__':
 
     # fitter = AffineFitter()
     fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
-    valid_mask = (valid_score > .5) & (conf_score < conf_score.mean())
+    valid_mask = (valid_score > .5) 
     mu_linesamp = mu_linesamp[valid_mask].detach()[:,[1,0]]
     sigma_linesamp = sigma_linesamp[valid_mask].detach()[:,[1,0]]
     local_linesamp = local_linesamp[valid_mask].detach()[:,[1,0]]
