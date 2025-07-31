@@ -248,7 +248,7 @@ class PretrainDataset(Dataset):
         if mode == 'train':
             self.transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.4)],p=.7),
+                transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.1)],p=.7),
                 transforms.RandomInvert(p=.2),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
@@ -257,6 +257,8 @@ class PretrainDataset(Dataset):
                 transforms.ToTensor(),
                 transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
                 ])
+        
+        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     
     def __len__(self):
@@ -277,8 +279,11 @@ class PretrainDataset(Dataset):
         obj_full = centerize_obj(self.database[key]['obj'][:])
         residual_1_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
         residual_2_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
+        image_1_full = self.clahe.apply(image_1_full)
+        image_2_full = self.clahe.apply(image_2_full)
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
+        
 
         imgs1, imgs2, obj1, obj2, residual1, residual2, overlaps_1, overlaps_2 = \
             process_image(img1_full=image_1_full,

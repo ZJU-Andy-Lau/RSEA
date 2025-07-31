@@ -273,10 +273,12 @@ if __name__ == '__main__':
     print("Align Image loaded")
 
     # whole_img = deepcopy(align_image.image)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     image_rgb = cv2.imread(options.localize_image_path)
     print(f"Localize Image Loaded, shape:{image_rgb.shape}")
     image_gray = cv2.cvtColor(image_rgb,cv2.COLOR_RGB2GRAY)
+    image_gray = clahe.apply(image_gray)
     image_gray = np.stack([image_gray] * 3,axis=-1)
     H,W = image_gray.shape[:2]
     local_hw2 = get_coord_mat(H,W)

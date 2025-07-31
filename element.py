@@ -62,19 +62,22 @@ class Element():
         #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         #     ])
         self.transform = nn.Sequential(
+            K.RandomGrayscale(p=0.3),
             K.ColorJitter(
                 brightness=0.4,
                 contrast=0.4,
                 saturation=0.4,
-                hue=0.4,
-                p=0.7
+                hue=0.1,
+                p=.9,
             ),
+            K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
             K.RandomInvert(p=0.3),
             K.Normalize(
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
                 std=torch.tensor([0.229, 0.224, 0.225])
             )
         )
+        
         # self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(options.encoder_path)).items()})
         self.encoder = encoder
         self.encoder.eval()
