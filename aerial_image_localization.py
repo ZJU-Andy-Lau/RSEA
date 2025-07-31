@@ -294,7 +294,7 @@ if __name__ == '__main__':
     print(mu_linesamp.shape,local_linesamp.shape,valid_score.shape)
     conf_score = np.linalg.norm(sigma_linesamp,axis=-1)
 
-    # fitter = AffineFitter()
+    fitter = AffineFitter()
     # fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
     valid_mask = (valid_score > .5) 
 
@@ -323,9 +323,12 @@ if __name__ == '__main__':
     for point in local_linesamp[inliers]:
         cv2.circle(image_gray,point[[1,0]].astype(int),1,(0,255,0),-1)
 
-    # mu_linesamp = mu_linesamp[inliers]
-    # sigma_linesamp = sigma_linesamp[inliers]
-    # local_linesamp = local_linesamp[inliers]
+    mu_linesamp = mu_linesamp[inliers]
+    sigma_linesamp = sigma_linesamp[inliers]
+    local_linesamp = local_linesamp[inliers]
+
+    # M,_ = cv2.estimateAffine2D(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=conf_score.mean())
+    M = fitter.fit(torch.from_numpy(local_linesamp[:,[1,0]]).cuda(),torch.from_numpy(mu_linesamp[:,[1,0]]).cuda(),torch.from_numpy(sigma_linesamp[:,[1,0]]).cuda()).cpu().numpy()
 
 
     # pred_points = mu_linesamp.cpu().numpy().astype(int)
@@ -335,12 +338,12 @@ if __name__ == '__main__':
 
 
     # mix_img = overlay_image_with_homography(align_image.image,image_rgb,H,True)
-    # mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
+    mix_img = overlay_image_with_affine(align_image.image,image_rgb,M,True)
     
     # for point in pred_points:
     #     cv2.circle(whole_img,point,5,(0,255,0),-1)
 
-    # cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
+    cv2.imwrite(os.path.join(options.grid_path,'mix_img.png'),mix_img)
     # cv2.imwrite(os.path.join(options.grid_path,'whole_img.png'),whole_img)
     cv2.imwrite(os.path.join(options.grid_path,'point_img.png'),image_gray)
     
