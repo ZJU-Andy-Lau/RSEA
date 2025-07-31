@@ -285,7 +285,7 @@ if __name__ == '__main__':
     
     print("Predictiong XYH")
 
-    pred_res = grid.pred_xyh(image_gray,local_hw2)
+    pred_res = grid.pred_dense_xyh(image_gray,local_hw2)
     mu_linesamp,sigma_linesamp = align_image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
     mu_linesamp,sigma_linesamp = mu_linesamp.detach().cpu().numpy(),sigma_linesamp.detach().cpu().numpy()
     local_linesamp = pred_res['locals_P2'].detach().cpu().numpy()

@@ -30,6 +30,7 @@ import kornia.augmentation as K
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
+from pykeops.torch import LazyTensor
 
 from rs_image import RSImage
 from element import Element
@@ -580,7 +581,7 @@ class Grid():
             cv2.imwrite(os.path.join(element.output_path,f'match_vis.png' if idx is None else f'match_vis_{idx}.png'),img_vis)
 
         
-    def __crop_img__(self,img,crop_size,step,local = None,random_ratio = 1.):
+    def __crop_img__(self,img,crop_size,local = None,random_ratio = 1.,size_ratios = [1.],expect_num = 64,step = None):
 
         print("cropping image")
         H, W = img.shape[:2]
@@ -597,7 +598,7 @@ class Grid():
         crop_imgs = []
         crop_locals = []
 
-        if step <= 0 :
+        if not step is None and step <= 0 :
             img = cv2.resize(img,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
             local = cv2.resize(local,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
             for i in range(self.encoder.SAMPLE_FACTOR):
@@ -610,36 +611,41 @@ class Grid():
             return crop_imgs,crop_locals
             
 
-        rows = np.arange(0,H - crop_size + 1,step)
-        cols = np.arange(0,W - crop_size + 1,step)
+        for ratio in size_ratios:
+            raw_size = int(crop_size * ratio)
+            if step is None:
+                step = int(np.sqrt((H - raw_size) * (W - raw_size) / expect_num))
+            
+            rows = np.arange(0,H - raw_size + 1,step)
+            cols = np.arange(0,W - raw_size + 1,step)
 
-        pbar = tqdm(total=len(rows) * len(cols))
+            pbar = tqdm(total=len(rows) * len(cols))
 
-        for row in rows:
-            for col in cols:
-                if row + crop_size + step > H:
-                    if col + crop_size > W:
-                        row_start,row_end,col_start,col_end = H - crop_size, H, W - crop_size, W
+            for row in rows:
+                for col in cols:
+                    if row + raw_size + step > H:
+                        if col + raw_size > W:
+                            row_start,row_end,col_start,col_end = H - raw_size, H, W - raw_size, W
+                        else:
+                            row_start,row_end,col_start,col_end = H - raw_size, H, col, col+raw_size
                     else:
-                        row_start,row_end,col_start,col_end = H - crop_size, H, col, col+crop_size
-                else:
-                    if col + crop_size + step > W:
-                        row_start,row_end,col_start,col_end = row, row+crop_size, W - crop_size, W
-                    else:
-                        row_start,row_end,col_start,col_end = row, row+crop_size, col, col+crop_size
-                if row_num % 2 == 1:
-                    col_start,col_end = W - col_end,W - col_start
-                if col_num % 2 == 1:
-                    row_start,row_end = H - row_end,H - row_start
+                        if col + raw_size + step > W:
+                            row_start,row_end,col_start,col_end = row, row+raw_size, W - raw_size, W
+                        else:
+                            row_start,row_end,col_start,col_end = row, row+raw_size, col, col+raw_size
+                    if row_num % 2 == 1:
+                        col_start,col_end = W - col_end,W - col_start
+                    if col_num % 2 == 1:
+                        row_start,row_end = H - row_end,H - row_start
 
-                crop_imgs.append(img[row_start:row_end,col_start:col_end])
-                crop_locals.append(local[row_start:row_end,col_start:col_end])
+                    crop_imgs.append(img[row_start:row_end,col_start:col_end])
+                    crop_locals.append(local[row_start:row_end,col_start:col_end])
 
-                cut_number += 1
-                pbar.update(1)
-                col_num += 1
-            row_num += 1
-            col_num -= 1
+                    cut_number += 1
+                    pbar.update(1)
+                    col_num += 1
+                row_num += 1
+                col_num -= 1
 
         if cut_number > 1:
             random_num = int(cut_number * random_ratio)
@@ -749,3 +755,131 @@ class Grid():
 
         return res
     
+    @torch.no_grad()
+    def pred_dense_xyh(self,img_raw:np.ndarray,local_hw2:np.ndarray) -> Dict[str,np.ndarray]:
+        H,W = img_raw.shape[:2]
+        self.encoder.eval().to(self.device)
+        self.mapper.eval().to(self.device)
+
+        crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img=img_raw,
+                                                            crop_size=self.options.crop_size,
+                                                            expect_num=64,
+                                                            random_ratio=0,
+                                                            size_ratios=[.8,1.,1.25],
+                                                            local=local_hw2)
+        print("Tranforming Images")
+        imgs_NCHW = torch.from_numpy(crop_imgs_NHWC).permute(0,3,1,2)
+        imgs_NCHW = imgs_NCHW.float() / 255.0
+        imgs_NCHW = imgs_NCHW.to(self.device)
+        self.transform = self.transform.to(self.device)
+        with torch.no_grad():
+            batch_num = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
+            imgs_NCHW = [self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size]) for b in trange(batch_num)]
+            imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
+        locals_NHW2= torch.from_numpy(crop_locals_NHW2)
+        locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,mode='avg',device=self.device)
+        total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
+        select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
+
+        batch_num = int(np.ceil(len(crop_imgs_NHWC) / self.options.batch_size))
+        features_PD = []
+        confs_P1 = []
+        locals_P2 = []
+
+        print("Extracting Features")
+        for batch_idx in trange(batch_num):
+            batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
+            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
+            feat,conf = self.encoder(batch_imgs)
+            # features_NDhw.append(feat)
+            # confs_Nhw.append(conf)
+            feat = feat.permute(0,2,3,1).flatten(0,2)
+            # if not self.options.use_global_feature:
+            #     feat = feat[:,:self.encoder.patch_feature_channels]
+            conf = conf.permute(0,2,3,1).flatten(0,3)
+            valid_mask = conf > self.options.conf_threshold
+            select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]
+
+            features_PD.append(feat[valid_mask][select_idxs])
+            confs_P1.append(conf[valid_mask][select_idxs])
+            locals_P2.append(batch_locals[valid_mask][select_idxs])
+
+        features_PD = torch.cat(features_PD,dim=0)
+        confs_P1 = torch.cat(confs_P1,dim=0)
+        locals_P2 = torch.cat(locals_P2,dim=0)
+
+        print("Building Point Base")
+        points_base = LazyTensor(locals_P2.unsqueeze(0))
+
+        patches_per_batch = self.options.patches_per_batch
+        
+        margin = self.encoder.SAMPLE_FACTOR // 2
+        lines = np.arange(margin,H - margin,1)
+        samps = np.arange(margin,W - margin,1)
+        lines,samps = np.meshgrid(lines,samps,indexing='ij')
+        linesamps = np.stack([lines.ravel(),samps.ravel()],axis=-1)
+
+        batch_num = int(np.ceil(len(linesamps) / patches_per_batch))
+
+        print("Predicting Dense Geographic Coordinates")
+        mu_xyh_preds = []
+        sigma_xyh_preds = []
+        valid_scores = []
+        confs_total = []
+        locals_total = []
+        for batch_idx in trange(batch_num):
+            sample_linesamps = linesamps[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch]
+            try:
+                dists,idxs = points_base(sample_linesamps,k=self.options.nearest_neighbor_num)
+            except Exception as e:
+                self.fprint(f'{e}')
+            # torch.cuda.synchronize()
+            valid_mask = dists.max(dim=1).values < 256
+            # break
+            dists = 1. / (dists[valid_mask] + 1e-6)
+            idxs = idxs[valid_mask]
+            dists = dists / torch.mean(dists,dim=-1,keepdim=True)
+            features_pD = features_PD[idxs].contiguous()
+            confs_p1 = confs_P1[idxs].contiguous()
+            locals_p2 = sample_linesamps[valid_mask]
+            features_pD = features_pD * dists.unsqueeze(-1)
+            confs_p1 = confs_p1 * dists
+            features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
+            confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
+
+            features_1Dp1 = features_PD.permute(1,0)[None,:,:,None]
+            output_16p1,valid_score = self.mapper(features_1Dp1)
+            output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+            mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+            sigma_xyh_p3 = torch.exp(output_p6[:,3:])
+            valid_score_p1 = valid_score.reshape(-1)
+
+            if mu_xyh_p3.shape[0] != sigma_xyh_p3.shape[0] or mu_xyh_p3.shape[0] != valid_score_p1.shape[0]:
+                print(mu_xyh_p3.shape,sigma_xyh_p3.shape,valid_score_p1.shape)
+                raise ValueError("shape doesn't match")
+
+            mu_xyh_preds.append(mu_xyh_p3)
+            sigma_xyh_preds.append(sigma_xyh_p3)
+            valid_scores.append(valid_score_p1)
+            confs_total.append(confs_p1)
+            locals_total.append(locals_p2)
+
+        mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
+        sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
+        valid_scores_P1 = torch.concatenate(valid_scores,dim=0)
+        confs_total = torch.concatenate(confs_total,dim=0)
+        locals_total = torch.concatenate(locals_total,dim=0)
+        
+       
+        res = {
+            'mu_xyh_P3':mu_xyh_P3,
+            'sigma_xyh_P3':sigma_xyh_P3,
+            'locals_P2':locals_total,
+            'confs_P1':confs_total,
+            'valid_score_P1':valid_scores_P1
+        }
+        crop_imgs_NHWC = None
+        crop_locals_NHW2 = None
+        imgs_NCHW = None
+
+        return res
