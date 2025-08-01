@@ -597,6 +597,10 @@ class Grid():
         H, W = img.shape[:2]
         if local is None:
             local = get_coord_mat(H,W)
+        
+        flex_step = False
+        if step is None:
+            flex_step = True
 
         if local.shape[:2] != img.shape[:2]:
             raise ValueError(f"img shape {img.shape} does not match local shape {local.shape}")
@@ -623,8 +627,8 @@ class Grid():
 
         for ratio in size_ratios:
             raw_size = int(crop_size * ratio)
-            # if step is None:
-            step = int(np.sqrt((H - raw_size) * (W - raw_size) / expect_num))
+            if flex_step:
+                step = int(np.sqrt((H - raw_size) * (W - raw_size) / expect_num))
             
             rows = np.arange(0,H - raw_size + 1,step)
             cols = np.arange(0,W - raw_size + 1,step)

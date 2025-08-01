@@ -310,7 +310,7 @@ if __name__ == '__main__':
 
     #计算threshold
     offset = mu_linesamp.mean(axis=0) - local_linesamp.mean(axis=0)
-    threshold = np.linalg.norm(local_linesamp + offset[None] - mu_linesamp).mean()
+    threshold = np.linalg.norm(local_linesamp + offset[None] - mu_linesamp,axis=-1).mean()
 
     print(f"avg sigma:{conf_score.mean()}")
     print(f"threshold:{threshold}")
