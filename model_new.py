@@ -331,11 +331,11 @@ class AffineFitter:
 
         # --- 2. 计算权重 ---
         weights = 1.0 / (pred_stds.pow(2) + 1e-8)
-        w_x = weights[:, 0]
-        w_y = weights[:, 1]
+        w_x = weights[:, 0].to(dtype=dtype)
+        w_y = weights[:, 1].to(dtype=dtype)
         
-        mu_x = pred_means[:, 0]
-        mu_y = pred_means[:, 1]
+        mu_x = pred_means[:, 0].to(dtype=dtype)
+        mu_y = pred_means[:, 1].to(dtype=dtype)
 
         # --- 3. 构建线性方程组 Hp = b (向量化版本) ---
         
@@ -363,7 +363,6 @@ class AffineFitter:
         # 其中 b_x = sum(w_xi * mu_xi * p_i)
         # b_y = sum(w_yi * mu_yi * p_i)
         
-        print(source_homogeneous.dtype,w_x.dtype,mu_x.dtype)
 
         # 使用矩阵-向量乘法高效计算 b_x 和 b_y
         b_x = source_homogeneous.T @ (w_x * mu_x)
