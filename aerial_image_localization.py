@@ -181,10 +181,10 @@ if __name__ == '__main__':
     parser.add_argument('--mapper_blocks_num', type=int, default=5,
                         help='depth of the regression head, defines the map size')
     
-    parser.add_argument('--batch_size', type=int, default=8,
+    parser.add_argument('--batch_size', type=int, default=12,
                         help='number of input images when extracting features')
     
-    parser.add_argument('--patches_per_batch', type=int, default=2 ** 13,
+    parser.add_argument('--patches_per_batch', type=int, default=2 ** 14,
                         help='number of patches in a batch')
     
     parser.add_argument('--use_global_feature',type=str2bool,default=False)
