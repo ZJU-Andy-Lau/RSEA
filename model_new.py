@@ -363,6 +363,8 @@ class AffineFitter:
         # 其中 b_x = sum(w_xi * mu_xi * p_i)
         # b_y = sum(w_yi * mu_yi * p_i)
         
+        print(source_homogeneous.dtype,w_x.dtype,mu_x.dtype)
+
         # 使用矩阵-向量乘法高效计算 b_x 和 b_y
         b_x = source_homogeneous.T @ (w_x * mu_x)
         b_y = source_homogeneous.T @ (w_y * mu_y)
