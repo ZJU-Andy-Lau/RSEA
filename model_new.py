@@ -324,13 +324,12 @@ class AffineFitter:
         dtype = source_points.dtype
         num_points = source_points.shape[0]
 
-        # 仿射变换参数有6个: p = [a, b, c, d, e, f]^T
-        # 初始化 H (在文献中常称为 A^T A) 和 b (在文献中常称为 A^T y)
-        H = torch.zeros((6, 6), device=device, dtype=dtype)
-        b = torch.zeros((6, 1), device=device, dtype=dtype)
+        source_homogeneous = torch.cat(
+            [source_points, torch.ones(num_points, 1, device=device, dtype=dtype)], 
+            dim=1
+        )
 
         # --- 2. 计算权重 ---
-        # 权重 = 1 / sigma^2。增加一个小的 epsilon 防止除以零。
         weights = 1.0 / (pred_stds.pow(2) + 1e-8)
         w_x = weights[:, 0]
         w_y = weights[:, 1]
@@ -338,24 +337,37 @@ class AffineFitter:
         mu_x = pred_means[:, 0]
         mu_y = pred_means[:, 1]
 
-        # --- 3. 构建线性方程组 Hp = b ---
-        # 遍历所有点，累加信息到 H 和 b 中
-        for i in range(num_points):
-            x_orig, y_orig = source_points[i]
+        # --- 3. 构建线性方程组 Hp = b (向量化版本) ---
+        
+        # --- 计算 Hessian 矩阵 H ---
+        # H 是一个 6x6 的块矩阵:
+        # H = [[H_xx,  0   ],
+        #      [ 0  ,  H_yy]]
+        # 其中 H_xx = sum(w_xi * p_i * p_i^T)
+        # H_yy = sum(w_yi * p_i * p_i^T)
+        # 这里的 p_i 是齐次坐标 [x_i, y_i, 1]
+        
+        # 使用矩阵乘法高效计算 H_xx 和 H_yy
+        # (P.T @ (w * P)) 等价于 sum(w_i * p_i * p_i^T)
+        H_xx = source_homogeneous.T @ (w_x.unsqueeze(1) * source_homogeneous)
+        H_yy = source_homogeneous.T @ (w_y.unsqueeze(1) * source_homogeneous)
+        
+        H = torch.zeros((6, 6), device=device, dtype=dtype)
+        H[0:3, 0:3] = H_xx
+        H[3:6, 3:6] = H_yy
 
-            # 构造与该点相关的向量 u_i 和 v_i
-            # x' = u_i^T * p
-            # y' = v_i^T * p
-            u_i = torch.tensor([x_orig, y_orig, 1, 0, 0, 0], device=device, dtype=dtype).unsqueeze(1) # 6x1
-            v_i = torch.tensor([0, 0, 0, x_orig, y_orig, 1], device=device, dtype=dtype).unsqueeze(1) # 6x1
-
-            # 累加到Hessian矩阵 H
-            # H = sum(w_xi * u_i*u_i^T + w_yi * v_i*v_i^T)
-            H += w_x[i] * (u_i @ u_i.T) + w_y[i] * (v_i @ v_i.T)
-            
-            # 累加到向量 b
-            # b = sum(w_xi * mu_xi * u_i + w_yi * mu_yi * v_i)
-            b += w_x[i] * mu_x[i] * u_i + w_y[i] * mu_y[i] * v_i
+        # --- 计算向量 b ---
+        # b 是一个 6x1 的块向量:
+        # b = [[b_x],
+        #      [b_y]]
+        # 其中 b_x = sum(w_xi * mu_xi * p_i)
+        # b_y = sum(w_yi * mu_yi * p_i)
+        
+        # 使用矩阵-向量乘法高效计算 b_x 和 b_y
+        b_x = source_homogeneous.T @ (w_x * mu_x)
+        b_y = source_homogeneous.T @ (w_y * mu_y)
+        
+        b = torch.cat([b_x, b_y]).unsqueeze(1) # 拼接成 6x1 的列向量
 
         # --- 4. 求解线性方程组 ---
         if self.verbose:
