@@ -80,9 +80,19 @@ class Grid():
         #     transforms.ToTensor(),
         #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         #     ])
+        # self.transform = nn.Sequential(
+        #     K.Normalize(
+        #         mean=torch.tensor([0.485, 0.456, 0.406]), 
+        #         std=torch.tensor([0.229, 0.224, 0.225])
+        #     )
+        # )
         self.transform = nn.Sequential(
+            K.RandomGrayscale(p=0.3),
+            K.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=.9),
+            K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
+            K.RandomInvert(p=0.3),
             K.Normalize(
-                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                mean=torch.tensor([0.485, 0.456, 0.406]),
                 std=torch.tensor([0.229, 0.224, 0.225])
             )
         )
@@ -761,8 +771,8 @@ class Grid():
     @torch.no_grad()
     def pred_dense_xyh(self,img_raw:np.ndarray,local_hw2:np.ndarray) -> Dict[str,np.ndarray]:
         H,W = img_raw.shape[:2]
-        self.encoder.eval().to(self.device)
-        self.mapper.eval().to(self.device)
+        self.encoder = self.encoder.eval().to(self.device)
+        self.mapper = self.mapper.eval().to(self.device)
 
         crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img=img_raw,
                                                             crop_size=self.options.crop_size,
