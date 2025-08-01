@@ -1,5 +1,6 @@
 import warnings
 warnings.filterwarnings("ignore")
+from matplotlib import axis
 import numpy as np
 import torch
 import torch.nn as nn
@@ -291,12 +292,11 @@ if __name__ == '__main__':
     local_linesamp = pred_res['locals_P2'].detach().cpu().numpy()
     conf = pred_res['confs_P1'].detach().cpu().numpy()
     valid_score = pred_res['valid_score_P1'].detach().cpu().numpy()
-    print(mu_linesamp.shape,local_linesamp.shape,valid_score.shape)
     conf_score = np.linalg.norm(sigma_linesamp,axis=-1)
 
     fitter = AffineFitter()
     # fitter = HomographyFitter(max_iterations=-1,lr=1e-4,patience=10000)
-    valid_mask = (valid_score > .5) 
+    valid_mask = (valid_score > .1) 
 
     # for point in mu_linesamp[~valid_mask]:
     #     cv2.circle(whole_img,point[[1,0]],2,(0,0,255),-1)
@@ -308,9 +308,14 @@ if __name__ == '__main__':
     local_linesamp = local_linesamp[valid_mask]
     conf_score = conf_score[valid_mask]
 
-    print(f"avg sigma:{conf_score.mean()}")
+    #计算threshold
+    offset = local_linesamp.mean(axis=0) - mu_linesamp.mean(axis=0)
+    threshold = np.linalg.norm(mu_linesamp + offset[None] - local_linesamp).mean()
 
-    _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=conf_score.mean())
+    print(f"avg sigma:{conf_score.mean()}")
+    print(f"threshold:{threshold}")
+
+    _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=threshold)
     # _,mask = cv2.estimateAffine2D(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
     inliers = mask.ravel() == 1
     outliers = mask.ravel() == 0
