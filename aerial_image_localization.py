@@ -308,14 +308,9 @@ if __name__ == '__main__':
     local_linesamp = local_linesamp[valid_mask]
     conf_score = conf_score[valid_mask]
 
-    #计算threshold
-    offset = mu_linesamp.mean(axis=0) - local_linesamp.mean(axis=0)
-    threshold = np.linalg.norm(local_linesamp + offset[None] - mu_linesamp,axis=-1).mean()
-
     print(f"avg sigma:{conf_score.mean()}")
-    print(f"threshold:{threshold}")
 
-    _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=threshold)
+    _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=2. * conf_score.mean())
     # _,mask = cv2.estimateAffine2D(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
     inliers = mask.ravel() == 1
     outliers = mask.ravel() == 0
