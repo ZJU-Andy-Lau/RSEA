@@ -309,8 +309,8 @@ if __name__ == '__main__':
     conf_score = conf_score[valid_mask]
 
     #计算threshold
-    offset = local_linesamp.mean(axis=0) - mu_linesamp.mean(axis=0)
-    threshold = np.linalg.norm(mu_linesamp + offset[None] - local_linesamp).mean()
+    offset = mu_linesamp.mean(axis=0) - local_linesamp.mean(axis=0)
+    threshold = np.linalg.norm(local_linesamp + offset[None] - mu_linesamp).mean()
 
     print(f"avg sigma:{conf_score.mean()}")
     print(f"threshold:{threshold}")

@@ -623,8 +623,8 @@ class Grid():
 
         for ratio in size_ratios:
             raw_size = int(crop_size * ratio)
-            if step is None:
-                step = int(np.sqrt((H - raw_size) * (W - raw_size) / expect_num))
+            # if step is None:
+            step = int(np.sqrt((H - raw_size) * (W - raw_size) / expect_num))
             
             rows = np.arange(0,H - raw_size + 1,step)
             cols = np.arange(0,W - raw_size + 1,step)
