@@ -329,12 +329,11 @@ class Grid():
                                                         dim=0)
                     # torch.cuda.synchronize()
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
-                    try:
-                        dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
-                    except Exception as e:
-                        self.fprint(f'{e}')
+                    dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
                     # torch.cuda.synchronize()
                     valid_mask = dists.max(dim=1).values < 256
+                    if valid_mask.sum() == 0:
+                        continue
                     # break
                     dists = 1. / (dists[valid_mask] + 1e-6)
                     idxs = idxs[valid_mask]
