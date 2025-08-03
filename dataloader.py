@@ -86,9 +86,14 @@ def get_random_overlapping_crops(
     image_width: int,
     min_crop_side: int = 500,
 ) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
+    """
+    Generates two random, overlapping, axis-aligned square crop boxes.
+    This function is kept as is from the original code.
+    """
     max_crop_side = min(image_height, image_width)
     if min_crop_side > max_crop_side:
         raise ValueError("min_crop_side cannot be larger than the smallest image dimension.")
+    
     s1 = np.random.randint(min_crop_side, max_crop_side + 1)
     s2 = np.random.randint(min_crop_side, max_crop_side + 1)
     
@@ -97,8 +102,8 @@ def get_random_overlapping_crops(
     s_o_max = s_small
     s_o = np.random.randint(s_o_min, s_o_max + 1)
 
-    x1 = np.clip(np.random.randint(-s1 // 2, image_width - s1 // 2),a_min=0,a_max=image_width - s1)
-    y1 = np.clip(np.random.randint(-s1 // 2, image_height - s1 // 2),a_min=0,a_max=image_height - s1)
+    x1 = np.clip(np.random.randint(-s1 // 2, image_width - s1 // 2), a_min=0, a_max=image_width - s1)
+    y1 = np.clip(np.random.randint(-s1 // 2, image_height - s1 // 2), a_min=0, a_max=image_height - s1)
 
     dx_o1 = np.random.randint(0, s1 - s_o + 1)
     dy_o1 = np.random.randint(0, s1 - s_o + 1)
@@ -114,97 +119,187 @@ def get_random_overlapping_crops(
     y2_min_final = max(0, y2_min_ideal)
     y2_max_final = min(image_height - s2, y2_max_ideal)
     
+    if x2_min_final > x2_max_final or y2_min_final > y2_max_final:
+        return get_random_overlapping_crops(image_height, image_width, min_crop_side)
+
     x2 = np.random.randint(x2_min_final, x2_max_final + 1)
     y2 = np.random.randint(y2_min_final, y2_max_final + 1)
 
     return (x1, y1, s1), (x2, y2, s2)
 
 
+def get_affine_transform_from_box(
+    center_x: float, 
+    center_y: float, 
+    side: float, 
+    angle_deg: float, 
+    output_size: int
+) -> np.ndarray:
+    """
+    Calculates the 2x3 affine transform matrix to warp a rotated box to a new image.
+    """
+    dst_points = np.array([
+        [0, 0],
+        [output_size - 1, 0],
+        [0, output_size - 1]
+    ], dtype=np.float32)
+
+    half_side = side / 2.0
+    src_corners = np.array([
+        [-half_side, -half_side],
+        [half_side, -half_side],
+        [-half_side, half_side]
+    ])
+
+    angle_rad = np.deg2rad(angle_deg)
+    cos_a, sin_a = np.cos(angle_rad), np.sin(angle_rad)
+    rotation_matrix = np.array([[cos_a, -sin_a], [sin_a, cos_a]])
+    rotated_corners = src_corners @ rotation_matrix.T
+    src_points = rotated_corners + np.array([center_x, center_y])
+    
+    return cv2.getAffineTransform(src_points.astype(np.float32), dst_points)
+
+
 def process_image(
     img1_full: np.ndarray,
     img2_full: np.ndarray,
-    obj_full:np.ndarray,
-    residual1_full:np.ndarray,
-    residual2_full:np.ndarray,
+    obj_full: np.ndarray,
+    residual1_full: np.ndarray,
+    residual2_full: np.ndarray,
     K: int,
     min_crop_side: int = 500,
     output_size: int = 1024,
-    downsample_ratio: int = 16
-) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray], List[np.ndarray], np.ndarray, np.ndarray]:
+    downsample_ratio: int = 16,
+    p_rotate: float = 0.5,
+    max_angle_deg: float = 45.0
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Processes full-size images to generate K pairs of overlapping crops,
+    with a chance of applying rotation. This version fixes black borders and correspondence calculation.
+    """
     H, W, _ = img1_full.shape
     
     imgs1 = np.zeros((K, output_size, output_size, 3), dtype=np.uint8)
     imgs2 = np.zeros((K, output_size, output_size, 3), dtype=np.uint8)
-
-    obj1 = np.zeros((K, output_size, output_size, 3), dtype=np.float32)
-    obj2 = np.zeros((K, output_size, output_size, 3), dtype=np.float32)
-
+    obj1 = np.zeros((K, output_size, output_size, obj_full.shape[2]), dtype=np.float32)
+    obj2 = np.zeros((K, output_size, output_size, obj_full.shape[2]), dtype=np.float32)
     residual1 = np.zeros((K, output_size, output_size), dtype=np.float32)
     residual2 = np.zeros((K, output_size, output_size), dtype=np.float32)
 
     corr_idxs1_list, corr_idxs2_list = [], []
-    
-    feature_map_size = output_size // downsample_ratio
+    local = get_coord_mat(H, W)
 
-    bboxes1 = []
-    bboxes2 = []
-
-    local = get_coord_mat(H,W).astype(np.float32)
-
-    # 为K对图像生成数据
     for k in range(K):
-        # 1. 获取一对有效的随机裁切框
         bbox1, bbox2 = get_random_overlapping_crops(H, W, min_crop_side)
-        bboxes1.append(bbox1)
-        bboxes2.append(bbox2)
-        
         x1, y1, s1 = bbox1
         x2, y2, s2 = bbox2
-
-        r1 = 1. * output_size / s1
-        r2 = 1. * output_size / s2
         
-        # 2. 裁切和缩放图像
+        local1_k = np.zeros((output_size, output_size, 2), dtype=np.float32)
+        local2_k = np.zeros((output_size, output_size, 2), dtype=np.float32)
+
+        if np.random.rand() < p_rotate:
+            # --- ROTATED CROP PATH (FIXED) ---
+            angle1 = np.random.uniform(-max_angle_deg, max_angle_deg)
+            angle2 = np.random.uniform(-max_angle_deg, max_angle_deg)
+            
+            # FIX 1: Prevent black borders by ensuring the rotated box is inside the image
+            # Calculate the half-dimension of the axis-aligned bounding box of the rotated square
+            angle1_rad = np.deg2rad(angle1)
+            half_dim1 = (s1 / 2.0) * (abs(np.cos(angle1_rad)) + abs(np.sin(angle1_rad)))
+            angle2_rad = np.deg2rad(angle2)
+            half_dim2 = (s2 / 2.0) * (abs(np.cos(angle2_rad)) + abs(np.sin(angle2_rad)))
+
+            # Get original centers and clip them to the safe area
+            c1_x_orig, c1_y_orig = x1 + s1 / 2.0, y1 + s1 / 2.0
+            c1_x = np.clip(c1_x_orig, half_dim1, W - half_dim1)
+            c1_y = np.clip(c1_y_orig, half_dim1, H - half_dim1)
+
+            c2_x_orig, c2_y_orig = x2 + s2 / 2.0, y2 + s2 / 2.0
+            c2_x = np.clip(c2_x_orig, half_dim2, W - half_dim2)
+            c2_y = np.clip(c2_y_orig, half_dim2, H - half_dim2)
+
+            M1 = get_affine_transform_from_box(c1_x, c1_y, s1, angle1, output_size)
+            M2 = get_affine_transform_from_box(c2_x, c2_y, s2, angle2, output_size)
+
+            dsize = (output_size, output_size)
+            imgs1[k] = cv2.warpAffine(img1_full, M1, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
+            imgs2[k] = cv2.warpAffine(img2_full, M2, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
+            obj1[k] = cv2.warpAffine(obj_full, M1, dsize, flags=cv2.INTER_LINEAR, borderValue=np.nan)
+            obj2[k] = cv2.warpAffine(obj_full, M2, dsize, flags=cv2.INTER_LINEAR, borderValue=np.nan)
+            residual1[k] = cv2.warpAffine(residual1_full, M1, dsize, flags=cv2.INTER_NEAREST, borderValue=np.nan)
+            residual2[k] = cv2.warpAffine(residual2_full, M2, dsize, flags=cv2.INTER_NEAREST, borderValue=np.nan)
+            local1_k = cv2.warpAffine(local, M1, dsize, flags=cv2.INTER_NEAREST, borderValue=-1)
+            local2_k = cv2.warpAffine(local, M2, dsize, flags=cv2.INTER_NEAREST, borderValue=-1)
+        else:
+            # --- AXIS-ALIGNED CROP PATH (Original Logic) ---
+            dsize = (output_size, output_size)
+            imgs1[k] = cv2.resize(img1_full[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_LINEAR)
+            imgs2[k] = cv2.resize(img2_full[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_LINEAR)
+            obj1[k] = cv2.resize(obj_full[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_LINEAR)
+            obj2[k] = cv2.resize(obj_full[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_LINEAR)
+            residual1[k] = cv2.resize(residual1_full[y1:y1+s1, x1:x1+s1], dsize, interpolation=cv2.INTER_NEAREST)
+            residual2[k] = cv2.resize(residual2_full[y2:y2+s2, x2:x2+s2], dsize, interpolation=cv2.INTER_NEAREST)
+            local1_k = cv2.resize(local[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_NEAREST)
+            local2_k = cv2.resize(local[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_NEAREST)
+
+        # --- FIX 2: ROBUST CORRESPONDENCE CALCULATION ---
+        map1 = {}
+        valid_mask1 = local1_k[:, :, 0] != -1
+        for y_crop, x_crop in np.argwhere(valid_mask1):
+            y_orig, x_orig = local1_k[y_crop, x_crop]
+            key = (int(y_orig), int(x_orig))
+            if key not in map1: map1[key] = []
+            map1[key].append((y_crop, x_crop))
+
+        map2 = {}
+        valid_mask2 = local2_k[:, :, 0] != -1
+        for y_crop, x_crop in np.argwhere(valid_mask2):
+            y_orig, x_orig = local2_k[y_crop, x_crop]
+            key = (int(y_orig), int(x_orig))
+            if key not in map2: map2[key] = []
+            map2[key].append((y_crop, x_crop))
+
+        common_coords_set = set(map1.keys()) & set(map2.keys())
+
+        if not common_coords_set:
+            corr_idxs1_list.append(np.zeros((10000, 2), dtype=np.float32))
+            corr_idxs2_list.append(np.zeros((10000, 2), dtype=np.float32))
+            continue
+
+        corr_list1, corr_list2, residual_list = [], [], []
+        for key in common_coords_set:
+            y_crop1, x_crop1 = map1[key][0]
+            y_crop2, x_crop2 = map2[key][0]
+            res_val = residual1[k, y_crop1, x_crop1]
+            if not np.isnan(res_val):
+                corr_list1.append([y_crop1, x_crop1])
+                corr_list2.append([y_crop2, x_crop2])
+                residual_list.append(res_val)
+
+        if not corr_list1:
+            corr_idxs1_list.append(np.zeros((10000, 2), dtype=np.float32))
+            corr_idxs2_list.append(np.zeros((10000, 2), dtype=np.float32))
+            continue
+
+        coords1_2d = np.array(corr_list1)
+        coords2_2d = np.array(corr_list2)
+        residual_common = np.array(residual_list)
+
+        sorted_idx = np.argsort(residual_common)
+        coords1_2d = coords1_2d[sorted_idx]
+        coords2_2d = coords2_2d[sorted_idx]
         
-        imgs1[k] = cv2.resize(img1_full[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-        imgs2[k] = cv2.resize(img2_full[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-
-        obj1[k] = cv2.resize(obj_full[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-        obj2[k] = cv2.resize(obj_full[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-
-        residual1[k] = cv2.resize(residual1_full[y1:y1+s1, x1:x1+s1], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
-        residual2[k] = cv2.resize(residual2_full[y2:y2+s2, x2:x2+s2], (output_size, output_size), interpolation=cv2.INTER_NEAREST)
+        num_points = len(coords1_2d)
+        sample_indices = np.random.choice(np.arange(num_points), size=10000, replace=True)
         
-        local1 = cv2.resize(local[y1:y1+s1, x1:x1+s1, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-        local2 = cv2.resize(local[y2:y2+s2, x2:x2+s2, :], (output_size, output_size), interpolation=cv2.INTER_LINEAR)
-
-        residual_total = np.concatenate([residual1[k].reshape(-1),residual2[k].reshape(-1)],axis=0)
-        local_total = np.concatenate([local1.reshape(-1,2),local2.reshape(-1,2)],axis=0)
-        overlap_mask = (local_total[:,0] - y1 >= 0) & (local_total[:,0] - y2 >= 0) & (local_total[:,0] - y1 < s1) & (local_total[:,0] - y2 < s2) & \
-                       (local_total[:,1] - x1 >= 0) & (local_total[:,1] - x2 >= 0) & (local_total[:,1] - x1 < s1) & (local_total[:,1] - x2 < s2)
-        valid_mask = ~np.isnan(residual_total)
-        residual_total = residual_total[overlap_mask & valid_mask]
-        local_total = local_total[overlap_mask & valid_mask]
-
-        sorted_idx = np.argsort(residual_total)
-        local_total = local_total[sorted_idx]
+        selected_coords1 = coords1_2d[sample_indices]
+        selected_coords2 = coords2_2d[sample_indices]
         
-        select_idx = np.array([],dtype=int)
-        while(len(select_idx) < 10000):
-            select_idx = np.concatenate([select_idx,np.arange(10000 - len(select_idx),dtype=int)[:len(local_total)]],axis=0,dtype=int)
-        
-        local_selected = local_total[select_idx[:10000]]
+        corr1 = selected_coords1.astype(np.float32) / downsample_ratio
+        corr2 = selected_coords2.astype(np.float32) / downsample_ratio
 
-        # if dist.get_rank() == 0:
-        #     test_idx1 = ((local_selected - np.array([y1,x1])) * r1).astype(int)
-        #     test_idx2 = ((local_selected - np.array([y2,x2])) * r2).astype(int)
-        #     test_obj1 = obj1[k][test_idx1[:,0],test_idx1[:,1]]
-        #     test_obj2 = obj2[k][test_idx2[:,0],test_idx2[:,1]]
-        #     dis_obj = np.linalg.norm(test_obj1 - test_obj2,axis=-1)
-        #     print(f"dis_obj: \t {dis_obj.min()} \t {dis_obj.max()} \t {dis_obj.mean()} \t {np.median(dis_obj)}")
-
-        corr_idxs1_list.append(np.clip((local_selected - np.array([y1,x1])) * r1 / downsample_ratio, a_min=0.,a_max=(output_size - 1) / downsample_ratio))
-        corr_idxs2_list.append(np.clip((local_selected - np.array([y2,x2])) * r2 / downsample_ratio, a_min=0.,a_max=(output_size - 1) / downsample_ratio))
+        corr_idxs1_list.append(np.clip(corr1, a_min=0., a_max=(output_size - 1) / downsample_ratio))
+        corr_idxs2_list.append(np.clip(corr2, a_min=0., a_max=(output_size - 1) / downsample_ratio))
 
     corr_idxs1 = np.stack(corr_idxs1_list).astype(np.float32)
     corr_idxs2 = np.stack(corr_idxs2_list).astype(np.float32)
@@ -294,7 +389,9 @@ class PretrainDataset(Dataset):
                           K=self.batch_size,
                           min_crop_side=500,
                           output_size=self.input_size,
-                          downsample_ratio=self.DOWNSAMPLE)
+                          downsample_ratio=self.DOWNSAMPLE,
+                          p_rotate=0.5,
+                          max_angle_deg=180.0)
 
 
         # imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
