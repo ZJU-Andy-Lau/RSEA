@@ -412,10 +412,10 @@ class PretrainDataset(Dataset):
                           downsample_ratio=self.DOWNSAMPLE,
                           p_rotate=0.5,
                           max_angle_deg=180.0)
-        print(f"img:{imgs1.shape}\t{imgs1.min()}\t{imgs1.max()}")
-        print(f"obj:{obj1.shape}\t{obj1.min()}\t{obj1.max()}")
-        print(f"res:{residual1.shape}\t{np.nanmean(residual1)}\t{(~np.isnan(residual1)).sum()}")
-        print(f"ovl:{overlaps_1.shape}\t{overlaps_1[0][:10]}")
+        # print(f"img:{imgs1.shape}\t{imgs1.min()}\t{imgs1.max()}")
+        # print(f"obj:{obj1.shape}\t{obj1.min()}\t{obj1.max()}")
+        # print(f"res:{residual1.shape}\t{np.nanmean(residual1)}\t{(~np.isnan(residual1)).sum()}")
+        # print(f"ovl:{overlaps_1.shape}\t{overlaps_1[0][:10]}")
 
 
         # imgs1 = torch.from_numpy(np.stack([image_1_full[tl[0]:tl[0] + self.input_size,tl[1]:tl[1] + self.input_size] for tl in windows],axis=0)).permute(0,3,1,2).to(torch.float32) # B,3,H,W
