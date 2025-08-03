@@ -158,6 +158,56 @@ def get_affine_transform_from_box(
     
     return cv2.getAffineTransform(src_points.astype(np.float32), dst_points)
 
+
+def get_random_valid_rotated_box(
+    H: int, W: int, min_crop_side: int, max_angle_deg: float,
+    base_center_s: Tuple = None
+) -> Tuple[int, float, float, float]:
+    """
+    EFFICIENT and CORRECT function to generate a valid rotated box.
+    It deterministically calculates the valid parameter range to avoid rejection sampling.
+    """
+    # 1. Calculate the maximum possible angle for the given min_crop_side
+    C = min(H, W) / min_crop_side
+    if C < np.sqrt(2):
+        if C / np.sqrt(2) > 1.0: C = np.sqrt(2)
+        max_possible_angle_rad = np.arcsin(C / np.sqrt(2)) - np.pi / 4
+    else:
+        max_possible_angle_rad = np.pi / 4
+
+    effective_max_angle_rad = min(np.deg2rad(max_angle_deg), max_possible_angle_rad)
+    if effective_max_angle_rad < 0: effective_max_angle_rad = 0
+
+    # 2. Sample a valid angle from the deterministic range
+    angle_rad = np.random.uniform(-effective_max_angle_rad, effective_max_angle_rad)
+    angle_deg = np.rad2deg(angle_rad)
+    
+    # 3. For this chosen angle, calculate the valid range for the side 's'
+    cos_a = abs(np.cos(angle_rad))
+    sin_a = abs(np.sin(angle_rad))
+    max_s_for_this_angle = min(W / (cos_a + sin_a), H / (cos_a + sin_a))
+    
+    # 4. Sample a valid side 's'
+    s = np.random.randint(min_crop_side, int(max_s_for_this_angle) + 1)
+    
+    # 5. Calculate the safe area for the center and place the box
+    half_dim = (s / 2.0) * (cos_a + sin_a)
+    
+    if base_center_s is None:
+        cx = np.random.uniform(half_dim, W - half_dim)
+        cy = np.random.uniform(half_dim, H - half_dim)
+    else:
+        base_cx, base_cy, base_s = base_center_s
+        max_offset = min(s, base_s) * 0.5
+        offset_x = np.random.uniform(-max_offset, max_offset)
+        offset_y = np.random.uniform(-max_offset, max_offset)
+        cx_prop = base_cx + offset_x
+        cy_prop = base_cy + offset_y
+        cx = np.clip(cx_prop, half_dim, W - half_dim)
+        cy = np.clip(cy_prop, half_dim, H - half_dim)
+        
+    return s, angle_deg, cx, cy
+
 # -----------------------------------------------------------------------------
 # Main Processing Function (Modified and Fixed)
 # -----------------------------------------------------------------------------
@@ -177,7 +227,7 @@ def process_image(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Processes full-size images to generate K pairs of overlapping crops,
-    with a chance of applying rotation. This version fixes black borders and correspondence calculation.
+    with a chance of applying rotation. This version is efficient and correct.
     """
     H, W, _ = img1_full.shape
     
@@ -193,47 +243,10 @@ def process_image(
 
     for k in range(K):
         if np.random.rand() < p_rotate:
-            # --- FINAL, CORRECTED ROTATED CROP PATH ---
-            max_side = min(H, W)
+            # --- FINAL, EFFICIENT, AND CORRECTED ROTATED CROP PATH ---
+            s1, angle1, c1_x, c1_y = get_random_valid_rotated_box(H, W, min_crop_side, max_angle_deg)
+            s2, angle2, c2_x, c2_y = get_random_valid_rotated_box(H, W, min_crop_side, max_angle_deg, base_center_s=(c1_x, c1_y, s1))
             
-            # 1. Generate first box by finding a valid (s, angle) pair first
-            while True:
-                s1 = np.random.randint(min_crop_side, max_side + 1)
-                angle1 = np.random.uniform(-max_angle_deg, max_angle_deg)
-                angle1_rad = np.deg2rad(angle1)
-                
-                # Calculate the half-dimension of the axis-aligned bounding box of the rotated square
-                half_dim1 = (s1 / 2.0) * (abs(np.cos(angle1_rad)) + abs(np.sin(angle1_rad)))
-                
-                # Check if this box can geometrically fit in the image at all
-                if 2 * half_dim1 <= W and 2 * half_dim1 <= H:
-                    break # Found a valid size and angle
-
-            # Now that we have a valid s1 and angle1, we can safely find a center
-            c1_x = np.random.uniform(half_dim1, W - half_dim1)
-            c1_y = np.random.uniform(half_dim1, H - half_dim1)
-
-            # 2. Generate second box, also ensuring it's valid
-            while True:
-                s2 = np.random.randint(min_crop_side, max_side + 1)
-                angle2 = np.random.uniform(-max_angle_deg, max_angle_deg)
-                angle2_rad = np.deg2rad(angle2)
-                half_dim2 = (s2 / 2.0) * (abs(np.cos(angle2_rad)) + abs(np.sin(angle2_rad)))
-                if 2 * half_dim2 <= W and 2 * half_dim2 <= H:
-                    break
-            
-            # Propose and clip the center for the second box to ensure it's also safe
-            # and likely overlaps with the first one
-            max_offset = min(s1, s2) * 0.5 # Increase potential overlap
-            offset_x = np.random.uniform(-max_offset, max_offset)
-            offset_y = np.random.uniform(-max_offset, max_offset)
-            c2_x_prop = c1_x + offset_x
-            c2_y_prop = c1_y + offset_y
-            
-            c2_x = np.clip(c2_x_prop, half_dim2, W - half_dim2)
-            c2_y = np.clip(c2_y_prop, half_dim2, H - half_dim2)
-            
-            # Get affine matrices from the safe boxes
             M1 = get_affine_transform_from_box(c1_x, c1_y, s1, angle1, output_size)
             M2 = get_affine_transform_from_box(c2_x, c2_y, s2, angle2, output_size)
 
@@ -262,61 +275,59 @@ def process_image(
             local1_k = cv2.resize(local[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_NEAREST)
             local2_k = cv2.resize(local[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_NEAREST)
 
-        # --- ROBUST CORRESPONDENCE CALCULATION (Unchanged) ---
-        map1 = {}
-        valid_mask1 = local1_k[:, :, 0] != -1
-        for y_crop, x_crop in np.argwhere(valid_mask1):
-            y_orig, x_orig = local1_k[y_crop, x_crop]
-            key = (int(y_orig), int(x_orig))
-            if key not in map1: map1[key] = []
-            map1[key].append((y_crop, x_crop))
+        # --- NEW: EFFICIENT, VECTORIZED CORRESPONDENCE CALCULATION ---
+        local1_flat = local1_k.reshape(-1, 2)
+        local2_flat = local2_k.reshape(-1, 2)
 
-        map2 = {}
-        valid_mask2 = local2_k[:, :, 0] != -1
-        for y_crop, x_crop in np.argwhere(valid_mask2):
-            y_orig, x_orig = local2_k[y_crop, x_crop]
-            key = (int(y_orig), int(x_orig))
-            if key not in map2: map2[key] = []
-            map2[key].append((y_crop, x_crop))
+        id1 = (local1_flat[:, 0] * W + local1_flat[:, 1]).astype(np.int64)
+        id2 = (local2_flat[:, 0] * W + local2_flat[:, 1]).astype(np.int64)
 
-        common_coords_set = set(map1.keys()) & set(map2.keys())
+        valid_mask1 = id1 >= 0
+        valid_mask2 = id2 >= 0
 
-        if not common_coords_set:
+        original_indices_1 = np.arange(output_size * output_size)[valid_mask1]
+        valid_ids_1 = id1[valid_mask1]
+
+        original_indices_2 = np.arange(output_size * output_size)[valid_mask2]
+        valid_ids_2 = id2[valid_mask2]
+
+        common_ids, comm_idx1, comm_idx2 = np.intersect1d(valid_ids_1, valid_ids_2, return_indices=True)
+
+        if len(common_ids) == 0:
             corr_idxs1_list.append(np.zeros((10000, 2), dtype=np.float32))
             corr_idxs2_list.append(np.zeros((10000, 2), dtype=np.float32))
             continue
 
-        corr_list1, corr_list2, residual_list = [], [], []
-        for key in common_coords_set:
-            y_crop1, x_crop1 = map1[key][0]
-            y_crop2, x_crop2 = map2[key][0]
-            res_val = residual1[k, y_crop1, x_crop1]
-            if not np.isnan(res_val):
-                corr_list1.append([y_crop1, x_crop1])
-                corr_list2.append([y_crop2, x_crop2])
-                residual_list.append(res_val)
+        corr_indices_flat1 = original_indices_1[comm_idx1]
+        corr_indices_flat2 = original_indices_2[comm_idx2]
 
-        if not corr_list1:
+        residual_values = residual1[k].flatten()[corr_indices_flat1]
+        valid_residual_mask = ~np.isnan(residual_values)
+
+        corr_indices_flat1 = corr_indices_flat1[valid_residual_mask]
+        corr_indices_flat2 = corr_indices_flat2[valid_residual_mask]
+        residual_common = residual_values[valid_residual_mask]
+
+        if len(corr_indices_flat1) == 0:
             corr_idxs1_list.append(np.zeros((10000, 2), dtype=np.float32))
             corr_idxs2_list.append(np.zeros((10000, 2), dtype=np.float32))
             continue
-
-        coords1_2d = np.array(corr_list1)
-        coords2_2d = np.array(corr_list2)
-        residual_common = np.array(residual_list)
 
         sorted_idx = np.argsort(residual_common)
-        coords1_2d = coords1_2d[sorted_idx]
-        coords2_2d = coords2_2d[sorted_idx]
-        
-        num_points = len(coords1_2d)
+        corr_indices_flat1 = corr_indices_flat1[sorted_idx]
+        corr_indices_flat2 = corr_indices_flat2[sorted_idx]
+
+        num_points = len(corr_indices_flat1)
         sample_indices = np.random.choice(np.arange(num_points), size=10000, replace=True)
         
-        selected_coords1 = coords1_2d[sample_indices]
-        selected_coords2 = coords2_2d[sample_indices]
-        
-        corr1 = selected_coords1.astype(np.float32) / downsample_ratio
-        corr2 = selected_coords2.astype(np.float32) / downsample_ratio
+        selected_indices1 = corr_indices_flat1[sample_indices]
+        selected_indices2 = corr_indices_flat2[sample_indices]
+
+        coords1_2d = np.stack(np.unravel_index(selected_indices1, (output_size, output_size)), axis=1)
+        coords2_2d = np.stack(np.unravel_index(selected_indices2, (output_size, output_size)), axis=1)
+
+        corr1 = coords1_2d.astype(np.float32) / downsample_ratio
+        corr2 = coords2_2d.astype(np.float32) / downsample_ratio
 
         corr_idxs1_list.append(np.clip(corr1, a_min=0., a_max=(output_size - 1) / downsample_ratio))
         corr_idxs2_list.append(np.clip(corr2, a_min=0., a_max=(output_size - 1) / downsample_ratio))
