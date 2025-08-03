@@ -88,7 +88,6 @@ def get_random_overlapping_crops(
 ) -> Tuple[Tuple[int, int, int], Tuple[int, int, int]]:
     """
     Generates two random, overlapping, axis-aligned square crop boxes.
-    This function is kept as is from the original code.
     """
     max_crop_side = min(image_height, image_width)
     if min_crop_side > max_crop_side:
@@ -159,6 +158,9 @@ def get_affine_transform_from_box(
     
     return cv2.getAffineTransform(src_points.astype(np.float32), dst_points)
 
+# -----------------------------------------------------------------------------
+# Main Processing Function (Modified and Fixed)
+# -----------------------------------------------------------------------------
 
 def process_image(
     img1_full: np.ndarray,
@@ -190,48 +192,66 @@ def process_image(
     local = get_coord_mat(H, W)
 
     for k in range(K):
-        bbox1, bbox2 = get_random_overlapping_crops(H, W, min_crop_side)
-        x1, y1, s1 = bbox1
-        x2, y2, s2 = bbox2
-        
-        local1_k = np.zeros((output_size, output_size, 2), dtype=np.float32)
-        local2_k = np.zeros((output_size, output_size, 2), dtype=np.float32)
-
         if np.random.rand() < p_rotate:
-            # --- ROTATED CROP PATH (FIXED) ---
-            angle1 = np.random.uniform(-max_angle_deg, max_angle_deg)
-            angle2 = np.random.uniform(-max_angle_deg, max_angle_deg)
+            # --- FINAL, CORRECTED ROTATED CROP PATH ---
+            max_side = min(H, W)
             
-            # FIX 1: Prevent black borders by ensuring the rotated box is inside the image
-            # Calculate the half-dimension of the axis-aligned bounding box of the rotated square
-            angle1_rad = np.deg2rad(angle1)
-            half_dim1 = (s1 / 2.0) * (abs(np.cos(angle1_rad)) + abs(np.sin(angle1_rad)))
-            angle2_rad = np.deg2rad(angle2)
-            half_dim2 = (s2 / 2.0) * (abs(np.cos(angle2_rad)) + abs(np.sin(angle2_rad)))
+            # 1. Generate first box by finding a valid (s, angle) pair first
+            while True:
+                s1 = np.random.randint(min_crop_side, max_side + 1)
+                angle1 = np.random.uniform(-max_angle_deg, max_angle_deg)
+                angle1_rad = np.deg2rad(angle1)
+                
+                # Calculate the half-dimension of the axis-aligned bounding box of the rotated square
+                half_dim1 = (s1 / 2.0) * (abs(np.cos(angle1_rad)) + abs(np.sin(angle1_rad)))
+                
+                # Check if this box can geometrically fit in the image at all
+                if 2 * half_dim1 <= W and 2 * half_dim1 <= H:
+                    break # Found a valid size and angle
 
-            # Get original centers and clip them to the safe area
-            c1_x_orig, c1_y_orig = x1 + s1 / 2.0, y1 + s1 / 2.0
-            c1_x = np.clip(c1_x_orig, half_dim1, W - half_dim1)
-            c1_y = np.clip(c1_y_orig, half_dim1, H - half_dim1)
+            # Now that we have a valid s1 and angle1, we can safely find a center
+            c1_x = np.random.uniform(half_dim1, W - half_dim1)
+            c1_y = np.random.uniform(half_dim1, H - half_dim1)
 
-            c2_x_orig, c2_y_orig = x2 + s2 / 2.0, y2 + s2 / 2.0
-            c2_x = np.clip(c2_x_orig, half_dim2, W - half_dim2)
-            c2_y = np.clip(c2_y_orig, half_dim2, H - half_dim2)
-
+            # 2. Generate second box, also ensuring it's valid
+            while True:
+                s2 = np.random.randint(min_crop_side, max_side + 1)
+                angle2 = np.random.uniform(-max_angle_deg, max_angle_deg)
+                angle2_rad = np.deg2rad(angle2)
+                half_dim2 = (s2 / 2.0) * (abs(np.cos(angle2_rad)) + abs(np.sin(angle2_rad)))
+                if 2 * half_dim2 <= W and 2 * half_dim2 <= H:
+                    break
+            
+            # Propose and clip the center for the second box to ensure it's also safe
+            # and likely overlaps with the first one
+            max_offset = min(s1, s2) * 0.5 # Increase potential overlap
+            offset_x = np.random.uniform(-max_offset, max_offset)
+            offset_y = np.random.uniform(-max_offset, max_offset)
+            c2_x_prop = c1_x + offset_x
+            c2_y_prop = c1_y + offset_y
+            
+            c2_x = np.clip(c2_x_prop, half_dim2, W - half_dim2)
+            c2_y = np.clip(c2_y_prop, half_dim2, H - half_dim2)
+            
+            # Get affine matrices from the safe boxes
             M1 = get_affine_transform_from_box(c1_x, c1_y, s1, angle1, output_size)
             M2 = get_affine_transform_from_box(c2_x, c2_y, s2, angle2, output_size)
 
             dsize = (output_size, output_size)
             imgs1[k] = cv2.warpAffine(img1_full, M1, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
             imgs2[k] = cv2.warpAffine(img2_full, M2, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
-            obj1[k] = cv2.warpAffine(obj_full, M1, dsize, flags=cv2.INTER_LINEAR, borderValue=np.nan)
-            obj2[k] = cv2.warpAffine(obj_full, M2, dsize, flags=cv2.INTER_LINEAR, borderValue=np.nan)
+            obj1[k] = cv2.warpAffine(obj_full, M1, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
+            obj2[k] = cv2.warpAffine(obj_full, M2, dsize, flags=cv2.INTER_LINEAR, borderValue=0)
             residual1[k] = cv2.warpAffine(residual1_full, M1, dsize, flags=cv2.INTER_NEAREST, borderValue=np.nan)
             residual2[k] = cv2.warpAffine(residual2_full, M2, dsize, flags=cv2.INTER_NEAREST, borderValue=np.nan)
             local1_k = cv2.warpAffine(local, M1, dsize, flags=cv2.INTER_NEAREST, borderValue=-1)
             local2_k = cv2.warpAffine(local, M2, dsize, flags=cv2.INTER_NEAREST, borderValue=-1)
         else:
             # --- AXIS-ALIGNED CROP PATH (Original Logic) ---
+            bbox1, bbox2 = get_random_overlapping_crops(H, W, min_crop_side)
+            x1, y1, s1 = bbox1
+            x2, y2, s2 = bbox2
+            
             dsize = (output_size, output_size)
             imgs1[k] = cv2.resize(img1_full[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_LINEAR)
             imgs2[k] = cv2.resize(img2_full[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_LINEAR)
@@ -242,7 +262,7 @@ def process_image(
             local1_k = cv2.resize(local[y1:y1+s1, x1:x1+s1, :], dsize, interpolation=cv2.INTER_NEAREST)
             local2_k = cv2.resize(local[y2:y2+s2, x2:x2+s2, :], dsize, interpolation=cv2.INTER_NEAREST)
 
-        # --- FIX 2: ROBUST CORRESPONDENCE CALCULATION ---
+        # --- ROBUST CORRESPONDENCE CALCULATION (Unchanged) ---
         map1 = {}
         valid_mask1 = local1_k[:, :, 0] != -1
         for y_crop, x_crop in np.argwhere(valid_mask1):
