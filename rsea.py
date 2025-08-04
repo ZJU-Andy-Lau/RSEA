@@ -96,7 +96,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             grid.add_img(img = img)
         grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
-        grid.train_mapper(task_info = {'state':task_state,'id':task_id})
+        grid.train_mapper(task_info = {'state':task_state,'id':task_id},save_checkpoint=options.save_checkpoints)
 
 def dict2str(dict):
     output = ""
