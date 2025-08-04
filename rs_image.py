@@ -13,6 +13,8 @@ from tqdm import tqdm,trange
 import rasterio
 from typing import Tuple
 
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
 class RSImage():
     def __init__(self,options,root:str,id:int,size_limit = 0):
         """
@@ -23,9 +25,8 @@ class RSImage():
         self.root = root
         self.id = id
         # self.image = self.__load_image__(os.path.join(root,'image.tif'))
-        self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         self.image = cv2.imread(os.path.join(root,'image.png'),cv2.IMREAD_GRAYSCALE)
-        self.image = self.clahe.apply(self.image)
+        self.image = clahe.apply(self.image)
         self.image = np.stack([self.image] * 3,axis=-1)
         self.dem = np.load(os.path.join(root,'dem.npy'))
         if os.path.exists(os.path.join(root,'tie_points.txt')):
