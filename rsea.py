@@ -316,19 +316,27 @@ class RSEA():
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"avg_sigma:{avg_sigma.item()}")
 
+        fitter = AffineFitter()
+
         valid_mask = valid_scores > .5
         src = src[valid_mask]
         tgt_mu = tgt_mu[valid_mask]
         tgt_sigma = tgt_sigma[valid_mask]
 
-        fitter = AffineFitter()
+        
         total_num = len(valid_scores)
+        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold=2 * avg_sigma)
+        inliers = mask.ravel() == 1
+
+        src = src[inliers]
+        tgt_mu = tgt_mu[inliers]
+        tgt_sigma = tgt_sigma[inliers]
         # conf_valid_idx = valid_scores > .5
         # src = src[conf_valid_idx]
         # tgt_mu = tgt_mu[conf_valid_idx]
         # tgt_sigma = tgt_sigma[conf_valid_idx]
         # valid_scores = valid_scores[conf_valid_idx]
-        print(f"valid filter :{valid_mask.sum()}/{total_num}")
+        print(f"valid filter :{inliers.sum()}/{valid_mask.sum()}/{total_num}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
         # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)

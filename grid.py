@@ -692,7 +692,7 @@ class Grid():
             crop_step = min(int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 64.)),self.options.crop_size)
         crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img = img_raw,
                                                             crop_size = self.options.crop_size,
-                                                            expect_num = 64,
+                                                            expect_num = 256,
                                                             size_ratios = [1.],
                                                             random_ratio = 1.,
                                                             local=local_hw2)
