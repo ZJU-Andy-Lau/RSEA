@@ -325,7 +325,7 @@ class RSEA():
 
         
         total_num = len(valid_scores)
-        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold=2 * avg_sigma.item())
+        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold=avg_sigma.item())
         inliers = mask.ravel() == 1
 
         src = src[inliers]
