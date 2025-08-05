@@ -321,7 +321,7 @@ class RSEA():
         tgt_mu = tgt_mu[valid_mask]
         tgt_sigma = tgt_sigma[valid_mask]
 
-        fitter = AffineFitter(learning_rate=0.01, num_iterations=-1)
+        fitter = AffineFitter()
         total_num = len(valid_scores)
         # conf_valid_idx = valid_scores > .5
         # src = src[conf_valid_idx]
