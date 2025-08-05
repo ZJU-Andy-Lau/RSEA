@@ -690,7 +690,12 @@ class Grid():
             crop_step = self.options.crop_step
         else:
             crop_step = min(int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 64.)),self.options.crop_size)
-        crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img_raw,self.options.crop_size,crop_step,local=local_hw2)
+        crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img = img_raw,
+                                                            crop_size = self.options.crop_size,
+                                                            expect_num = 64,
+                                                            size_ratios = [1.],
+                                                            random_ratio = 1.,
+                                                            local=local_hw2)
         print("Tranforming Images")
         imgs_NCHW = torch.from_numpy(crop_imgs_NHWC).permute(0,3,1,2)
         imgs_NCHW = imgs_NCHW.float() / 255.0
