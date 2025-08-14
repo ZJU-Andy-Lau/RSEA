@@ -1,5 +1,6 @@
 import os
 import argparse
+from scipy import datasets
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -205,6 +206,8 @@ def pretrain(args):
         last_loss = training_configs['last_loss']
         epoch = training_configs['epoch']
         dataset_indices = training_configs['dataset_indices'].to(args.device)
+        obj_map_coefs = training_configs['obj_map_coefs']
+        obj_map_coefs = [{k:v.numpy() for k,v in i.items()} for i in obj_map_coefs]
         log_name = training_configs['log_name']
         if rank == 0:
             logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
@@ -215,6 +218,7 @@ def pretrain(args):
         min_loss = args.min_loss
         last_loss = None
         epoch = 0
+        obj_map_coefs = None
         if rank == 0:
             logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],prefix = f'{args.log_prefix}_finetune_log')
         else:
@@ -240,6 +244,7 @@ def pretrain(args):
                               batch_size = args.batch_size,
                               downsample = 16,
                               input_size = 1024,
+                              obj_map_coefs = obj_map_coefs,
                               mode='train')
     sampler = ImageSampler(dataset,shuffle=True)
     dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
@@ -489,8 +494,10 @@ def pretrain(args):
                     torch.save(decoder_state_dict,os.path.join(path,f'decoder_{i}.pth'))
                     torch.save(decoder_optimizer_state_dict,os.path.join(path,f'decoder_optimizer_{i}.pth'))
                     torch.save(decoder_scheduler_state_dict,os.path.join(path,f'decoder_scheduler_{i}.pth'))
+                obj_map_coefs_save = [{k:torch.from_numpy(v) for k,v in i.items()} for i in dataset.obj_map_coefs]
                 training_configs = {
                     'dataset_indices':torch.from_numpy(dataset_indices),
+                    'obj_map_coefs':obj_map_coefs_save,
                     'epoch':torch.tensor(epoch),
                     'min_loss':torch.tensor(min_loss),
                     'last_loss':torch.tensor(last_loss),

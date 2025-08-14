@@ -338,7 +338,7 @@ def process_image(
     return imgs1, imgs2, obj1, obj2, residual1, residual2, corr_idxs1, corr_idxs2
 
 class PretrainDataset(Dataset):
-    def __init__(self,root,dataset_idxs = None,batch_size = 1,downsample=16,input_size = 1024,mode='train'):
+    def __init__(self,root,dataset_idxs = None,batch_size = 1,downsample=16,input_size = 1024,obj_map_coefs = None,mode='train'):
         super().__init__()
         self.root = root
         if mode == 'train':
@@ -363,13 +363,16 @@ class PretrainDataset(Dataset):
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
-        for key in tqdm(self.database_keys):
-            obj = centerize_obj(self.database[key]['obj'][:])
-            self.obj_map_coefs.append({
-                'x':get_map_coef(obj[:,:,0]),
-                'y':get_map_coef(obj[:,:,1]),
-                'h':get_map_coef(obj[:,:,2])
-            })
+        if obj_map_coefs is None:
+            for key in tqdm(self.database_keys):
+                obj = centerize_obj(self.database[key]['obj'][:])
+                self.obj_map_coefs.append({
+                    'x':get_map_coef(obj[:,:,0]),
+                    'y':get_map_coef(obj[:,:,1]),
+                    'h':get_map_coef(obj[:,:,2])
+                })
+        else:
+            self.obj_map_coefs = obj_map_coefs
 
         if mode == 'train':
             self.transform = transforms.Compose([
