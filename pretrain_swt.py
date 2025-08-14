@@ -495,7 +495,7 @@ def pretrain(args):
                     torch.save(decoder_optimizer_state_dict,os.path.join(path,f'decoder_optimizer_{i}.pth'))
                     torch.save(decoder_scheduler_state_dict,os.path.join(path,f'decoder_scheduler_{i}.pth'))
                 obj_map_coefs_save = [{k:torch.from_numpy(v) for k,v in i.items()} for i in dataset.obj_map_coefs]
-                print(obj_map_coefs_save[:10])
+                # print(obj_map_coefs_save[:10])
                 training_configs = {
                     'dataset_indices':torch.from_numpy(dataset_indices),
                     'obj_map_coefs':obj_map_coefs_save,
