@@ -208,18 +208,7 @@ def pretrain(args):
 
     dist.barrier()
     dist.broadcast(dataset_indices,src=0)
-    dataset_indices = dataset_indices.cpu().numpy()
 
-    dataset = PretrainDataset(root = args.dataset_path,
-                              dataset_idxs=dataset_indices,
-                              batch_size = args.batch_size,
-                              downsample = 16,
-                              input_size = 1024,
-                              obj_map_coefs = obj_map_coefs,
-                              mode='train')
-    sampler = ImageSampler(dataset,shuffle=True)
-    dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
-    dataset_num = dataset.dataset_num
     pprint("Building Encoder")
 
     encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
@@ -232,6 +221,20 @@ def pretrain(args):
                                              cooldown_ratio=.5)
     
     args.output_channels = encoder.output_channels
+
+    dataset_indices = dataset_indices.cpu().numpy()
+
+    dataset = PretrainDataset(root = args.dataset_path,
+                              dataset_idxs=dataset_indices,
+                              batch_size = args.batch_size,
+                              downsample = 16,
+                              input_size = 1024,
+                              obj_map_coefs = obj_map_coefs,
+                              mode='train')
+    sampler = ImageSampler(dataset,shuffle=True)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
+    dataset_num = dataset.dataset_num
+    
     
     if args.resume_training:
         encoder.load_adapter(os.path.join(args.checkpoints_path,'encoder.pth'))
