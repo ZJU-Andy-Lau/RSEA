@@ -1,7 +1,6 @@
 import math
 import re
 import os
-from tabnanny import verbose
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -157,7 +156,58 @@ class Encoder(nn.Module):
             return torch.cat([feat,global_feat],dim=1),conf
         else:
             return feat,conf
+
+class Adapter(nn.Module):
+    def __init__(self,channel = 512):
+        super().__init__()
+        self.channels = channel
+        self.cnn = nn.Sequential(
+            nn.Conv2d(self.channels,self.channels,3,1,1),
+            nn.ReLU(),
+            nn.Conv2d(self.channels,self.channels,3,1,1),
+            nn.ReLU(),
+            nn.Conv2d(self.channels,self.channels,3,1,1),
+        )
+
+        self.conf_head = nn.Sequential(
+            nn.Conv2d(self.channels,self.channels // 16,1,1,0),
+            nn.PReLU(),
+            nn.Conv2d(self.channels // 16,1,1,1,0),
+            nn.Sigmoid()
+        )
+    def forward(self,x):
+        feat = self.cnn(x)
+        conf = self.conf_head(x)
+        return feat,conf
+
+class EncoderDino(nn.Module):
+
+    def __init__(self,dino_weight_path,verbose = 1):
+        super().__init__()
+        self.verbose = verbose
+        self.SAMPLE_FACTOR = 16
+        self.input_channels = 3
+        self.output_channels = 512
+
+        self.backbone = torch.hub.load('./dinov3','dinov3_vitl16',source='local',weights=dino_weight_path)
+        self.backbone.eval()
+        self.backbone.requires_grad_(False)
+
+        self.adapter = Adapter()
+
+
+    def forward(self, x):
+        feat_backbone = self.backbone(x)
+        feat,conf = self.adapter(feat_backbone)
+        return feat,conf
     
+    def load_adapter(self,adapter_path:str):
+        self.adapter.load_state_dict({k.replace("module.",""):v for k,v in torch.load(adapter_path,map_location='cpu').items()},strict=True)
+    
+    def save_adapter(self,output_path:str):
+        state_dict = {k:v.detach().cpu() for k,v in self.adapter.state_dict().items()}
+        torch.save(state_dict,output_path)
+
 class ProjectHead(nn.Module):
     def __init__(self,input_channels,output_channels = None):
         super().__init__()
