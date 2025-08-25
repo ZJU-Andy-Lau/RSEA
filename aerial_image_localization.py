@@ -310,8 +310,8 @@ if __name__ == '__main__':
 
     print(f"avg sigma:{conf_score.mean()}")
 
-    _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=2. * conf_score.mean())
-    # _,mask = cv2.estimateAffine2D(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=conf_score.mean().item())
+    # _,mask = cv2.findHomography(local_linesamp,mu_linesamp,cv2.RANSAC,ransacReprojThreshold=2. * conf_score.mean())
+    _,mask = cv2.estimateAffine2D(local_linesamp.cpu().numpy(),mu_linesamp.cpu().numpy(),cv2.RANSAC,ransacReprojThreshold=2. * conf_score.mean())
     inliers = mask.ravel() == 1
     outliers = mask.ravel() == 0
     print(f"inlier: {inliers.sum()}/{len(inliers)}")
