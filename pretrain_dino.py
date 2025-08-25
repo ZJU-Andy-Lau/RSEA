@@ -494,6 +494,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_path',type=str,default='./datasets')
     parser.add_argument('--dataset_num',type=int,default=None)
     parser.add_argument('--encoder_path',type=str,default=None)
+    parser.add_argument('--dino_weight_path',type=str,default=None)
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
     parser.add_argument('--checkpoints_path',type=str,default=None)
     parser.add_argument('--batch_size',type=int,default=8)
