@@ -158,21 +158,22 @@ class Encoder(nn.Module):
             return feat,conf
 
 class Adapter(nn.Module):
-    def __init__(self,channel = 512):
+    def __init__(self,input_channels = 512,output_channels = 512):
         super().__init__()
-        self.channels = channel
+        self.input_channels = input_channels
+        self.output_channels = output_channels
         self.cnn = nn.Sequential(
-            nn.Conv2d(self.channels,self.channels,3,1,1),
+            nn.Conv2d(self.input_channels,self.output_channels,3,1,1),
             nn.ReLU(),
-            nn.Conv2d(self.channels,self.channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
             nn.ReLU(),
-            nn.Conv2d(self.channels,self.channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
         )
 
         self.conf_head = nn.Sequential(
-            nn.Conv2d(self.channels,self.channels // 16,1,1,0),
+            nn.Conv2d(self.input_channels,self.output_channels // 16,1,1,0),
             nn.PReLU(),
-            nn.Conv2d(self.channels // 16,1,1,1,0),
+            nn.Conv2d(self.output_channels // 16,1,1,1,0),
             nn.Sigmoid()
         )
     def forward(self,x):
@@ -182,18 +183,18 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,verbose = 1):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1):
         super().__init__()
         self.verbose = verbose
         self.SAMPLE_FACTOR = 16
         self.input_channels = 3
-        self.output_channels = 512
+        self.output_channels = output_channels
 
         self.backbone = torch.hub.load('./dinov3','dinov3_vitl16',source='local',weights=dino_weight_path)
         self.backbone.eval()
         self.backbone.requires_grad_(False)
 
-        self.adapter = Adapter()
+        self.adapter = Adapter(input_channels=1024,output_channels=output_channels)
 
 
     def forward(self, x):
