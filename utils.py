@@ -16,6 +16,7 @@ import random
 import argparse
 from rpc import RPCModelParameterTorch
 from typing import Tuple
+from sklearn.decomposition import PCA
 def crop_rect_from_image(image, rect_points, size):
     """
     从图像中截取矩形区域。
@@ -723,3 +724,33 @@ def resample_from_quad(
             coordinate_map[y_start:y_start+tile_h, x_start:x_start+tile_w, 1] = map1.reshape(tile_h, tile_w)
             
     return resampled_image, coordinate_map
+
+def vis_feat_pca(feat:np.ndarray,output_path):
+    """
+    feat shape:(H,W,C)
+    """
+    H,W,C = feat.shape
+    feat = feat.reshape(-1,C)
+    pca = PCA(n_components=3)
+    feat = pca.fit_transform(feat)
+    feat = 255. * (feat - feat.min()) / (feat.max() - feat.min())
+    feat = feat.reshape(H,W,3).astype(np.uint8)
+    cv2.imwrite(output_path,feat)
+    
+def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
+    points = (get_coord_mat(conf.shape[0],conf.shape[1]) * ds + ds * .5).reshape(-1,2)
+    scores = conf.reshape(-1)
+    canvas = img
+
+    def score_to_color(score):
+        red = int((1 - score) * 255)
+        green = int(score * 255)
+        return (red, green, 0)
+    
+    for p,score in zip(points,scores):
+        p = p.astype(int)
+        color = score_to_color(score)
+
+        cv2.circle(canvas(p[1],p[0]),radius=1,color=color,thickness=-1)
+    
+    cv2.imwrite(canvas,output_path)

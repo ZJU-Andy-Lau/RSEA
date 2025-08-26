@@ -338,7 +338,18 @@ def process_image(
     return imgs1, imgs2, obj1, obj2, residual1, residual2, corr_idxs1, corr_idxs2
 
 class PretrainDataset(Dataset):
-    def __init__(self,root,dataset_idxs = None,batch_size = 1,downsample=16,input_size = 1024,obj_map_coefs = None,mode='train'):
+    def __init__(self,root,
+                 dataset_idxs = None,
+                 batch_size = 1,
+                 downsample=16,
+                 input_size = 1024,
+                 obj_map_coefs = None,
+                 norm_coefs = {
+                     'mean':(0.485, 0.456, 0.406),
+                     'std':(0.229, 0.224, 0.225)
+                 },
+                 use_clahe = True,
+                 mode='train'):
         super().__init__()
         self.root = root
         if mode == 'train':
@@ -379,14 +390,15 @@ class PretrainDataset(Dataset):
                 transforms.ToTensor(),
                 transforms.RandomApply([transforms.ColorJitter(.4,.4,.4,.1)],p=.7),
                 transforms.RandomInvert(p=.2),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                transforms.Normalize(norm_coefs['mean'], norm_coefs['std']) # (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
                 ])
         else:
             self.transform = transforms.Compose([
                 transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+                transforms.Normalize(norm_coefs['mean'], norm_coefs['std']) # (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
                 ])
         
+        self.use_clahe = use_clahe
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     
@@ -408,8 +420,9 @@ class PretrainDataset(Dataset):
         obj_full = centerize_obj(self.database[key]['obj'][:])
         residual_1_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
         residual_2_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
-        image_1_full = self.clahe.apply(image_1_full)
-        image_2_full = self.clahe.apply(image_2_full)
+        if self.use_clahe:
+            image_1_full = self.clahe.apply(image_1_full)
+            image_2_full = self.clahe.apply(image_2_full)
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
         
