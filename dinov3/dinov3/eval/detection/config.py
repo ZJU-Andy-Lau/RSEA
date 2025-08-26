@@ -4,11 +4,13 @@
 # the terms of the DINOv3 License Agreement.
 from __future__ import annotations
 from dataclasses import dataclass
+import attr
 
 from .models.position_encoding import PositionEncoding
 
 
-@dataclass(kw_only=True)
+# @dataclass(kw_only=True)
+@attr.s(kw_only=True)
 class DetectionHeadConfig:
     num_classes: int = 91  # 91 classes in COCO
     # Deformable DETR tricks
