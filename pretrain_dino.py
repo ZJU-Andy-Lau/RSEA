@@ -209,18 +209,7 @@ def pretrain(args):
     dist.barrier()
     dist.broadcast(dataset_indices,src=0)
 
-    pprint("Building Encoder")
-
-    encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
-    projector = ProjectHead(encoder.output_channels,128)
-    encoder_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
-
-    encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
-                                             total_steps=dataset_num * args.max_epoch,
-                                             warmup_ratio=100. / args.max_epoch,
-                                             cooldown_ratio=.5)
     
-    args.output_channels = encoder.output_channels
 
     dataset_indices = dataset_indices.cpu().numpy()
 
@@ -234,6 +223,19 @@ def pretrain(args):
     sampler = ImageSampler(dataset,shuffle=True)
     dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
     dataset_num = dataset.dataset_num
+
+    pprint("Building Encoder")
+
+    encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
+    projector = ProjectHead(encoder.output_channels,128)
+    encoder_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
+
+    encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
+                                             total_steps=dataset_num * args.max_epoch,
+                                             warmup_ratio=100. / args.max_epoch,
+                                             cooldown_ratio=.5)
+    
+    args.output_channels = encoder.output_channels
     
     
     if args.resume_training:
