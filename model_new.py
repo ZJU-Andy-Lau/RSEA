@@ -207,6 +207,11 @@ class EncoderDino(nn.Module):
     def save_adapter(self,output_path:str):
         state_dict = {k:v.detach().cpu() for k,v in self.adapter.state_dict().items()}
         torch.save(state_dict,output_path)
+    
+    def train(self, mode = True):
+        super().train(mode)
+        self.backbone.eval()
+        return self
 
 class ProjectHead(nn.Module):
     def __init__(self,input_channels,output_channels = None):

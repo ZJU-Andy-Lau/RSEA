@@ -311,7 +311,7 @@ def pretrain(args):
         total_loss_conf = 0
         total_loss_feat = 0
         count = 0
-        encoder.adapter.train()
+        encoder.train()
         for iter_idx,data in enumerate(dataloader):
             img1,img2,obj1,obj2,residual1,residual2,overlap1,overlap2,dataset_idx = data
             dataset_idx = dataset_idx.item()
