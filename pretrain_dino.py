@@ -254,10 +254,11 @@ def pretrain(args):
         for k, v in state.items():
             if isinstance(v, torch.Tensor):
                 state[k] = v.to(args.device)
+    encoder_op = encoder
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
         projector = distibute_model(projector,args.local_rank)
-
+        encoder_op = encoder.module
     
 
     pprint("Building Decoders")     
@@ -443,7 +444,7 @@ def pretrain(args):
                 min_loss = total_loss_obj
                 # encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
                 # torch.save(encoder_state_dict,os.path.join(args.encoder_output_path,'adapter.pth'))
-                encoder.save_adapter(os.path.join(args.encoder_output_path,'adapter.pth'))
+                encoder_op.save_adapter(os.path.join(args.encoder_output_path,'adapter.pth'))
                 print('best updated')
             
             if epoch % 5 == 0:
@@ -452,7 +453,7 @@ def pretrain(args):
                 encoder_optimizer_state_dict = encoder_optimizer.state_dict()
                 encoder_scheduler_state_dict = encoder_scheduler.state_dict()
                 projector_state_dict = projector.state_dict()
-                encoder.save_adapter(os.path.join(path,'encoder.pth'))
+                encoder_op.save_adapter(os.path.join(path,'encoder.pth'))
                 torch.save(encoder_optimizer_state_dict,os.path.join(path,'encoder_optimizer.pth'))
                 torch.save(encoder_scheduler_state_dict,os.path.join(path,'encoder_scheduler.pth'))
                 torch.save(projector_state_dict,os.path.join(path,'projector.pth'))

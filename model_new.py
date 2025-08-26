@@ -200,8 +200,9 @@ class EncoderDino(nn.Module):
     def forward(self, x):
         B = x.shape[0]
         H,W = x.shape[-2:]
-        feat_backbone = self.backbone.get_intermediate_layers(x)[0]
-        feat_backbone = feat_backbone.reshape(B,H // self.SAMPLE_FACTOR,W // self.SAMPLE_FACTOR,-1).permute(0,3,1,2)
+        with torch.no_grad():
+            feat_backbone = self.backbone.get_intermediate_layers(x)[0]
+            feat_backbone = feat_backbone.reshape(B,H // self.SAMPLE_FACTOR,W // self.SAMPLE_FACTOR,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
         return feat,conf
     
