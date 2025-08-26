@@ -200,7 +200,7 @@ class EncoderDino(nn.Module):
     def forward(self, x):
         B = x.shape[0]
         H,W = x.shape[-2:]
-        feat_backbone = self.backbone.get_intermediate_layers(x)
+        feat_backbone = self.backbone.get_intermediate_layers(x)[0]
         print("1:",feat_backbone.shape)
         feat_backbone = feat_backbone.reshape(B,H // self.SAMPLE_FACTOR,W // self.SAMPLE_FACTOR,-1).permute(0,3,1,2)
         print("2:",feat_backbone.shape)
