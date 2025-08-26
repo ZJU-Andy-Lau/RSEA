@@ -336,13 +336,6 @@ def pretrain(args):
         count = 0
         encoder.train()
 
-        if dist.get_rank() == 0:
-            vis_img_raw = cv2.imread(args.vis_img_path)
-            vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
-            cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
-            vis(encoder,vis_img,os.path.join(args.checkpoints_path,f'vis_{epoch}'))
-            exit()
-
         for iter_idx,data in enumerate(dataloader):
             img1,img2,obj1,obj2,residual1,residual2,overlap1,overlap2,dataset_idx = data
             dataset_idx = dataset_idx.item()
