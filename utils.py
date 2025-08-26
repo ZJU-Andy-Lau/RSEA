@@ -753,4 +753,4 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
 
         cv2.circle(canvas,(p[1],p[0]),radius=1,color=color,thickness=-1)
     
-    cv2.imwrite(canvas,output_path)
+    cv2.imwrite(output_path,canvas)
