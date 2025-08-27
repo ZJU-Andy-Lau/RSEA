@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
+from torchvision import transforms
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
 from criterion import CriterionFinetune
@@ -20,7 +21,7 @@ from skimage.transform import AffineTransform
 from skimage.measure import ransac
 from torch.cuda.amp import autocast, GradScaler
 from dataloader import PretrainDataset,ImageSampler
-from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend
+from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend,vis_feat_pca,vis_conf
 import random
 import warnings
 warnings.filterwarnings("ignore")
@@ -110,6 +111,21 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         img = img.permute(1,2,0).cpu().numpy()[:,:,0]
         img = 255 * (img - img.min()) / (img.max() - img.min())
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
+
+@torch.no_grad()
+def vis(encoder:Encoder,vis_img:np.ndarray,output_folder):
+    os.makedirs(output_folder,exist_ok=True)
+    transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.430, 0.411, 0.296), (0.213, 0.156, 0.143)) # (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+                ])
+    input = transform(vis_img).unsqueeze(0).to(encoder.device)
+    feat,conf = encoder(input)
+    h,w,c = feat.shape[-2],feat.shape[-1],feat.shape[1]
+    feat = feat.permute(0,2,3,1).reshape(h,w,c).cpu().numpy()
+    conf = conf.reshape(h,w).cpu().numpy()
+    vis_feat_pca(feat,os.path.join(output_folder,'feat_pca.png'))
+    vis_conf(conf,vis_img,16,os.path.join(output_folder,'conf.png'))
 
 def compute_loss(args,epoch,data,encoder:Encoder,decoder:DecoderFinetune,projector:ProjectHead,criterion:nn.Module):
     img1 = data['img1'].squeeze(0).to(args.device)
@@ -506,6 +522,11 @@ def pretrain(args):
                 }
                 torch.save(training_configs,os.path.join(path,'training_configs.pth'))
 
+                vis_img_raw = cv2.imread(args.vis_img_path)
+                vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
+                cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
+                vis(encoder,vis_img,os.path.join(path,f'vis_{epoch}'))
+
         
             logger.update({
                 'epoch':epoch,
@@ -529,6 +550,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_path',type=str,default=None)
     parser.add_argument('--encoder_output_path',type=str,default='./weights/encoder_finetune.pth')
     parser.add_argument('--checkpoints_path',type=str,default=None)
+    parser.add_argument('--vis_img_path',type=str,default=None)
     parser.add_argument('--batch_size',type=int,default=8)
     parser.add_argument('--decoder_block_num',type=int,default=1)
     parser.add_argument('--resume_training',type=str2bool,default=False)

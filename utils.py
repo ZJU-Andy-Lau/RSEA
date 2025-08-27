@@ -745,7 +745,7 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
     def score_to_color(score):
         red = int((1 - score) * 255)
         green = int(score * 255)
-        return (red, green, 0)
+        return (0, green, red)
     
     for p,score in zip(points,scores):
         p = p.astype(int)
