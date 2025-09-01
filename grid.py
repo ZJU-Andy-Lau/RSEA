@@ -330,25 +330,40 @@ class Grid():
                                                         dim=0)
                     # torch.cuda.synchronize()
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
-                    dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num)
+                    dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
                     # torch.cuda.synchronize()
                     valid_mask = dists.max(dim=1).values < 256
                     if valid_mask.sum() == 0:
                         continue
                     # break
-                    dists = 1. / (dists[valid_mask] + 1e-6)
+                    dists_ratio = dists[valid_mask] / torch.sum(dists[valid_mask],dim=-1,keepdim=True) # n,3
                     idxs = idxs[valid_mask]
-                    dists = dists / torch.mean(dists,dim=-1,keepdim=True)
-                    features_pD = element.buffer['features'][idxs].contiguous()
-                    confs_p1 = element.buffer['confs'][idxs].contiguous()
-                    objs_p3 = element.buffer['objs'][idxs].contiguous()
-                    locals_p2 = sample_linesamps[valid_mask]
-                    features_pD = features_pD * dists.unsqueeze(-1)
-                    confs_p1 = confs_p1 * dists
-                    objs_p3 = objs_p3 * dists.unsqueeze(-1)
-                    features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
-                    confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
-                    objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
+                    features_p3D = element.buffer['features'][idxs].contiguous()
+                    confs_p3 = element.buffer['confs'][idxs].contiguous()
+                    objs_p33 = element.buffer['objs'][idxs].contiguous()
+                    locals_p32 = element.buffer['locals'][idxs].contiguous()
+
+                    features_pD = torch.sum(features_p3D * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    confs_p1 = torch.sum(confs_p3 * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    objs_p3 = torch.sum(objs_p33 * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    locals_p2 = torch.sum(locals_p32 * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+
+
+
+
+                    # dists = 1. / (dists[valid_mask] + 1e-6)
+                    # idxs = idxs[valid_mask]
+                    # dists = dists / torch.mean(dists,dim=-1,keepdim=True)
+                    # features_pD = element.buffer['features'][idxs].contiguous()
+                    # confs_p1 = element.buffer['confs'][idxs].contiguous()
+                    # objs_p3 = element.buffer['objs'][idxs].contiguous()
+                    # locals_p2 = sample_linesamps[valid_mask]
+                    # features_pD = features_pD * dists.unsqueeze(-1)
+                    # confs_p1 = confs_p1 * dists
+                    # objs_p3 = objs_p3 * dists.unsqueeze(-1)
+                    # features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
+                    # confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
+                    # objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
 
 
                     if vis_flag:
@@ -397,7 +412,7 @@ class Grid():
 
                             # 保存图像到指定路径
                             cv2.imwrite(output_path, canvas)
-                        visualize_points(sample_linesamps.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,'knn_vis.png'),point_radius=3)
+                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,'knn_vis.png'),point_radius=2)
                         vis_flag = False
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
