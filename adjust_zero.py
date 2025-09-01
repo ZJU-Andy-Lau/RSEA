@@ -49,6 +49,8 @@ if __name__ == '__main__':
                         help='number of patches in a batch')
     
     parser.add_argument('--use_global_feature',type=str2bool,default=False)
+
+    parser.add_argument('--grid_num',type=int,default=-1)
     
 
     #=============================Element Training Params=============================

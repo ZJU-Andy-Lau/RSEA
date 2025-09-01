@@ -664,3 +664,8 @@ def load_rpc(rpc_path:str,to_gpu=False) -> RPCModelParameterTorch:
     if to_gpu:
         rpc.to_gpu()
     return rpc
+
+def project_linesamp(rpc1:RPCModelParameterTorch,rpc2:RPCModelParameterTorch,lines,samps,heights,output_type='tensor'):
+    lat,lon = rpc1.RPC_PHOTO2OBJ(samps,lines,heights)
+    samps,lines = rpc2.RPC_OBJ2PHOTO(lat,lon,heights,output_type)
+    return lines,samps

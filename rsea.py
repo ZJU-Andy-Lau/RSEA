@@ -2,6 +2,8 @@ import os
 import logging
 
 from sklearn import metrics
+
+import grid
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 logging.basicConfig(level=logging.ERROR)
 import time
@@ -351,10 +353,13 @@ class RSEA():
     def load_grids(self,path = None):
         if path is None:
             path = os.path.join(self.root,'grids')
+        grid_num = self.options.grid_num
         grid_paths = [i for i in os.listdir(path) if 'grid_' in i]
+        if grid_num <= 0:
+            grid_num = len(grid_paths)
         good_grids_num = 0
         bad_grids_num = 0
-        for grid_path in grid_paths:
+        for grid_path in grid_paths[:grid_num]:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
             if new_grid.status == new_grid.STATES.WELL_TRAINED:
                 self.grids.append(new_grid)
