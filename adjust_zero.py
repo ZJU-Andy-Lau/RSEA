@@ -146,7 +146,7 @@ if __name__ == '__main__':
         # 基于ref_images创建网格
         for image_folder in os.listdir(ref_images_root):
             rsea.add_image(os.path.join(ref_images_root,image_folder))
-        rsea.create_grids(grid_size=options.grid_size)
+        rsea.create_grids(grid_size=options.grid_size,max_grid_num=options.grid_num)
 
     rsea.load_grids(grid_root)
 
