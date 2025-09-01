@@ -560,7 +560,7 @@ class Grid():
         # if early_stop_iter > 0:
         #     print("early stopped")
         self.mapper.load_state_dict(best_mapper_state_dict['model'])
-        if min_photo_loss < 15.:
+        if min_photo_loss < 25.:
             self.status = self.STATES.WELL_TRAINED
         else:
             self.status = self.STATES.BAD_TRAINED
