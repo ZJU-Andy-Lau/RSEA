@@ -132,6 +132,8 @@ if __name__ == '__main__':
     parser.add_argument('--use_gpu', type=_strtobool, default=True,
                         help='Use GPU for accelerating')
     
+    parser.add_argument('--use_clahe', type=_strtobool, default=False)
+    
     parser.add_argument('--log_postfix', type=str, default='',
                         help='log_postfix')
     

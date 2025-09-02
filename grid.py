@@ -1003,10 +1003,9 @@ class Grid():
         imgs_NCHW = imgs_NCHW.float() / 255.0
         imgs_NCHW = imgs_NCHW.to(self.device)
         self.transform = self.transform.to(self.device)
-        with torch.no_grad():
-            batch_num = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
-            imgs_NCHW = [self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size]) for b in trange(batch_num)]
-            imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
+        batch_num = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
+        imgs_NCHW = [self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size]) for b in trange(batch_num)]
+        imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,mode='avg',device=self.device)
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
