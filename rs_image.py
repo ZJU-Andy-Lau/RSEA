@@ -26,7 +26,7 @@ class RSImage():
         self.id = id
         # self.image = self.__load_image__(os.path.join(root,'image.tif'))
         self.image = cv2.imread(os.path.join(root,'image.png'),cv2.IMREAD_GRAYSCALE)
-        # self.image = clahe.apply(self.image)
+        self.image = clahe.apply(self.image)
         self.image = np.stack([self.image] * 3,axis=-1)
         self.dem = np.load(os.path.join(root,'dem.npy'))
         if os.path.exists(os.path.join(root,'tie_points.txt')):
