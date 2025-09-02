@@ -336,15 +336,17 @@ class Grid():
                     if valid_mask.sum() == 0:
                         continue
                     # break
-                    dists_ratio = dists[valid_mask] / torch.sum(dists[valid_mask],dim=-1,keepdim=True) # n,3
+                    dists_ratio = dists[valid_mask] / torch.sum(dists[valid_mask],dim=1,keepdim=True) # n,3
+                    reverse_dists_ratio = 1. / dists_ratio
+                    reverse_dists_ratio = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
                     idxs = idxs[valid_mask]
                     features_p3D = element.buffer['features'][idxs].contiguous()
                     confs_p3 = element.buffer['confs'][idxs].contiguous()
                     objs_p33 = element.buffer['objs'][idxs].contiguous()
                     locals_p32 = element.buffer['locals'][idxs].contiguous()
 
-                    features_pD = torch.sum(features_p3D * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
-                    confs_p1 = torch.sum(confs_p3 * dists_ratio,dim=1).to(torch.float32)
+                    features_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
                     objs_p3 = torch.sum(objs_p33 * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     locals_p2 = torch.sum(locals_p32 * dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
 
