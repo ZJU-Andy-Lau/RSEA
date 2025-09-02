@@ -48,6 +48,7 @@ class RSImage():
         #     self.dem = None
         
         self.corner_xys = self.__get_corner_xys__() #[tl,tr,bl,br] [x,y]
+        self.overlap_grids = []
 
     def __load_image__(self,path) -> np.ndarray:
         print("Loading Image")

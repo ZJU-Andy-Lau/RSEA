@@ -360,6 +360,7 @@ class RSEA():
                 if overlap_diag is None :
                     print(f"no overlap in grid {grid_idx}")
                     continue
+                image.overlap_grids.append(grid_idx)
                 img_raw,dem,local_hw2 = grid.get_overlap_image(image,mode="interpolate")
                 cv2.imwrite(os.path.join(grid.output_path,f'adjust_img_{img_idx}.png'),img_raw)
                 
@@ -417,9 +418,15 @@ class RSEA():
                 need_adjust_images = need_adjust_images[1:]
             else:
                 adjust_list,not_adjust_list = self.adjust(need_adjust_images)
+                newly_adjust_images = [need_adjust_images[i] for i in adjust_list]
                 self.adjusted_images.append([need_adjust_images[i] for i in adjust_list])
                 need_adjust_images = [need_adjust_images[i] for i in not_adjust_list]
                 
+                #微调现有网格
+                
+
+
+                #创建新网格
 
 
             if 1 == 1:
