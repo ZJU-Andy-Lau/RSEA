@@ -165,7 +165,7 @@ class Grid():
             'rpc':img.rpc
         })
     
-    def create_elements(self,output_path:str = None,task_info = None):
+    def create_elements(self,output_path:str = None,task_info = None,clear = False):
         if output_path is None:
             output_path = self.output_path
         
@@ -174,6 +174,8 @@ class Grid():
                 'status':f"Grid {task_info['id']}:提取特征",
                 'total':len(self.train_data)
             })
+        if clear:
+            self.elements:List[Element] = []
         for idx,data in enumerate(self.train_data):
             id = len(self.elements)
             path = os.path.join(output_path,f'element_{id}')
@@ -332,7 +334,7 @@ class Grid():
                     # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
                     dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
                     # torch.cuda.synchronize()
-                    valid_mask = dists.max(dim=1).values < 256
+                    valid_mask = dists.max(dim=1).values < 64
                     if valid_mask.sum() == 0:
                         continue
                     # break

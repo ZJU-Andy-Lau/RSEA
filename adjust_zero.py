@@ -118,11 +118,13 @@ if __name__ == '__main__':
     # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
     #                     help='factor of lr decay in every 10 epochs')
     
-    parser.add_argument('--conf_threshold', type=float, default=0.5,
+    parser.add_argument('--conf_threshold', type=float, default=0.7,
                         help='minimum confidence to filter reliable patches')
     
     parser.add_argument('--ransac_threshold', type=int, default=20,
                         help='default threshold for ransac')
+    
+    parser.add_argument('--residual_threshold', type=int, default=50)
     
     parser.add_argument('--ransac_iters_num', type=int, default=10000,
                         help='iterations of ransac')

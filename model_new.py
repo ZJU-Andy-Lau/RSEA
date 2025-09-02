@@ -366,7 +366,8 @@ class AffineFitter:
     def fit(self, 
             source_points: torch.Tensor, 
             pred_means: torch.Tensor, 
-            pred_stds: torch.Tensor) -> torch.Tensor:
+            pred_stds: torch.Tensor,
+            return_res: bool = False) -> torch.Tensor:
         """
         执行仿射变换的拟合过程。
 
@@ -461,7 +462,10 @@ class AffineFitter:
             print(f"初始误差: {ori_dis.item():.2f} \t 变换后误差: {trans_dis.item():.2f}")
            
             
-        return self.transformation_matrix
+        if return_res:
+            return self.transformation_matrix,trans_dis
+        else:
+            return self.transformation_matrix
 
     def transform(self, points: torch.Tensor) -> torch.Tensor:
         """

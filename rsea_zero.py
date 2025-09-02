@@ -246,7 +246,7 @@ class RSEA():
 
             
 
-            with Live(progress_table, refresh_per_second=50, screen=True) as live:
+            with Live(progress_table, refresh_per_second=50, screen=False, transient=False) as live:
                 acitive_workers = world_size
                 while acitive_workers > 0:
                     acitive_workers = 0
@@ -313,7 +313,7 @@ class RSEA():
         # valid_scores = valid_scores[conf_valid_idx]
         print(f"valid filter :{inliers.sum()}/{valid_mask.sum()}/{total_num}")
 
-        fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
+        fitted_matrix,res = fitter.fit(src,tgt_mu,tgt_sigma,True)
         # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
         # print("mean_dis:",dis.mean())
         # dis_valid_idx = dis < dis.mean() + dis.std()
@@ -321,7 +321,7 @@ class RSEA():
         # targets = targets[dis_valid_idx]
         # offset = np.mean(targets,axis=0) - np.mean(locals,axis=0)
         
-        return fitted_matrix
+        return fitted_matrix,res
 
     def load_grids(self,path = None,clear = True):
         if path is None:
@@ -344,15 +344,11 @@ class RSEA():
         print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
     
 
-    def adjust(self,image_folders:List[str]):        
-        adjust_images:List[RSImage] = []
+    def adjust(self,adjust_images:List[RSImage]):        
         
-        print("Loading Adjust Images")
-        for image_id,image_folder in tqdm(enumerate(image_folders)):
-            image = RSImage(self.options,image_folder,image_id)
-            adjust_images.append(image)
-        print(f"{len(adjust_images)} adjust images loaded")
-        
+        adjust_list = []
+        not_adjust_list = []
+
         for img_idx,image in enumerate(adjust_images):
             all_src = []
             all_tgt_mu = []
@@ -378,40 +374,52 @@ class RSEA():
                 all_tgt_mu.append(mu_linesamp)
                 all_tgt_sigma.append(sigma_linesamp)
                 all_valid_scores.append(valid_score)
+            if len(all_src) == 0:
+                not_adjust_list.append(img_idx)
+                print(f"no overlap in image {img_idx}")
+                continue
             all_src = torch.concatenate(all_src,dim=0).detach()
             all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0).detach()
             all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0).detach()
             all_valid_scores = torch.concatenate(all_valid_scores,dim=0).detach()
 
-            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_valid_scores)
-            image.rpc.Update_Adjust(transform)
-            print(image.rpc.adjust_params.cpu().numpy())
+            transform,residual = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_valid_scores)
+            
+            if residual > self.options.residual_threshold:
+                not_adjust_list.append(grid_idx)
+                print(f"Image {img_idx} not adjust well, residual = {residual}")
+                continue
 
-        errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),adjust_images)
-        info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
-        print(info)
+            image.rpc.Update_Adjust(transform)
+            print(f"adjust params of img {img_idx}:",image.rpc.adjust_params.cpu().numpy())
+            adjust_list.append(img_idx)
+        
+        return adjust_list,not_adjust_list
 
     def adjust_zero(self,image_folders:List[str]):        
-        adjust_images:List[RSImage] = []
+        need_adjust_images:List[RSImage] = []
         
         print("Loading Adjust Images")
         for image_id,image_folder in tqdm(enumerate(image_folders)):
             image = RSImage(self.options,image_folder,image_id)
-            adjust_images.append(image)
-        print(f"{len(adjust_images)} adjust images loaded")
+            need_adjust_images.append(image)
+        print(f"{len(need_adjust_images)} adjust images loaded")
 
         self.adjusted_images = []
 
         while True:
             self.load_grids()
             if len(self.grids) == 0:
-                self.create_grids(imgs = adjust_images[0:1],
+                self.create_grids(imgs = need_adjust_images[0:1],
                                   grid_size = self.options.grid_size,
                                   max_grid_num = self.options.grid_num)
-                self.adjusted_images.append(adjust_images[0])
-                adjust_images = adjust_images[1:]
+                self.adjusted_images.append(need_adjust_images[0])
+                need_adjust_images = need_adjust_images[1:]
             else:
-                pass
+                adjust_list,not_adjust_list = self.adjust(need_adjust_images)
+                self.adjusted_images.append([need_adjust_images[i] for i in adjust_list])
+                need_adjust_images = [need_adjust_images[i] for i in not_adjust_list]
+                
 
 
             if 1 == 1:

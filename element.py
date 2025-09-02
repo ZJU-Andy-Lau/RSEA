@@ -129,7 +129,7 @@ class Element():
         if self.verbose:
             print("[Element]:", *args, **kwargs)
 
-    def __crop_img__(self,crop_size = 256):
+    def __crop_img__(self,crop_size = 256,random_ratio = 1.):
 
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
@@ -182,18 +182,21 @@ class Element():
                 row_num += 1
                 col_num -= 1
 
-        # random_num = int(cut_number * random_ratio)
+        random_num = int(cut_number * random_ratio)
 
-        # for i in range(cut_number // 2):
-        #     col = np.random.randint(0,W - crop_size)
-        #     row = np.random.randint(0,H - crop_size)
-        #     rot_time = np.random.randint(0,4)
-        #     crop_img = np.rot90(self.img_raw[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
-        #     crop_local = np.rot90(self.local_raw[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
-        #     crop_dem = np.rot90(self.dem[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
-        #     crop_imgs.append(crop_img)
-        #     crop_locals.append(crop_local)
-        #     crop_dems.append(crop_dem)
+        for i in range(random_num):
+            col = np.random.randint(0,W - crop_size)
+            row = np.random.randint(0,H - crop_size)
+            # rot_time = np.random.randint(0,4)
+            # crop_img = np.rot90(self.img_raw[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
+            # crop_local = np.rot90(self.local_raw[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
+            # crop_dem = np.rot90(self.dem[row:row + crop_size,col:col + crop_size],k=rot_time,axes=(0,1))
+            crop_img = self.img_raw[row:row + crop_size,col:col + crop_size]
+            crop_local = self.local_raw[row:row + crop_size,col:col + crop_size]
+            crop_dem = self.dem[row:row + crop_size,col:col + crop_size]
+            crop_imgs.append(crop_img)
+            crop_locals.append(crop_local)
+            crop_dems.append(crop_dem)
         
         crop_imgs = np.stack(crop_imgs)
         crop_locals = np.stack(crop_locals)

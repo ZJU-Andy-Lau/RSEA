@@ -249,7 +249,7 @@ class RSEA():
 
             
 
-            with Live(progress_table, refresh_per_second=50, screen=True) as live:
+            with Live(progress_table, refresh_per_second=50, screen=False, transient=False) as live:
                 acitive_workers = world_size
                 while acitive_workers > 0:
                     acitive_workers = 0
@@ -302,7 +302,7 @@ class RSEA():
 
         
         total_num = len(valid_scores)
-        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold=avg_sigma.item())
+        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold=2 * avg_sigma.item())
         inliers = mask.ravel() == 1
 
         src = src[inliers]
@@ -350,7 +350,7 @@ class RSEA():
         adjust_images:List[RSImage] = []
         
         print("Loading Adjust Images")
-        for image_id,image_folder in tqdm(enumerate(image_folders)):
+        for image_id,image_folder in enumerate(tqdm(image_folders)):
             image = RSImage(self.options,image_folder,image_id)
             adjust_images.append(image)
         print(f"{len(adjust_images)} adjust images loaded")
