@@ -64,14 +64,14 @@ class Element():
         self.transform = nn.Sequential(
             # K.RandomGrayscale(p=0.3),
             K.ColorJitter(
-                brightness=0.1,
-                contrast=0.1,
-                saturation=0.1,
+                brightness=0.13,
+                contrast=0.3,
+                saturation=0.3,
                 hue=0.1,
                 p=.3,
             ),
-            # K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
-            # K.RandomInvert(p=0.1),
+            K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
+            K.RandomInvert(p=0.1),
             K.Normalize(
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
                 std=torch.tensor([0.229, 0.224, 0.225])

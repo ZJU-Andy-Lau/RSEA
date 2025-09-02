@@ -260,21 +260,6 @@ class Grid():
     def train_mapper(self,task_info = None,save_checkpoint = True):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
-        # optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-        # scheduler = MultiStageOneCycleLR(optimizer = optimizer,
-        #                                 max_lr = self.options.grid_train_lr_max,
-        #                                 min_lr = self.options.grid_train_lr_min,
-        #                                 n_epochs_per_stage = self.options.grid_training_iters,
-        #                                 steps_per_epoch = 1,
-        #                                 pct_start = self.options.grid_warmup_iters / self.options.grid_training_iters,
-        #                                 summit_hold = self.options.grid_summit_hold_iters / self.options.grid_training_iters,
-        #                                 #gamma = self.options.lr_decay_per_100_epochs ** (1. / 100.),
-        #                                 cooldown = 0.0
-        #                                 )
-        # scheduler = MultiStageOneCycleLR(optimizer=optimizer,
-        #                                  total_steps=self.options.grid_training_iters,
-        #                                  warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
-        #                                  cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         optimizer = self.optimizer
         scheduler = self.scheduler
         criterion = CriterionTrainGrid()
@@ -469,6 +454,251 @@ class Grid():
                 # valid_score_positive,valid_score_nagetive = valid_score_11q1[:,:,:patch_num],valid_score_11q1[:,:,patch_num:]
                 # output_16p1,valid_score_positive = self.mapper(features_1Dp1)
                 # _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
+                
+                output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+                mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+                log_sigma_xyh_p3 = output_p6[:,3:]
+
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
+                                                                                            self.options.grid_training_iters,
+                                                                                            mu_xyh_p3,
+                                                                                            log_sigma_xyh_p3,
+                                                                                            confs_p1,
+                                                                                            locals_p2,
+                                                                                            objs_p3,
+                                                                                            element.rpc) #,loss_bias,loss_reg
+                
+                valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
+                valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0).to(valid_pred.device) # positive,negative
+                loss_valid = bce(valid_pred,valid_label) * 100.
+
+                loss = loss + loss_valid
+                loss.backward()
+
+                total_loss += loss.item()
+                total_loss_dist += loss_distribution.item()
+                total_loss_obj += loss_obj.item()
+                total_loss_photo += loss_photo.item()
+                total_loss_height += loss_height.item()
+                # total_reg += loss_reg
+                count += 1
+                progress += 1 
+                info = {
+                        'i':f'{progress}',
+                        'lr':f'{scheduler.get_last_lr()[0]:.2e}',
+                        'd':f'{loss_distribution.item():.2f}', 
+                        's':f'{sigma_avg:.2f}',
+                        'o':f'{loss_obj.item():.2f}',
+                        'p':f'{loss_photo.item():.2f}',
+                        'h':f'{loss_height.item():.2f}',
+                        # 'r':f'{loss_reg:.2f}',
+                        'v':f'{loss_valid:.2f}',
+                        'min':f'{min_photo_loss:.2f}'
+                    }
+                if not task_info is None:
+                    self.update_task_state(task_info,{
+                        'progress':progress,
+                        'info':info
+                    })
+                else:
+                    pbar.update(1)
+                    pbar.set_postfix(info)
+            optimizer.step()
+
+            scheduler.step()
+
+            if loss_photo > min_photo_loss * 10.:
+                self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
+                if no_update_count > 0:
+                    scheduler.trigger_cooldown()
+                    no_update_count = -1e9 #防止重复启动
+                    early_stop_iter = iter_idx + self.options.grid_cooldown_iters
+
+
+            if (iter_idx + 1) % 10 == 0:
+                total_loss /= count
+                total_loss_dist /= count
+                total_loss_obj /= count
+                total_loss_height /= count
+                total_loss_photo /= count
+                # total_reg /= count
+                
+                # cost_time = int(time.perf_counter() - start_time)
+                # print(f"\n ============= iter:{iter_idx + 1} \t total_loss:{total_loss:.2f} \t total_loss_obj:{total_loss_obj:.2f} \t total_loss_photo:{total_loss_photo:.2f} \t total_loss_real:{total_loss_photo_real:.2f} \t total_loss_height:{total_loss_height:.2f} \t total_loss_reg:{total_reg:.2f} \t time:{cost_time}s \n")
+                if total_loss_photo < min_photo_loss:
+                    min_photo_loss = total_loss_photo
+                    no_update_count = 0
+                    if last_mapper_state_dict is None:
+                        best_mapper_state_dict = {
+                            'model':deepcopy(self.mapper.state_dict()),
+                            'optimizer':deepcopy(optimizer.state_dict())
+                        }
+                    else:
+                        best_mapper_state_dict = last_mapper_state_dict
+                else:
+                    no_update_count += 1
+                
+                if no_update_count >= 200 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
+                    self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                    optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
+                    scheduler.trigger_cooldown()
+                    no_update_count = -1e9 #防止重复启动
+                    early_stop_iter = iter_idx + self.options.grid_cooldown_iters
+
+                last_mapper_state_dict = {
+                        'model':deepcopy(self.mapper.state_dict()),
+                        'optimizer':deepcopy(optimizer.state_dict())
+                    }
+
+                if save_checkpoint:
+                    self.save_grid()
+                total_loss = 0
+                total_loss_dist = 0
+                total_loss_obj = 0
+                total_loss_height = 0
+                total_loss_photo = 0
+                # total_reg = 0
+                count = 0
+
+            if early_stop_iter > 0 and iter_idx >= early_stop_iter:
+                break
+        # if early_stop_iter > 0:
+        #     print("early stopped")
+        self.mapper.load_state_dict(best_mapper_state_dict['model'])
+        if min_photo_loss < 25.:
+            self.status = self.STATES.WELL_TRAINED
+        else:
+            self.status = self.STATES.BAD_TRAINED
+        # torch.save(best_mapper_state_dict,os.path.join(self.output_path,'grid_mapper.pth'))
+        self.save_grid()
+        for element in self.elements:
+            element.clear_buffer()
+        self.elements = None
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':f"Grid {task_info['id']}:训练完成"
+            })
+    
+    def finetune_mapper(self,task_info = None,save_checkpoint = True):
+        max_patch_num = max(*[element.patch_num for element in self.elements],0)
+        patches_per_batch = self.options.patches_per_batch // 4 * 4
+        optimizer = self.optimizer
+        scheduler = self.scheduler
+        criterion = CriterionTrainGrid()
+        bce = nn.BCELoss()
+        self.mapper.train()
+        # if self.options.use_gpu:
+        self.mapper.to(self.device)
+
+        min_photo_loss = 1e8
+
+        patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.patch_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
+        global_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.global_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
+        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
+        global_noise_amp = .5 
+        patch_noise_buffer = patch_noise_buffer * patch_noise_amp
+        global_noise_buffer = global_noise_buffer * global_noise_amp
+
+        vis_flag = True
+
+        total_loss = 0
+        total_loss_dist = 0
+        total_loss_obj = 0
+        total_loss_height = 0
+        total_loss_photo = 0
+        count = 0
+        no_update_count = 0
+        early_stop_iter = -1
+        last_mapper_state_dict = None
+        progress = self.train_iter_idx * len(self.elements)
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':f"Grid {task_info['id']}:Decoder训练",
+                'total':self.options.grid_training_iters * len(self.elements)
+            })
+        else:
+            pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
+            pbar.update(progress)
+        for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
+            iter_idx = self.train_iter_idx
+            noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
+            optimizer.zero_grad()
+            for element in self.elements:
+                if iter_idx % 2 != 0:
+                    sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
+                                                            min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
+                                                    torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
+                                                            min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
+                                                    dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
+                    sample_linesamps = torch.concatenate([sample_linesamps,
+                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
+                                                        dim=0)
+                    dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
+                    valid_mask = dists.max(dim=1).values < 64
+                    if valid_mask.sum() == 0:
+                        continue
+                    dists_ratio = dists[valid_mask] / torch.sum(dists[valid_mask],dim=1,keepdim=True) # n,3
+                    reverse_dists_ratio = 1. / dists_ratio
+                    reverse_dists_ratio = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
+                    idxs = idxs[valid_mask]
+                    features_p3D = element.buffer['features'][idxs].contiguous()
+                    confs_p3 = element.buffer['confs'][idxs].contiguous()
+                    objs_p33 = element.buffer['objs'][idxs].contiguous()
+                    locals_p32 = element.buffer['locals'][idxs].contiguous()
+
+                    features_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
+                    objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+
+                else:
+                    sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
+                    features_pD = element.buffer['features'][sample_idxs].contiguous()
+                    confs_p1 = element.buffer['confs'][sample_idxs].contiguous()
+                    objs_p3 = element.buffer['objs'][sample_idxs].contiguous()
+                    locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
+                    valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
+
+                
+                # 筛出在grid的border范围内的，范围外的不参与学习
+                inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
+                features_pD = features_pD[inside_border_mask]
+                confs_p1 = confs_p1[inside_border_mask]
+                objs_p3 = objs_p3[inside_border_mask]
+                locals_p2 = locals_p2[inside_border_mask]
+
+                patch_num = confs_p1.shape[0]
+                features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
+                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
+
+                if self.options.use_global_feature:
+                    global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                    features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
+
+                # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
+                # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
+                
+                #===================生成负样本特征=====================
+
+                negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
+                negative_features = element.buffer['features'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,D
+                negative_locals = element.buffer['locals'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,2
+                negative_avg_feature = torch.mean(negative_features,dim=1) # p,D
+                negative_avg_local = torch.mean(negative_locals,dim=1) # p,2
+                dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
+                negative_noise_amp =  100. / dis
+                negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
+
+                #=====================================================
+
+                output_16p1,valid_score_positive = self.mapper(features_1Dp1)
+                valid_score_nagetive = self.mapper.forward_valid(negative_feature_1Dp1)
                 
                 output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
                 mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
