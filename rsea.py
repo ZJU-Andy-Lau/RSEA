@@ -228,17 +228,6 @@ class RSEA():
                 }
             for _ in range(world_size):
                 task_queue.put(None)
-            
-
-            # pbars = []
-            # for i in range(grid_num):
-            #     task_id = i + 1
-            #     # print(f"============================== Grid {task_id} ==============================")
-            #     bar = tqdm(total=1,
-            #                desc=f"Grid {task_id} 状态：等待初始化",
-            #                position=i * 2 + 1,
-            #                leave=True)
-            #     pbars.append(bar)
 
             processes = []
             for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
@@ -278,25 +267,11 @@ class RSEA():
                             description=state['status'],
                             metrics=dict2str(state['info'])                            
                         )
-                        # bar = pbars[i]
-                        # bar.set_description(f"{state['status']}")
-                        # bar.total = state['total']
-                        # bar.n = state['progress']
-                        # bar.set_postfix(state['info'])
-                        # bar.refresh() 
+
                     time.sleep(0.02) 
 
-            # for bar in pbars:
-            #     bar.close()
                 for p in processes:
                     p.join()                   
-            # round_num = int(np.ceil(grid_num / world_size))
-            # for round_idx in range(round_num):
-            #     grids_to_train = self.grids[round_idx * world_size : (round_idx + 1) * world_size]
-            #     mp.spawn(train_grid_worker,
-            #             args=(world_size,round_idx,grids_to_train),
-            #             nprocs=len(grids_to_train),
-            #             join=True)
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
         
@@ -350,7 +325,7 @@ class RSEA():
         
         return fitted_matrix
 
-    def load_grids(self,path = None):
+    def load_grids(self,path = None,clear = True):
         if path is None:
             path = os.path.join(self.root,'grids')
         grid_num = self.options.grid_num
@@ -359,6 +334,8 @@ class RSEA():
             grid_num = len(grid_paths)
         good_grids_num = 0
         bad_grids_num = 0
+        if clear:
+            self.grids = []
         for grid_path in grid_paths[:grid_num]:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
             if True or new_grid.status == new_grid.STATES.WELL_TRAINED:

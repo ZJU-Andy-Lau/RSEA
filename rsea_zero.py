@@ -146,7 +146,7 @@ class RSEA():
         self.imgs.append(new_image)
         print(f"===============================Add image {img_id} done===============================")
     
-    def create_grids(self,grid_size:int = 1000,max_grid_num:int = -1):
+    def create_grids(self,imgs = None, grid_size:int = 1000,max_grid_num:int = -1):
         def find_grids(corners, grid_size):
             x_left = np.maximum(corners[:, 0, 0],corners[:, 2, 0]) 
             x_right = np.minimum(corners[:, 1, 0],corners[:, 3, 0])
@@ -183,6 +183,8 @@ class RSEA():
             
             return diags
 
+        if imgs is None:
+            imgs = self.imgs
         if self.options.resume_training:
             grid_names = os.listdir(self.grid_root)
             grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
@@ -190,7 +192,7 @@ class RSEA():
             grid_num = len(grid_paths)
             print(f"{len(grid_paths)} grids is going to resume creating")
         else:
-            corners = np.stack([image.corner_xys for image in self.imgs])
+            corners = np.stack([image.corner_xys for image in imgs])
             grid_diags = find_grids(corners,grid_size) # M,2,2
             if max_grid_num > 0:
                 grid_diags = grid_diags[:max_grid_num]
@@ -216,29 +218,13 @@ class RSEA():
                     "progress":0,
                     "total":1,
                     "info":{
-                        # 'lr':0,
-                        # 'dist':0,
-                        # 's':0,
-                        # 'obj':0,
-                        # 'photo':0,
-                        # 'h':0,
-                        # 'reg':0,
-                        # 'min':0
+
                     }
                 }
             for _ in range(world_size):
                 task_queue.put(None)
             
 
-            # pbars = []
-            # for i in range(grid_num):
-            #     task_id = i + 1
-            #     # print(f"============================== Grid {task_id} ==============================")
-            #     bar = tqdm(total=1,
-            #                desc=f"Grid {task_id} 状态：等待初始化",
-            #                position=i * 2 + 1,
-            #                leave=True)
-            #     pbars.append(bar)
 
             processes = []
             for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
@@ -278,25 +264,12 @@ class RSEA():
                             description=state['status'],
                             metrics=dict2str(state['info'])                            
                         )
-                        # bar = pbars[i]
-                        # bar.set_description(f"{state['status']}")
-                        # bar.total = state['total']
-                        # bar.n = state['progress']
-                        # bar.set_postfix(state['info'])
-                        # bar.refresh() 
+ 
                     time.sleep(0.02) 
 
-            # for bar in pbars:
-            #     bar.close()
                 for p in processes:
                     p.join()                   
-            # round_num = int(np.ceil(grid_num / world_size))
-            # for round_idx in range(round_num):
-            #     grids_to_train = self.grids[round_idx * world_size : (round_idx + 1) * world_size]
-            #     mp.spawn(train_grid_worker,
-            #             args=(world_size,round_idx,grids_to_train),
-            #             nprocs=len(grids_to_train),
-            #             join=True)
+ 
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
         
@@ -350,7 +323,7 @@ class RSEA():
         
         return fitted_matrix
 
-    def load_grids(self,path = None):
+    def load_grids(self,path = None,clear = True):
         if path is None:
             path = os.path.join(self.root,'grids')
         grid_num = self.options.grid_num
@@ -359,6 +332,8 @@ class RSEA():
             grid_num = len(grid_paths)
         good_grids_num = 0
         bad_grids_num = 0
+        if clear:
+            self.grids = []
         for grid_path in grid_paths[:grid_num]:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
             if True or new_grid.status == new_grid.STATES.WELL_TRAINED:
@@ -412,35 +387,6 @@ class RSEA():
             image.rpc.Update_Adjust(transform)
             print(image.rpc.adjust_params.cpu().numpy())
 
-            # output_obj_vis(all_xyh,output_path=os.path.join(image.root,'obj_vis.txt'))
-
-            # check_points = np.stack(np.meshgrid(np.arange(0,image.H,10),np.arange(0,image.W,10),indexing='ij'),axis=-1).reshape(-1,2)
-            # errors = check_error(check_points,transform)
-            # errors = self.check_error()
-
-
-            # info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
-            # print("error:")
-            # print("max:",errors.max())
-            # print("min:",errors.min())
-            # print("mean:",errors.mean())
-            # print("median:",np.median(errors))
-            # print("<1px:",(errors < 1.).sum() * 1. / len(errors))
-            # print("<3px:",(errors < 3.).sum() * 1. / len(errors))
-            # print("<5px:",(errors < 5.).sum() * 1. / len(errors))
-            # print(info)
-
-
-            # image.rpc.Merge_Adjust()
-            # orthorectify_image(image.image[:,:,0],image.dem,image.rpc,os.path.join(image.root,'dom.tif'))
-            # image.rpc.save_rpc_to_file(os.path.join(image.root,'rpc_corrected.txt'))
-            # timestamp  = time.strftime("%Y%m%d%H%M%S")
-            # with open(os.path.join(image.root,f'adjust_info_{timestamp}.txt'),'w') as f:
-            #     for k,v in vars(options).items():
-            #         info = info + f"{k}:{v}\n"
-            #     f.write(info)
-
-            # return adjust_images
         errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),adjust_images)
         info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
         print(info)
@@ -454,7 +400,26 @@ class RSEA():
             adjust_images.append(image)
         print(f"{len(adjust_images)} adjust images loaded")
 
-        
+        self.adjusted_images = []
+
+        while True:
+            self.load_grids()
+            if len(self.grids) == 0:
+                self.create_grids(imgs = adjust_images[0:1],
+                                  grid_size = self.options.grid_size,
+                                  max_grid_num = self.options.grid_num)
+                self.adjusted_images.append(adjust_images[0])
+                adjust_images = adjust_images[1:]
+            else:
+                pass
+
+
+            if 1 == 1:
+                break
+
+
+
+
 
     def check_error(self,log_path,images:List[RSImage] = None):        
         def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
