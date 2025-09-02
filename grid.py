@@ -457,10 +457,12 @@ class Grid():
 
                 #=====================================================
 
-                features_input_1Dq1 = torch.concatenate([features_1Dp1,negative_feature_1Dp1],dim=2)
-                output_16q1,valid_score_11q1 = self.mapper(features_input_1Dq1)
-                output_16p1 = output_16q1[:,:,:patch_num]
-                valid_score_positive,valid_score_nagetive = valid_score_11q1[:,:,:patch_num],valid_score_11q1[:,:,patch_num:]
+                output_16p1,valid_score_positive = self.mapper(features_1Dp1)
+                valid_score_nagetive = self.mapper.forward_valid(negative_feature_1Dp1)
+                # features_input_1Dq1 = torch.concatenate([features_1Dp1,negative_feature_1Dp1],dim=2)
+                # output_16q1,valid_score_11q1 = self.mapper(features_input_1Dq1)
+                # output_16p1 = output_16q1[:,:,:patch_num]
+                # valid_score_positive,valid_score_nagetive = valid_score_11q1[:,:,:patch_num],valid_score_11q1[:,:,patch_num:]
                 # output_16p1,valid_score_positive = self.mapper(features_1Dp1)
                 # _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
                 

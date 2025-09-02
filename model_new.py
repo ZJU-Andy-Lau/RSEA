@@ -322,18 +322,23 @@ class Decoder(nn.Module):
         # res = res / torch.norm(res,dim=1,keepdim=True)
         # if self.use_bn:
         #     res = self.bn(res)
+        valid_score = self.score_head(res)
         for block in self.blocks:
             x = block(res)
             res = res + x
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
-        valid_score = self.score_head(res)
+        
         mu_xy = F.tanh(xy_res[:,:2])
         log_sigma_xy = F.tanh(xy_res[:,2:]) * 10.
         mu_h = F.tanh(height_res[:,:1])
         log_sigma_h = F.tanh(height_res[:,1:]) * 10.
 
         return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1),valid_score
+    
+    def forward_valid(self,res):
+        valid_score = self.score_head(res)
+        return valid_score
 
 
 class AffineFitter:
