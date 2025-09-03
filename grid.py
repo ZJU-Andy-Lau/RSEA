@@ -260,6 +260,11 @@ class Grid():
     def train_mapper(self,task_info = None,save_checkpoint = True):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
+        self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
+        self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+                                            total_steps=self.options.grid_training_iters,
+                                            warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+                                            cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         optimizer = self.optimizer
         scheduler = self.scheduler
         criterion = CriterionTrainGrid()
@@ -583,6 +588,11 @@ class Grid():
     def finetune_mapper(self,task_info = None,save_checkpoint = True):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
+        self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_finetune_lr_max)
+        self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+                                            total_steps=self.options.grid_finetune_iters,
+                                            warmup_ratio=self.options.grid_finetune_warmup_iters / self.options.grid_finetune_iters,
+                                            cooldown_ratio=self.options.grid_finetune_cooldown_iters / self.options.grid_finetune_iters)
         optimizer = self.optimizer
         scheduler = self.scheduler
         criterion = CriterionTrainGrid()
@@ -615,12 +625,12 @@ class Grid():
         if not task_info is None:
             self.update_task_state(task_info,{
                 'status':f"Grid {task_info['id']}:Decoder训练",
-                'total':self.options.grid_training_iters * len(self.elements)
+                'total':self.options.grid_finetune_iters * len(self.elements)
             })
         else:
-            pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
+            pbar = tqdm(total=self.options.grid_finetune_iters * len(self.elements))
             pbar.update(progress)
-        for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
+        for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_finetune_iters):
             iter_idx = self.train_iter_idx
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
@@ -705,7 +715,7 @@ class Grid():
                 log_sigma_xyh_p3 = output_p6[:,3:]
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
-                                                                                            self.options.grid_training_iters,
+                                                                                            self.options.grid_finetune_iters,
                                                                                             mu_xyh_p3,
                                                                                             log_sigma_xyh_p3,
                                                                                             confs_p1,
@@ -758,7 +768,7 @@ class Grid():
                 if no_update_count > 0:
                     scheduler.trigger_cooldown()
                     no_update_count = -1e9 #防止重复启动
-                    early_stop_iter = iter_idx + self.options.grid_cooldown_iters
+                    early_stop_iter = iter_idx + self.options.grid_finetune_cooldown_iters
 
 
             if (iter_idx + 1) % 10 == 0:

@@ -64,7 +64,7 @@ class Element():
         self.transform = nn.Sequential(
             # K.RandomGrayscale(p=0.3),
             K.ColorJitter(
-                brightness=0.13,
+                brightness=0.3,
                 contrast=0.3,
                 saturation=0.3,
                 hue=0.1,

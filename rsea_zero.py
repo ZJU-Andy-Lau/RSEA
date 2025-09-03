@@ -29,7 +29,7 @@ import torch.nn.functional as F
 from orthorectify import orthorectify_image
 from matplotlib import pyplot as plt
 import random
-from typing import List,Dict
+from typing import List,Dict,Set
 
 from rs_image import RSImage
 from grid import Grid
@@ -70,35 +70,63 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
         except queue.Empty:
             break
 
-        if options.resume_training:
-            task_id,grid_path,output_path = task_config
-            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
-            os.makedirs(output_path,exist_ok=True)
-            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
-            encoder.load_state_dict(encoder_state_dict)
-            grid = Grid(options = options,
-                        encoder = encoder,
-                        grid_path = grid_path,
-                        output_path = output_path,
-                        device = device
-                        )
-        else:
-            task_id,diag,output_path = task_config
-            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
-            os.makedirs(output_path,exist_ok=True)
-            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
-            encoder.load_state_dict(encoder_state_dict)
-            grid = Grid(options = options,
-                        encoder = encoder,
-                        diag = diag,
-                        output_path = output_path,
-                        device = device
-                        )
+        # if options.resume_training:
+        #     task_id,grid_path,output_path = task_config
+        #     task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+        #     os.makedirs(output_path,exist_ok=True)
+        #     encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+        #     encoder.load_state_dict(encoder_state_dict)
+        #     grid = Grid(options = options,
+        #                 encoder = encoder,
+        #                 grid_path = grid_path,
+        #                 output_path = output_path,
+        #                 device = device
+        #                 )
+        # else:
+        task_id,diag,output_path = task_config
+        task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+        os.makedirs(output_path,exist_ok=True)
+        encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+        encoder.load_state_dict(encoder_state_dict)
+        grid = Grid(options = options,
+                    encoder = encoder,
+                    diag = diag,
+                    output_path = output_path,
+                    device = device
+                    )
         for img in imgs:
             grid.add_img(img = img)
         grid.to_device(device)
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train_mapper(task_info = {'state':task_state,'id':task_id},save_checkpoint=options.save_checkpoints)
+
+def finetune_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs, options):
+    device = torch.device(f'cuda:{rank}')
+    while True:
+        try:
+            task_config = task_queue.get(timeout = 1)
+            if task_config is None:
+                break
+        except queue.Empty:
+            break
+
+        task_id,grid_path,output_path = task_config
+        task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+        os.makedirs(output_path,exist_ok=True)
+        encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+        encoder.load_state_dict(encoder_state_dict)
+        grid = Grid(options = options,
+                    encoder = encoder,
+                    grid_path = grid_path,
+                    output_path = output_path,
+                    device = device
+                    )
+        
+        for img in imgs:
+            grid.add_img(img = img)
+        grid.to_device(device)
+        grid.create_elements(task_info = {'state':task_state,'id':task_id})
+        grid.finetune_mapper(task_info = {'state':task_state,'id':task_id},save_checkpoint=options.save_checkpoints)
 
 def dict2str(dict):
     output = ""
@@ -146,8 +174,8 @@ class RSEA():
         self.imgs.append(new_image)
         print(f"===============================Add image {img_id} done===============================")
     
-    def create_grids(self,imgs = None, grid_size:int = 1000,max_grid_num:int = -1):
-        def find_grids(corners, grid_size):
+
+    def find_init_grids(self, corners, grid_size):
             x_left = np.maximum(corners[:, 0, 0],corners[:, 2, 0]) 
             x_right = np.minimum(corners[:, 1, 0],corners[:, 3, 0])
             y_top = np.minimum(corners[:, 0, 1],corners[:, 1, 1]  ) 
@@ -182,22 +210,137 @@ class RSEA():
             ], axis=1)
             
             return diags
+    
+    def find_new_grids(self, corners: np.ndarray, exist_grids: np.ndarray, size: float) -> np.ndarray:
+        """
+        在一个由多个四边形定义的区域内，划分出尽可能多的、边长为size的、轴向的正方形网格，
+        同时避开已有的网格区域。
 
-        if imgs is None:
-            imgs = self.imgs
-        if self.options.resume_training:
-            grid_names = os.listdir(self.grid_root)
-            grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
-            grid_paths = [os.path.join(self.grid_root,i) for i in grid_names]
-            grid_num = len(grid_paths)
-            print(f"{len(grid_paths)} grids is going to resume creating")
+        Args:
+            corners (np.ndarray): 形状为 (N, 4, 2) 的数组，记录N个四边形的顶点。
+                                    第二个维度的顺序为 [左上, 右上, 左下, 右下]。
+            exist_grids (np.ndarray): 形状为 (M, 2, 2) 的数组，记录M个已有网格的
+                                    [左上角, 右下角] 坐标。
+            size (float): 新划分的正方形网格的边长。
+
+        Returns:
+            np.ndarray: 形状为 (K, 2, 2) 的数组，记录K个新生成的网格的
+                        [左上角, 右下角] 坐标。
+        """
+        # --- 嵌套的几何计算辅助函数 ---
+
+        def sign(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray) -> float:
+            """
+            计算一个点p1相对于由p2和p3定义的有向线段的位置。
+            """
+            return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
+
+        def is_point_in_triangle(point: np.ndarray, v1: np.ndarray, v2: np.ndarray, v3: np.ndarray) -> bool:
+            """
+            判断一个点是否在三角形内部（或边界上）。
+            """
+            d1 = sign(point, v1, v2)
+            d2 = sign(point, v2, v3)
+            d3 = sign(point, v3, v1)
+            has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
+            has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
+            return not (has_neg and has_pos)
+
+        def is_point_in_quad(point: np.ndarray, quad_corners: np.ndarray) -> bool:
+            """
+            判断一个点是否在一个四边形内部。
+            """
+            tl, tr, bl, br = quad_corners[0], quad_corners[1], quad_corners[2], quad_corners[3]
+            in_triangle1 = is_point_in_triangle(point, tl, tr, br)
+            in_triangle2 = is_point_in_triangle(point, tl, br, bl)
+            return in_triangle1 or in_triangle2
+
+        def is_point_in_union(point: np.ndarray, all_quads: np.ndarray) -> bool:
+            """
+            判断一个点是否在所有四边形的联合区域内。
+            """
+            for quad in all_quads:
+                if is_point_in_quad(point, quad):
+                    return True
+            return False
+
+        # --- 主函数逻辑开始 ---
+        
+        # 处理输入为空的边界情况
+        if corners.shape[0] == 0:
+            return np.empty((0, 2, 2))
+
+        # 1. 计算所有四边形的总边界框，以确定搜索范围
+        all_points = corners.reshape(-1, 2)
+        min_x, min_y = np.min(all_points, axis=0)
+        max_x, max_y = np.max(all_points, axis=0)
+
+        valid_grids_list = []
+
+        # 2. 在总边界框内生成候选网格并进行筛选
+        for x in np.arange(min_x, max_x, size):
+            for y in np.arange(min_y, max_y, size):
+                
+                cand_tl = np.array([x, y])
+                cand_br = np.array([x + size, y + size])
+
+                if cand_br[0] > max_x or cand_br[1] > max_y:
+                    continue
+                
+                # 3. 排他检查：确保候选网格不与任何已有网格重叠
+                is_excluded = False
+                for exist_tl, exist_br in exist_grids:
+                    separated = (
+                        cand_br[0] <= exist_tl[0] or
+                        cand_tl[0] >= exist_br[0] or
+                        cand_br[1] <= exist_tl[1] or
+                        cand_tl[1] >= exist_br[1]
+                    )
+                    if not separated:
+                        is_excluded = True
+                        break
+                
+                if is_excluded:
+                    continue
+
+                # 4. 包含检查：确保候选网格完全位于四边形联合区域内
+                cand_corners = [
+                    cand_tl,
+                    np.array([cand_br[0], cand_tl[1]]),
+                    np.array([cand_tl[0], cand_br[1]]),
+                    cand_br
+                ]
+                
+                is_fully_included = True
+                for point in cand_corners:
+                    if not is_point_in_union(point, corners):
+                        is_fully_included = False
+                        break
+                
+                # 5. 如果通过所有检查，则将其添加到结果列表中
+                if is_fully_included:
+                    valid_grids_list.append([cand_tl, cand_br])
+
+        # 6. 将结果列表转换为Numpy数组并返回
+        if not valid_grids_list:
+            return np.empty((0, 2, 2))
         else:
-            corners = np.stack([image.corner_xys for image in imgs])
-            grid_diags = find_grids(corners,grid_size) # M,2,2
-            if max_grid_num > 0:
-                grid_diags = grid_diags[:max_grid_num]
-            grid_num = len(grid_diags)
-            print(f"{len(grid_diags)} grids is going to be created")
+            return np.array(valid_grids_list, dtype=np.float64)
+
+    def create_grids(self,imgs, grid_diags:np.ndarray,max_grid_num:int = -1):
+        # if self.options.resume_training:
+        #     grid_names = os.listdir(self.grid_root)
+        #     grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
+        #     grid_paths = [os.path.join(self.grid_root,i) for i in grid_names]
+        #     grid_num = len(grid_paths)
+        #     print(f"{len(grid_paths)} grids is going to resume creating")
+        # else:
+        # corners = np.stack([image.corner_xys for image in imgs])
+        # grid_diags = self.find_init_grids(corners,grid_size) # M,2,2
+        if max_grid_num > 0:
+            grid_diags = grid_diags[:max_grid_num]
+        grid_num = len(grid_diags)
+        print(f"{len(grid_diags)} grids is going to be created")
 
         try:
             mp.set_start_method("spawn", force=True)
@@ -209,10 +352,10 @@ class RSEA():
 
             for i in range(grid_num):
                 task_id = i + 1
-                if self.options.resume_training:
-                    task_queue.put((task_id,grid_paths[i],os.path.join(self.grid_root,f"grid_{task_id}")))
-                else:
-                    task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
+                # if self.options.resume_training:
+                #     task_queue.put((task_id,grid_paths[i],os.path.join(self.grid_root,f"grid_{task_id}")))
+                # else:
+                task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
                 task_states[task_id] = {
                     "status":f"Grid {task_id}:等待分配GPU",
                     "progress":0,
@@ -223,12 +366,10 @@ class RSEA():
                 }
             for _ in range(world_size):
                 task_queue.put(None)
-            
-
 
             processes = []
             for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
-                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
+                p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), imgs, self.options))
                 p.start()
                 processes.append(p)
 
@@ -243,8 +384,6 @@ class RSEA():
             task_progress_ids = [progress.add_task(f"{i+1}", total=1, metrics = "") for i in range(grid_num)]
             progress_table = Table.grid(expand=True)
             progress_table.add_row(progress)
-
-            
 
             with Live(progress_table, refresh_per_second=50, screen=False, transient=False) as live:
                 acitive_workers = world_size
@@ -275,6 +414,78 @@ class RSEA():
         
         print(f"======================================All Grids created successfully, {len(self.grids)} grids created in total======================================\n\n\n\n\n\n\n\n\n\n")
     
+    def finetune_grids(self,imgs,need_finetune_grids):
+        finetune_grid_num = len(need_finetune_grids)
+        try:
+            mp.set_start_method("spawn", force=True)
+            gpu_num = torch.cuda.device_count()
+            world_size = min(gpu_num,finetune_grid_num)
+            manager = mp.Manager()
+            task_queue = manager.Queue()
+            task_states = manager.dict()
+
+            for i in range(finetune_grid_num):
+                task_id = i + 1
+                task_queue.put((task_id,need_finetune_grids[i].output_path,need_finetune_grids[i].output_path))
+                task_states[task_id] = {
+                    "status":f"Grid {task_id}:等待分配GPU",
+                    "progress":0,
+                    "total":1,
+                    "info":{
+
+                    }
+                }
+            for _ in range(world_size):
+                task_queue.put(None)
+
+            processes = []
+            for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
+                p = mp.Process(target=finetune_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), imgs, self.options))
+                p.start()
+                processes.append(p)
+
+            progress = Progress(
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(bar_width=None,finished_style='green'),
+                "[progress.percentage]{task.percentage:>3.1f}%",
+                "•",
+                TextColumn("[bold yellow]{task.fields[metrics]}"),
+                expand=True
+            )
+            task_progress_ids = [progress.add_task(f"{i+1}", total=1, metrics = "") for i in range(finetune_grid_num)]
+            progress_table = Table.grid(expand=True)
+            progress_table.add_row(progress)
+
+            with Live(progress_table, refresh_per_second=50, screen=False, transient=False) as live:
+                acitive_workers = world_size
+                while acitive_workers > 0:
+                    acitive_workers = 0
+                    for p in processes:
+                        if p.is_alive():
+                            acitive_workers += 1
+                    
+                    for i in range(finetune_grid_num):
+                        task_id = i + 1
+                        state = task_states[task_id]
+                        progress.update(
+                            task_id=task_progress_ids[i],
+                            completed=state['progress'],
+                            total=state['total'],
+                            description=state['status'],
+                            metrics=dict2str(state['info'])                            
+                        )
+
+                    time.sleep(0.02) 
+
+                for p in processes:
+                    p.join()                   
+
+        except Exception as e:
+            print(f"格网多进程微调出错：\n{e}")
+        
+        print(f"======================================All Grids finetuned successfully, {len(self.grids)} grids in total======================================\n\n\n\n\n\n\n\n\n\n")
+
+
     def __overlap__(self,tl1:np.ndarray,tl2:np.ndarray,br1:np.ndarray,br2:np.ndarray):
         """
         return : [tl,br] [x,y] np.ndarray
@@ -343,6 +554,8 @@ class RSEA():
                 bad_grids_num += 1
         print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
     
+    
+
 
     def adjust(self,adjust_images:List[RSImage]):        
         
@@ -406,32 +619,51 @@ class RSEA():
             need_adjust_images.append(image)
         print(f"{len(need_adjust_images)} adjust images loaded")
 
-        self.adjusted_images = []
+        self.adjusted_images:List[RSImage] = []
 
         while True:
-            self.load_grids()
+            self.load_grids(clear = True)
             if len(self.grids) == 0:
+                init_grid_diags = self.find_init_grids(np.array([need_adjust_images[0].corner_xys]),self.options.grid_size)
                 self.create_grids(imgs = need_adjust_images[0:1],
-                                  grid_size = self.options.grid_size,
+                                  grid_diags = init_grid_diags,
                                   max_grid_num = self.options.grid_num)
                 self.adjusted_images.append(need_adjust_images[0])
                 need_adjust_images = need_adjust_images[1:]
             else:
                 adjust_list,not_adjust_list = self.adjust(need_adjust_images)
-                newly_adjust_images = [need_adjust_images[i] for i in adjust_list]
+                if len(adjust_list) == 0:
+                    break
+
+                newly_adjust_images:List[RSImage] = [need_adjust_images[i] for i in adjust_list]
                 self.adjusted_images.append([need_adjust_images[i] for i in adjust_list])
                 need_adjust_images = [need_adjust_images[i] for i in not_adjust_list]
                 
                 #微调现有网格
+                need_finetune_grids = []
+                for new_image in newly_adjust_images:
+                    for overlap_grid in new_image.overlap_grids:
+                        need_finetune_grids.append(overlap_grid)
+                need_finetune_grids:List[int] = list(set(need_finetune_grids))
+                need_finetune_grids:List[Grid] = [self.grids[i] for i in need_finetune_grids]
+                self.finetune_grids(self.adjusted_images,need_finetune_grids)
                 
-
-
                 #创建新网格
+                cur_corners = np.stack([image.corner_xys for image in self.adjusted_images],axis=0)
+                exist_diags = np.stack([grid.diag for grid in self.grids],axis=0)
+                new_grid_diags = self.find_new_grids(cur_corners,exist_diags,self.options.grid_size)
+                self.create_grids(imgs = newly_adjust_images,
+                                  grid_diags = new_grid_diags,
+                                  max_grid_num = self.options.grid_num)
 
-
-            if 1 == 1:
+            if len(need_adjust_images) == 0:
                 break
-
+        
+        self.adjust(self.adjusted_images)
+        
+        errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),self.adjusted_images)
+        info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
+        print(info)
 
 
 

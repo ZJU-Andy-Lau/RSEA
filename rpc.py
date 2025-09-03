@@ -227,8 +227,13 @@ class RPCModelParameterTorch:
         ],dtype=torch.double,device=self.LNUM.device)
         self.Inverse_Adjust()
 
-    def Update_Adjust(self,adjust_params:torch.Tensor):
-        self.adjust_params = adjust_params.to(self.adjust_params.device).to(torch.double)
+    def Update_Adjust(self,new_adjust_params:torch.Tensor):
+        def merge_adjust(A:torch.Tensor,B:torch.Tensor) -> torch.Tensor:
+            A_h = np.vstack([A, [0, 0, 1]])
+            B_h = np.vstack([B, [0, 0, 1]])
+            C_h = B_h @ A_h
+            return C_h[:2, :]
+        self.adjust_params = merge_adjust(self.adjust_params,new_adjust_params).to(self.adjust_params.device).to(torch.double)
         self.Inverse_Adjust()
     
     def Calculate_Adjust(self):

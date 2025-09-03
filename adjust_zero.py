@@ -114,6 +114,24 @@ if __name__ == '__main__':
     parser.add_argument('--nearest_neighbor_num',type=int,default=3)
 
     parser.add_argument('--save_checkpoints',type=str2bool,default=True)
+
+    #=============================Grid Finetune Params=============================
+
+    
+    parser.add_argument('--grid_finetune_lr_max', type=float, default=0.0001,
+                        help='highest learning rate')
+    
+    parser.add_argument('--grid_finetune_lr_min', type=float, default=0.0001,
+                        help='lowest learning rate')
+    
+    parser.add_argument('--grid_finetune_iters', type=int, default=1000,
+                        help='number of epochs through the finetune mapper')
+    
+    parser.add_argument('--grid_finetune_warmup_iters', type=int, default=50,
+                        help='number of epochs for lr climbing to lr_max')
+    
+    parser.add_argument('--grid_finetune_cooldown_iters', type=int, default=500,
+                        help='number of epochs for lr staying lr_max after warmup')
     
     # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
     #                     help='factor of lr decay in every 10 epochs')
