@@ -72,9 +72,13 @@ class Element():
             ),
             K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
             K.RandomInvert(p=0.1),
+            # K.Normalize(
+            #     mean=torch.tensor([0.485, 0.456, 0.406]), 
+            #     std=torch.tensor([0.229, 0.224, 0.225])
+            # ),
             K.Normalize(
-                mean=torch.tensor([0.485, 0.456, 0.406]), 
-                std=torch.tensor([0.229, 0.224, 0.225])
+                mean=torch.tensor([0.430, 0.411, 0.296]), 
+                std=torch.tensor([0.213, 0.156, 0.143])
             )
         )
         

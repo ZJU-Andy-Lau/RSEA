@@ -78,9 +78,13 @@ class Grid():
         #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
         #     ])
         self.transform = nn.Sequential(
+            # K.Normalize(
+            #     mean=torch.tensor([0.485, 0.456, 0.406]), 
+            #     std=torch.tensor([0.229, 0.224, 0.225])
+            # )
             K.Normalize(
-                mean=torch.tensor([0.485, 0.456, 0.406]), 
-                std=torch.tensor([0.229, 0.224, 0.225])
+                mean=torch.tensor([0.430, 0.411, 0.296]), 
+                std=torch.tensor([0.213, 0.156, 0.143])
             )
         ).eval()
         # self.transform = nn.Sequential(
