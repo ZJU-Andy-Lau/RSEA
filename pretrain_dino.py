@@ -117,9 +117,6 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,pro
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
 
-    # patch_feat1,global_feat1 = feat1[:,:args.patch_feature_channels],feat1[:,args.patch_feature_channels:]
-    # patch_feat2,global_feat2 = feat2[:,:args.patch_feature_channels],feat2[:,args.patch_feature_channels:]
-
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 

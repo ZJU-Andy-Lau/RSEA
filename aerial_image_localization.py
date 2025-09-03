@@ -22,8 +22,7 @@ from utils import estimate_affine_ransac
 
 cfg_large = {
         'input_channels':3,
-        'patch_feature_channels':512,
-        'global_feature_channels':256,
+        'output_channels':512,
         'img_size':1024,
         'window_size':16,
         'embed_dim':192,
@@ -187,8 +186,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--patches_per_batch', type=int, default=2 ** 14,
                         help='number of patches in a batch')
-    
-    parser.add_argument('--use_global_feature',type=str2bool,default=False)
+
 
     parser.add_argument('--grid_train_lr_max', type=float, default=0.001,
                         help='highest learning rate')
@@ -226,7 +224,7 @@ if __name__ == '__main__':
         print(f"{k}:{v}")
     print("===================================================================")
 
-    encoder = Encoder(cfg_large,output_global_feature=options.use_global_feature)
+    encoder = Encoder(cfg_large)
     encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(options.encoder_path).items()})
     encoder.eval()
 

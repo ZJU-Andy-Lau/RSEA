@@ -60,10 +60,7 @@ class Grid():
                 'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
                 'h':None
             }
-            if options.use_global_feature:
-                self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=options.mapper_blocks_num)
-            else:
-                self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=options.mapper_blocks_num)
+            self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
             self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
             self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
                                                 total_steps=self.options.grid_training_iters,
@@ -275,12 +272,9 @@ class Grid():
 
         min_photo_loss = 1e8
 
-        patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.patch_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
-        global_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.global_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
+        patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.output_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
         patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
-        global_noise_amp = .5 
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
-        global_noise_buffer = global_noise_buffer * global_noise_amp
 
         vis_flag = True
 
@@ -427,15 +421,7 @@ class Grid():
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
-
-                if self.options.use_global_feature:
-                    global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                    features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
-
-                # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
-                # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
-                
+                features_1Dp1[:,:self.encoder.output_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.output_channels,:,:] + patch_feature_noise,dim=1)
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -603,12 +589,9 @@ class Grid():
 
         min_photo_loss = 1e8
 
-        patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.patch_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
-        global_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.global_feature_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
+        patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.output_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
         patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
-        global_noise_amp = .5 
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
-        global_noise_buffer = global_noise_buffer * global_noise_amp
 
         vis_flag = True
 
@@ -683,14 +666,7 @@ class Grid():
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.patch_feature_channels,:,:] + patch_feature_noise,dim=1)
-
-                if self.options.use_global_feature:
-                    global_feature_noise = global_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                    features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] = F.normalize(features_1Dp1[:,-self.encoder.global_feature_channels:,:,:] + global_feature_noise,dim=1)
-
-                # global_feature_noise = F.normalize(torch.normal(mean=0,std=1,size=(1,self.encoder.global_feat_channels,features_1Dp1.shape[-2],1)),dim=1).to(features_1Dp1.device) * 0.5
-                # features_1Dp1[:,-self.encoder.global_feat_channels:,:,:] += global_feature_noise
+                features_1Dp1[:,:self.encoder.output_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.output_channels,:,:] + patch_feature_noise,dim=1)
                 
                 #===================生成负样本特征=====================
 
@@ -845,7 +821,6 @@ class Grid():
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
             'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),
-            'use_global_feature':self.options.use_global_feature,
             'num_blocks':self.options.mapper_blocks_num,
             'status':self.status
         }
@@ -854,12 +829,8 @@ class Grid():
     def load_grid(self,path:str):
         state_dict = torch.load(os.path.join(path,'grid_data.pth'))
         name = os.path.basename(path)
-        self.options.use_global_feature = state_dict['use_global_feature']
         self.options.mapper_blocks_num = state_dict['num_blocks']
-        if self.options.use_global_feature:
-            self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels + self.encoder.global_feature_channels,block_num=self.options.mapper_blocks_num)
-        else:
-            self.mapper = Decoder(in_channels=self.encoder.patch_feature_channels,block_num=self.options.mapper_blocks_num)
+        self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=self.options.mapper_blocks_num)
         self.mapper.load_state_dict(state_dict['mapper'])
         self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
         self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
@@ -1034,8 +1005,6 @@ class Grid():
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
-            # if not self.options.use_global_feature:
-            #     feat = feat[:,:self.encoder.patch_feature_channels]
             conf = conf.permute(0,2,3,1).flatten(0,3)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]
@@ -1126,8 +1095,6 @@ class Grid():
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
-            # if not self.options.use_global_feature:
-            #     feat = feat[:,:self.encoder.patch_feature_channels]
             conf = conf.permute(0,2,3,1).flatten(0,3)
             valid_mask = conf > self.options.conf_threshold
             select_idxs = torch.randperm(valid_mask.sum())[:int(select_ratio * len(conf))]

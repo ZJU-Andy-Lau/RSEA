@@ -59,12 +59,11 @@ class DistilledVisionTransformer(VisionTransformer):
 
 class Encoder(nn.Module):
 
-    def __init__(self,cfg = {},verbose = 1,output_global_feature = True):
+    def __init__(self,cfg = {},verbose = 1):
         super().__init__()
         default_cfg = {
             'input_channels':3,
-            'patch_feature_channels':512,
-            'global_feature_channels':256,
+            'output_channels':512,
             'img_size':1024,
             'window_size':8,
             'embed_dim':128,
@@ -78,10 +77,7 @@ class Encoder(nn.Module):
         self.verbose = verbose
         self.SAMPLE_FACTOR = 16
         self.input_channels = self.cfg['input_channels']
-        self.patch_feature_channels = self.cfg['patch_feature_channels']
-        self.global_feature_channels = self.cfg['global_feature_channels']
-        self.output_channels = self.cfg['patch_feature_channels'] + self.cfg['global_feature_channels']
-        self.output_global_feature = output_global_feature
+        self.output_channels = self.cfg['output_channels']
 
         self.backbone = SwinTransformerV2(img_size=self.cfg['img_size'],
                                         drop_path_rate=self.cfg['drop_path_rate'],
@@ -90,29 +86,24 @@ class Encoder(nn.Module):
                                         num_heads=self.cfg['num_heads'],
                                         window_size=self.cfg['window_size'],
                                         in_chans=self.cfg['input_channels'],
-                                        out_chans=self.cfg['patch_feature_channels'],
+                                        out_chans=self.cfg['output_channels'],
                                         pretrained_window_sizes=self.cfg['pretrain_window_size']
                                         )
         self.backbone_modules = dict(self.backbone.named_modules())
         self.backbone.requires_grad_(False)
 
-        self.r2former = DistilledVisionTransformer(
-            img_size=[480,640], patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, qkv_bias=True,
-            norm_layer=partial(nn.LayerNorm, eps=1e-6), num_classes=self.cfg['global_feature_channels'])
-        self.r2former.requires_grad_(False)
-
         self.cnn = nn.Sequential(
-            nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
             nn.ReLU(),
-            nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
             nn.ReLU(),
-            nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
         )
 
         self.conf_head = nn.Sequential(
-            nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels // 16,1,1,0),
+            nn.Conv2d(self.output_channels,self.output_channels // 16,1,1,0),
             nn.PReLU(),
-            nn.Conv2d(self.patch_feature_channels // 16,1,1,1,0),
+            nn.Conv2d(self.output_channels // 16,1,1,1,0),
             nn.Sigmoid()
         )
         self.resize = transforms.Resize([480,640],antialias=True)
@@ -142,20 +133,13 @@ class Encoder(nn.Module):
         return params
 
     def forward(self, x):
-        self.r2former.eval()
-
         feat_backbone = self.backbone(x)
         feat = self.cnn(feat_backbone)
         conf = self.conf_head(F.normalize(feat_backbone,dim=1))
 
         feat = F.normalize(feat,p=2,dim=1)
-
-        if self.output_global_feature:
-            global_feat = self.r2former(self.resize(x)) #F.interpolate(x,size=[480,640],mode='bilinear')
-            global_feat = global_feat[:,:,None,None].repeat(1,1,feat.shape[-2],feat.shape[-1])
-            return torch.cat([feat,global_feat],dim=1),conf
-        else:
-            return feat,conf
+        
+        return feat,conf
 
 class Adapter(nn.Module):
     def __init__(self,input_channels = 512,output_channels = 512):
@@ -720,9 +704,9 @@ class HomographyFitter:
         return transformed_points
 
 # self.cnn = nn.Sequential(
-#             nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
-#             bnac(self.patch_feature_channels),
-#             nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
-#             bnac(self.patch_feature_channels),
-#             nn.Conv2d(self.patch_feature_channels,self.patch_feature_channels,3,1,1),
+#             nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
+#             bnac(self.output_channels),
+#             nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
+#             bnac(self.output_channels),
+#             nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
 #         )

@@ -38,8 +38,7 @@ def print_on_main(msg, rank):
 
 cfg_base = {
             'input_channels':3,
-            'patch_feature_channels':512,
-            'global_feature_channels':256,
+            'output_channels':512,
             'img_size':256,
             'window_size':8,
             'embed_dim':128,
@@ -50,8 +49,7 @@ cfg_base = {
         }
 cfg_large = {
         'input_channels':3,
-        'patch_feature_channels':512,
-        'global_feature_channels':256,
+        'output_channels':512,
         'img_size':1024,
         'window_size':16,
         'embed_dim':192,
@@ -142,26 +140,18 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:DecoderFinetune,project
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
 
-    patch_feat1,global_feat1 = feat1[:,:args.patch_feature_channels],feat1[:,args.patch_feature_channels:]
-    patch_feat2,global_feat2 = feat2[:,:args.patch_feature_channels],feat2[:,args.patch_feature_channels:]
-
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 
-    project_feat1 = projector(feat1_sample[:,:args.patch_feature_channels])
-    project_feat2 = projector(feat2_sample[:,:args.patch_feature_channels])
+    project_feat1 = projector(feat1_sample[:,:args.output_channels])
+    project_feat2 = projector(feat2_sample[:,:args.output_channels])
 
-    patch_feat_noise_amp1 = torch.rand(patch_feat1.shape[0],1,patch_feat1.shape[2],patch_feat1.shape[3]).to(args.device) * .3
-    patch_feat_noise_amp2 = torch.rand(patch_feat2.shape[0],1,patch_feat2.shape[2],patch_feat2.shape[3]).to(args.device) * .3
-    global_feat_noise_amp1 = torch.rand(global_feat1.shape[0],1,global_feat1.shape[2],global_feat1.shape[3]).to(args.device) * .8
-    global_feat_noise_amp2 = torch.rand(global_feat2.shape[0],1,global_feat2.shape[2],global_feat2.shape[3]).to(args.device) * .8
-    patch_feat_noise1 = F.normalize(torch.normal(mean=0.,std=patch_feat1.std().item(),size=patch_feat1.shape),dim=1).to(args.device) * patch_feat_noise_amp1
-    patch_feat_noise2 = F.normalize(torch.normal(mean=0.,std=patch_feat2.std().item(),size=patch_feat2.shape),dim=1).to(args.device) * patch_feat_noise_amp2
-    global_feat_noise1 = F.normalize(torch.normal(mean=0.,std=global_feat1.std().item(),size=global_feat1.shape),dim=1).to(args.device) * global_feat_noise_amp1
-    global_feat_noise2 = F.normalize(torch.normal(mean=0.,std=global_feat2.std().item(),size=global_feat2.shape),dim=1).to(args.device) * global_feat_noise_amp2
-
-    feat_input1 = torch.concatenate([F.normalize(patch_feat1 + patch_feat_noise1,dim=1),F.normalize(global_feat1 + global_feat_noise1,dim=1)],dim=1)
-    feat_input2 = torch.concatenate([F.normalize(patch_feat2 + patch_feat_noise2,dim=1),F.normalize(global_feat2 + global_feat_noise2,dim=1)],dim=1)
+    feat_noise_amp1 = torch.rand(feat1.shape[0],1,feat1.shape[2],feat1.shape[3]).to(args.device) * .3
+    feat_noise_amp2 = torch.rand(feat2.shape[0],1,feat2.shape[2],feat2.shape[3]).to(args.device) * .3
+    feat_noise1 = F.normalize(torch.normal(mean=0.,std=feat1.std().item(),size=feat1.shape),dim=1).to(args.device) * feat_noise_amp1
+    feat_noise2 = F.normalize(torch.normal(mean=0.,std=feat2.std().item(),size=feat2.shape),dim=1).to(args.device) * feat_noise_amp2
+    feat_input1 = F.normalize(feat1 + feat_noise1,dim=1)
+    feat_input2 = F.normalize(feat2 + feat_noise2,dim=1)
     # feat_input1 = feat1
     # feat_input2 = feat2
     
@@ -271,7 +261,7 @@ def pretrain(args):
     # cfg['unfreeze_backbone_modules'] = ['head','norm',*[f'layers.2.blocks.{i}' for i in unfreeze_blocks]]
 
     encoder = Encoder(cfg)
-    projector = ProjectHead(encoder.patch_feature_channels,128)
+    projector = ProjectHead(encoder.output_channels,128)
     encoder_optimizer = optim.AdamW(params=list(encoder.get_unfreeze_parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
@@ -279,8 +269,7 @@ def pretrain(args):
                                              warmup_ratio=100. / args.max_epoch,
                                              cooldown_ratio=.5)
     
-    args.patch_feature_channels = encoder.patch_feature_channels
-    args.output_channels = encoder.patch_feature_channels + encoder.global_feature_channels
+    args.output_channels = encoder.output_channels
     
     if args.resume_training:
         encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'encoder.pth'),map_location='cpu').items()},strict=True)

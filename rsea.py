@@ -36,8 +36,7 @@ from grid import Grid
 
 cfg_base = {
             'input_channels':3,
-            'patch_feat_channels':512,
-            'global_feat_channels':256,
+            'output_channels':512,
             'img_size':256,
             'window_size':8,
             'embed_dim':128,
@@ -48,8 +47,7 @@ cfg_base = {
         }
 cfg_large = {
         'input_channels':3,
-        'patch_feature_channels':512,
-        'global_feature_channels':256,
+        'output_channels':512,
         'img_size':1024,
         'window_size':16,
         'embed_dim':192,
@@ -74,7 +72,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             task_id,grid_path,output_path = task_config
             task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
             os.makedirs(output_path,exist_ok=True)
-            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+            encoder = Encoder(cfg_large,verbose=0)
             encoder.load_state_dict(encoder_state_dict)
             grid = Grid(options = options,
                         encoder = encoder,
@@ -86,7 +84,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             task_id,diag,output_path = task_config
             task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
             os.makedirs(output_path,exist_ok=True)
-            encoder = Encoder(cfg_large,verbose=0,output_global_feature=options.use_global_feature)
+            encoder = Encoder(cfg_large,verbose=0)
             encoder.load_state_dict(encoder_state_dict)
             grid = Grid(options = options,
                         encoder = encoder,
@@ -119,7 +117,7 @@ class RSEA():
         random.seed(42)
         self.imgs:List[RSImage] = []
         self.grids:List[Grid] = []
-        self.encoder = Encoder(cfg_large,verbose=0,output_global_feature=self.options.use_global_feature)
+        self.encoder = Encoder(cfg_large,verbose=0)
         self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(self.options.encoder_path).items()})
         self.encoder.eval()
         self.root = options.root
