@@ -46,7 +46,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             task_id,grid_path,output_path = task_config
             task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
             os.makedirs(output_path,exist_ok=True)
-            encoder = EncoderDino(os.path.join(options.encoder_path,'backbone.pth'))
+            encoder = EncoderDino(os.path.join(options.encoder_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
             encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
             grid = Grid(options = options,
                         encoder = encoder,
@@ -58,7 +58,7 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             task_id,diag,output_path = task_config
             task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
             os.makedirs(output_path,exist_ok=True)
-            encoder = EncoderDino(os.path.join(options.encoder_path,'backbone.pth'))
+            encoder = EncoderDino(os.path.join(options.encoder_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
             encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
             grid = Grid(options = options,
                         encoder = encoder,
@@ -91,7 +91,7 @@ class RSEA():
         random.seed(42)
         self.imgs:List[RSImage] = []
         self.grids:List[Grid] = []
-        self.encoder = EncoderDino(os.path.join(options.encoder_path,'backbone.pth'))
+        self.encoder = EncoderDino(os.path.join(options.encoder_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
         self.encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
         self.encoder.eval()
         self.root = options.root
