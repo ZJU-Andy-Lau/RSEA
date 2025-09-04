@@ -239,6 +239,7 @@ class Element():
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
         self._log("select_ratio:",select_ratio)
+        print("select_ratio:",select_ratio)
         # avg = nn.AvgPool2d(self.SAMPLE_FACTOR,self.SAMPLE_FACTOR)
         self.encoder.eval().to(self.device)
 

@@ -280,7 +280,7 @@ class Grid():
         patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
 
-        vis_flag = True
+        vis_flag = 0
 
         total_loss = 0
         total_loss_dist = 0
@@ -358,7 +358,7 @@ class Grid():
                     # objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
 
 
-                    if vis_flag:
+                    if vis_flag <= 2:
                         def visualize_points(points1, points2, output_path, padding=50, point_radius=5):
                             # 将两组点合并，以确定画布的整体尺寸
                             all_points = np.vstack((points1, points2)) if points1.size > 0 and points2.size > 0 else \
@@ -405,7 +405,7 @@ class Grid():
                             # 保存图像到指定路径
                             cv2.imwrite(output_path, canvas)
                         visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,'knn_vis.png'),point_radius=2)
-                        vis_flag = False
+                        vis_flag += 1
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
                     features_pD = element.buffer['features'][sample_idxs].contiguous()
@@ -425,7 +425,10 @@ class Grid():
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                features_1Dp1[:,:self.encoder.output_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.output_channels,:,:] + patch_feature_noise,dim=1)
+                #for-swt
+                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                #for-dino
+                features_1Dp1 = features_1Dp1 + patch_feature_noise
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -436,7 +439,10 @@ class Grid():
                 dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
                 negative_noise_amp =  100. / dis
                 negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
-                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                #for-swt
+                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                #for-dino
+                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================
@@ -670,7 +676,10 @@ class Grid():
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                features_1Dp1[:,:self.encoder.output_channels,:,:] = F.normalize(features_1Dp1[:,:self.encoder.output_channels,:,:] + patch_feature_noise,dim=1)
+                #for-swt
+                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                #for-dino
+                features_1Dp1 = features_1Dp1 + patch_feature_noise
                 
                 #===================生成负样本特征=====================
 
@@ -682,7 +691,10 @@ class Grid():
                 dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
                 negative_noise_amp =  100. / dis
                 negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
-                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                #for-swt
+                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                #for-dino
+                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================
