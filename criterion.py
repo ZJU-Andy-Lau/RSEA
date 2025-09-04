@@ -194,7 +194,7 @@ class CriterionFinetune(nn.Module):
         simi_negative = torch.concatenate([torch.sum(feat1_PD * feat1_negative,dim=1),
                                            torch.sum(feat2_PD * feat2_negative,dim=1)])
         
-        loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - 7.,min=0).mean() * 10000.
+        loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - .7,min=0).mean() * 10000.
 
 
         loss = loss_obj + loss_height + loss_conf + loss_feat #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
