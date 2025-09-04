@@ -129,8 +129,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,pro
     feat_noise2 = F.normalize(torch.normal(mean=0.,std=feat2.std().item(),size=feat2.shape),dim=1).to(args.device) * feat_noise_amp2
 
 
-    feat_input1 = F.normalize(feat1 + feat_noise1,dim=1) * torch.norm(feat1,dim=1,keepdim=True)
-    feat_input2 = F.normalize(feat2 + feat_noise2,dim=1) * torch.norm(feat2,dim=1,keepdim=True)
+    feat_input1 = feat1 + feat_noise1
+    feat_input2 = feat2 + feat_noise2
     # feat_input1 = feat1
     # feat_input2 = feat2
     
