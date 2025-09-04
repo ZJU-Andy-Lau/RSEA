@@ -57,7 +57,7 @@ cfg_large = {
         'num_heads':[6, 12, 24],
         'drop_path_rate':.2,
         'pretrain_window_size':[12, 12, 12],
-        'unfreeze_backbone_modules':['head','norm','layers.2.blocks.14','layers.2.blocks.15','layers.2.blocks.16','layers.2.blocks.17']
+        'unfreeze_backbone_modules':['head','norm','layers.2.blocks.16','layers.2.blocks.17']
     }
 def apply_polynomial(x, coefs):
     y = torch.zeros_like(x)
