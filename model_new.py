@@ -155,9 +155,11 @@ class Adapter(nn.Module):
         )
 
         self.conf_head = nn.Sequential(
-            nn.Conv2d(self.input_channels,self.output_channels // 16,1,1,0),
-            nn.PReLU(),
-            nn.Conv2d(self.output_channels // 16,1,1,1,0),
+            nn.Conv2d(self.input_channels,self.output_channels,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(self.output_channels, self.output_channels // 2,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(self.output_channels // 2, 1 ,1,1,0),
             nn.Sigmoid()
         )
     def forward(self,x):
