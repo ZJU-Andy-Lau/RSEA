@@ -294,7 +294,9 @@ class Element():
             'objs':objs_P3
         }
         confs_P1t = confs_P1.cpu().numpy()
-        print(confs_P1t.min(),confs_P1t.max(),confs_P1t.mean(),np.median(confs_P1t))
+        with open(os.path.join(self.output_path,'log.txt')) as f:
+            info = f"{confs_P1t.min(),confs_P1t.max(),confs_P1t.mean(),np.median(confs_P1t)}"
+            f.write(info)
         self.patch_num = len(features_PD)
 
         # kd_tree = build_kd_tree(locals_P2,device=self.device)
