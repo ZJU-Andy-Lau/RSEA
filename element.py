@@ -293,11 +293,11 @@ class Element():
             'confs':confs_P1,
             'objs':objs_P3
         }
-        confs_P1t = confs_P1.cpu().numpy()
-        with open(os.path.join(self.output_path,'log.txt'),'w') as f:
-            info = f"{confs_P1t.min(),confs_P1t.max(),confs_P1t.mean(),np.median(confs_P1t)}"
-            f.write(info)
+        
         self.patch_num = len(features_PD)
+        with open(os.path.join(self.output_path,'log.txt'),'w') as f:
+            info = f"{self.patch_num}"
+            f.write(info)
 
         # kd_tree = build_kd_tree(locals_P2,device=self.device)
         points_base = LazyTensor(locals_P2.unsqueeze(0))

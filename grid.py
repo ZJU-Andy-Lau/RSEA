@@ -404,7 +404,7 @@ class Grid():
 
                             # 保存图像到指定路径
                             cv2.imwrite(output_path, canvas)
-                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,'knn_vis.png'),point_radius=2)
+                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{vis_flag}.png'),point_radius=2)
                         vis_flag += 1
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
