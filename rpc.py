@@ -228,10 +228,22 @@ class RPCModelParameterTorch:
         self.Inverse_Adjust()
 
     def Update_Adjust(self,new_adjust_params:torch.Tensor):
+        new_adjust_params = new_adjust_params.to(self.adjust_params.device).to(torch.double)
         def merge_adjust(A:torch.Tensor,B:torch.Tensor) -> torch.Tensor:
-            A_h = np.vstack([A, [0, 0, 1]])
-            B_h = np.vstack([B, [0, 0, 1]])
+            device = A.device
+            dtype = A.dtype
+
+            # 创建用于扩展的行
+            bottom_row = torch.tensor([[0.0, 0.0, 1.0]], dtype=dtype, device=device)
+
+            # 扩展到齐次坐标
+            A_h = torch.cat([A, bottom_row], dim=0)
+            B_h = torch.cat([B, bottom_row], dim=0)
+
+            # 矩阵乘法，注意顺序
             C_h = B_h @ A_h
+
+            # 返回 (2, 3) 形式
             return C_h[:2, :]
         self.adjust_params = merge_adjust(self.adjust_params,new_adjust_params).to(self.adjust_params.device).to(torch.double)
         self.Inverse_Adjust()
