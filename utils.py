@@ -740,17 +740,27 @@ def vis_feat_pca(feat:np.ndarray,output_path):
 def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
     points = (get_coord_mat(conf.shape[0],conf.shape[1]) * ds + ds * .5).reshape(-1,2)
     scores = conf.reshape(-1)
-    canvas = img
+    canvas_cont = deepcopy(img)
+    canvas_div = deepcopy(img)
 
-    def score_to_color(score):
+    def score_to_color_cont(score):
         red = int((1 - score) * 255)
         green = int(score * 255)
         return (0, green, red)
     
+    def score_to_color_div(score,div = .5):
+        if score >= .5:
+            return (0,255,0)
+        else:
+            return (0,0,255)
+    
     for p,score in zip(points,scores):
         p = p.astype(int)
-        color = score_to_color(score)
+        color_cont = score_to_color_cont(score)
+        color_div = score_to_color_div(score)
 
-        cv2.circle(canvas,(p[1],p[0]),radius=1,color=color,thickness=-1)
+        cv2.circle(canvas_cont,(p[1],p[0]),radius=1,color=color_cont,thickness=-1)
+        cv2.circle(canvas_div,(p[1],p[0]),radius=1,color=color_div,thickness=-1)
     
-    cv2.imwrite(output_path,canvas)
+    cv2.imwrite(output_path.replace('.png','_cont.png'),canvas_cont)
+    cv2.imwrite(output_path.replace('.png','_div.png'),canvas_div)
