@@ -749,7 +749,7 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
         return (0, green, red)
     
     def score_to_color_div(score,div = .5):
-        if score >= .5:
+        if score >= div:
             return (0,255,0)
         else:
             return (0,0,255)
