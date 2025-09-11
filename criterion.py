@@ -349,7 +349,7 @@ class CriterionTrainGrid(nn.Module):
         conf = torch.clip(conf - conf.mean() + 1.,min=0.)
 
         digit_num = len(mu_xyh_list)
-        digit_weights = [i / ((1. + digit_num) * digit_num * .5) for i in range(digit_num)]
+        digit_weights = [(i + 1.) / ((1. + digit_num) * digit_num * .5) for i in range(digit_num)]
 
         total_loss = 0
 
