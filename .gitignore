@@ -2,6 +2,7 @@ datasets/
 log/
 weights/
 tmp/
+vis/vis_res/
 __pycache__/
 datasets.zip
 packages.txt

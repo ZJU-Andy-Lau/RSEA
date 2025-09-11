@@ -419,7 +419,7 @@ class PretrainDataset(Dataset):
         image_2_full = self.database[key]['images'][f"image_{idx2}"][:]
         obj_full = centerize_obj(self.database[key]['obj'][:])
         residual_1_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
-        residual_2_full = self.database[key]['residuals'][f"residual_{idx1}"][:]
+        residual_2_full = self.database[key]['residuals'][f"residual_{idx2}"][:]
         if self.use_clahe:
             image_1_full = self.clahe.apply(image_1_full)
             image_2_full = self.clahe.apply(image_2_full)

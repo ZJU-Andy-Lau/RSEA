@@ -17,6 +17,9 @@ import argparse
 from rpc import RPCModelParameterTorch
 from typing import Tuple
 from sklearn.decomposition import PCA
+
+def get_current_time():
+    return datetime.now().strftime("%Y%m%d%H%M%S")
 def crop_rect_from_image(image, rect_points, size):
     """
     从图像中截取矩形区域。
