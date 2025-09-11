@@ -1,6 +1,4 @@
 import os
-import sys
-sys.path.append('../')
 import argparse
 from torchvision import transforms
 import numpy as np

@@ -1,13 +1,11 @@
-import sys
-sys.path.append('../')
 import numpy as np
 import h5py
 import cv2
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import os
-from ..utils import get_current_time
-from ..dataloader import residual_average
+from utils import get_current_time
+from dataloader import residual_average
 import argparse
 
 timestamp = get_current_time()
