@@ -195,6 +195,7 @@ if __name__ == '__main__':
     
     img = data[keys[img_idx]]['images'][f'image_{args.view_idx}'][:]
     residual_raw = data[keys[img_idx]]['residuals'][f'residual_{args.view_idx}'][:]
+    img = np.stack([img] * 3,axis=-1)
 
     os.makedirs(args.output_folder,exist_ok=True)
     vis_raw(img,residual_raw,args.output_folder)
