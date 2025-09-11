@@ -203,6 +203,9 @@ if __name__ == '__main__':
     
     img = data[keys[img_idx]]['images'][f'image_{args.view_idx}'][:]
     residual_raw = data[keys[img_idx]]['residuals'][f'residual_{args.view_idx}'][:]
+    H,W = img.shape[:2]
+    img = img[H // 2 - 512 : H // 2 + 512, W // 2 - 512 : W // 2 + 512]
+    residual_raw = residual_raw[H // 2 - 512 : H // 2 + 512, W // 2 - 512 : W // 2 + 512]
     img = np.stack([img] * 3,axis=-1)
     residual_raw = clamp_res(residual_raw)
 
