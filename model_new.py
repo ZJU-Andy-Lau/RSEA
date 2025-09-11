@@ -280,21 +280,22 @@ class Decoder(nn.Module):
             nn.Conv2d(channels * 2,channels,1,1,0)
         )
 
-    def __init__(self,in_channels=512,block_num=5,use_bn=False):
+    def __init__(self,in_channels=512,block_num=5,digit_num=3,use_bn=False):
         super().__init__()
         block_num = max(block_num,1)
+        self.digit_num = max(digit_num,1)
         self.use_bn = use_bn
         self.blocks = nn.ModuleList([self.get_block(in_channels) for _ in range(block_num)])
-        self.output_xy = nn.Sequential(
+        self.output_xy_list = nn.ModuleList([nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,4,1,1,0)
-        )
-        self.output_height = nn.Sequential(
+        ) for _ in range(self.digit_num)])
+        self.output_height_list = nn.ModuleList([nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,2,1,1,0)
-        )
+        ) for _ in range(self.digit_num)])
         self.score_head = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
@@ -304,7 +305,7 @@ class Decoder(nn.Module):
         # self.bn = bnac(in_channels)
 
 
-    def forward(self, res):
+    def forward(self, res, per_digit = False):
         # res = res / torch.norm(res,dim=1,keepdim=True)
         # if self.use_bn:
         #     res = self.bn(res)
@@ -312,15 +313,34 @@ class Decoder(nn.Module):
         for block in self.blocks:
             x = block(res)
             res = res + x
-        xy_res = self.output_xy(res)
-        height_res = self.output_height(res)
-        
-        mu_xy = F.tanh(xy_res[:,:2])
-        log_sigma_xy = F.tanh(xy_res[:,2:]) * 10.
-        mu_h = F.tanh(height_res[:,:1])
-        log_sigma_h = F.tanh(height_res[:,1:]) * 10.
 
-        return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1),valid_score
+        digit_list = []
+        digit_total = None
+        for i in range(self.digit_num):
+            xy_res = self.output_xy_list[i](res)
+            height_res = self.output_height_list(res)
+            mu_xy = F.tanh(xy_res[:,:2]) * (0.1 ** i)
+            log_sigma_xy = F.tanh(xy_res[:,2:]) * 10. * (0.1 ** i)
+            mu_h = F.tanh(height_res[:,:1]) * (0.1 ** i)
+            log_sigma_h = F.tanh(height_res[:,1:]) * 10. * (0.1 ** i)
+            digit = torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
+            if digit_total is None:
+                digit_total = digit
+            else:
+                digit_total = digit_total + digit
+            digit_list.append(digit_total)
+
+        # xy_res = self.output_xy(res)
+        # height_res = self.output_height(res)
+        
+        # mu_xy = F.tanh(xy_res[:,:2])
+        # log_sigma_xy = F.tanh(xy_res[:,2:]) * 10.
+        # mu_h = F.tanh(height_res[:,:1])
+        # log_sigma_h = F.tanh(height_res[:,1:]) * 10.
+        if per_digit:
+            return digit_list,valid_score
+        else:
+            return digit_list[-1],valid_score
     
     def forward_valid(self,res):
         valid_score = self.score_head(res)

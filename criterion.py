@@ -337,9 +337,9 @@ class CriterionTrainGrid(nn.Module):
         self.loss_height_weight = 10
         self.conf_clamp_rate = 2      
 
-    def forward(self,epoch,max_epoch,mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
+    def forward(self,epoch,max_epoch,mu_xyh_list,log_sigma_xyh_list,conf,linesamp_gt,xyh_gt,rpc:RPCModelParameterTorch):
         
-        mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [mu_xyh,log_sigma_xyh,conf,linesamp_gt,xyh_gt]]
+        conf,linesamp_gt,xyh_gt = [i.to(torch.float64) for i in [conf,linesamp_gt,xyh_gt]]
 
 
         progress = 1. * epoch / max_epoch
@@ -348,33 +348,41 @@ class CriterionTrainGrid(nn.Module):
         conf[conf < .5] = .5 - progress * .4
         conf = torch.clip(conf - conf.mean() + 1.,min=0.)
 
-        xy_pred,h_pred = mu_xyh[:,:2],mu_xyh[:,2]
-        xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
+        digit_num = len(mu_xyh_list)
+        digit_weights = [i / ((1. + digit_num) * digit_num * .5) for i in range(digit_num)]
 
-        sigma_xyh = torch.exp(log_sigma_xyh)
-        sigma_xy = sigma_xyh[:,:2]
-        sigma_h = sigma_xyh[:,2:]
+        total_loss = 0
 
-        loss_distribution_xy = (torch.sum(((xy_gt - xy_pred) ** 2) / (2 * sigma_xy**2 + 1e-8),dim=-1) + torch.sum(log_sigma_xyh[:,:2],dim=-1)) * conf
-        loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2 + 1e-8),dim=-1) + log_sigma_xyh[:,2:]) * conf
-        loss_distribution = loss_distribution_xy + loss_distribution_h
+        for digit_weight,mu_xyh,log_sigma_xyh in zip(digit_weights,mu_xyh_list,log_sigma_xyh_list):
+            mu_xyh,log_sigma_xyh = mu_xyh.to(torch.float64),log_sigma_xyh.to(torch.float64)
+            xy_pred,h_pred = mu_xyh[:,:2],mu_xyh[:,2]
+            xy_gt,h_gt = xyh_gt[:,:2],xyh_gt[:,2]
 
-        sigma_avg = torch.norm(sigma_xy,dim=-1).mean()
+            sigma_xyh = torch.exp(log_sigma_xyh)
+            sigma_xy = sigma_xyh[:,:2]
+            sigma_h = sigma_xyh[:,2:]
+
+            loss_distribution_xy = (torch.sum(((xy_gt - xy_pred) ** 2) / (2 * sigma_xy**2 + 1e-8),dim=-1) + torch.sum(log_sigma_xyh[:,:2],dim=-1)) * conf
+            loss_distribution_h = (torch.sum(((h_gt - h_pred) ** 2) / (2 * sigma_h**2 + 1e-8),dim=-1) + log_sigma_xyh[:,2:]) * conf
+            loss_distribution = loss_distribution_xy + loss_distribution_h
+
+            sigma_avg = torch.norm(sigma_xy,dim=-1).mean()
+            
+
+            latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
+            linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
+            
+            # bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
+            # bias = linesamp_pred - linesamp_gt
+
+            loss_obj = torch.norm(xy_pred - xy_gt,dim=1) * conf
+            loss_height = torch.abs(h_pred - h_gt) * conf
+            # loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
+            loss_photo = torch.norm(linesamp_pred - linesamp_gt,dim=1) * conf
+            # loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
+            # loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
         
+            loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean()# + loss_bias + loss_reg
+            total_loss = total_loss + digit_weight * loss
 
-        latlon_pred = mercator2lonlat(xy_pred[:,[1,0]])
-        linesamp_pred = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred[:,0],latlon_pred[:,1],h_pred),dim=1)[:,[1,0]]
-        
-        # bias = tanh_clamp(linesamp_pred - linesamp_gt,progress,self.clamp_max)
-        # bias = linesamp_pred - linesamp_gt
-
-        loss_obj = torch.norm(xy_pred - xy_gt,dim=1) * conf
-        loss_height = torch.abs(h_pred - h_gt) * conf
-        # loss_photo = tanh_clamp(torch.norm(linesamp_pred - linesamp_gt,dim=1),progress,self.clamp_max) * conf
-        loss_photo = torch.norm(linesamp_pred - linesamp_gt,dim=1) * conf
-        # loss_bias = ((bias[:,0] * conf).mean() ** 2 + (bias[:,1] * conf).mean() ** 2) ** .5
-        # loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
-        
-        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean()# + loss_bias + loss_reg
-
-        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),sigma_avg.item() #,loss_bias.item(),loss_reg.item()
+        return total_loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),sigma_avg.item() #,loss_bias.item(),loss_reg.item()

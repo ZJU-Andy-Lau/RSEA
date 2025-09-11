@@ -447,23 +447,20 @@ class Grid():
 
                 #=====================================================
 
-                output_16p1,valid_score_positive = self.mapper(features_1Dp1)
+                output_16p1_list,valid_score_positive = self.mapper(features_1Dp1,per_digit = True)
                 valid_score_nagetive = self.mapper.forward_valid(negative_feature_1Dp1)
-                # features_input_1Dq1 = torch.concatenate([features_1Dp1,negative_feature_1Dp1],dim=2)
-                # output_16q1,valid_score_11q1 = self.mapper(features_input_1Dq1)
-                # output_16p1 = output_16q1[:,:,:patch_num]
-                # valid_score_positive,valid_score_nagetive = valid_score_11q1[:,:,:patch_num],valid_score_11q1[:,:,patch_num:]
-                # output_16p1,valid_score_positive = self.mapper(features_1Dp1)
-                # _,valid_score_nagetive = self.mapper(negative_feature_1Dp1)
                 
-                output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
-                mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
-                log_sigma_xyh_p3 = output_p6[:,3:]
+                mu_xyh_p3_list = []
+                log_sigma_xyh_p3_list = []
+                for output_16p1 in output_16p1_list:
+                    output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+                    mu_xyh_p3_list.append(self.warp_by_poly(output_p6[:,:3],self.map_coeffs))
+                    log_sigma_xyh_p3_list.append(output_p6[:,3:])
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
-                                                                                            mu_xyh_p3,
-                                                                                            log_sigma_xyh_p3,
+                                                                                            mu_xyh_p3_list,
+                                                                                            log_sigma_xyh_p3_list,
                                                                                             confs_p1,
                                                                                             locals_p2,
                                                                                             objs_p3,
