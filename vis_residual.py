@@ -177,6 +177,14 @@ def vis_mask(img, res, output_folder, patch_size = 16, alpha=0.6):
     cv2.imwrite(output_path, output_img)
     print(f"标注后的半透明图片已保存至: {output_path}")
 
+def clamp_res(residual:np.ndarray):
+    valid_mask = ~np.isnan(residual)
+    min_val = residual[valid_mask].min()
+    median_val = np.median(residual[valid_mask])
+    max_val = 2 * median_val - min_val
+    residual[residual > max_val] = max_val
+    return residual
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset_path',type=str,default=None)
@@ -196,6 +204,7 @@ if __name__ == '__main__':
     img = data[keys[img_idx]]['images'][f'image_{args.view_idx}'][:]
     residual_raw = data[keys[img_idx]]['residuals'][f'residual_{args.view_idx}'][:]
     img = np.stack([img] * 3,axis=-1)
+    residual_raw = clamp_res(residual_raw)
 
     os.makedirs(args.output_folder,exist_ok=True)
     vis_raw(img,residual_raw,args.output_folder)
