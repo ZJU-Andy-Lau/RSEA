@@ -184,8 +184,8 @@ class CriterionFinetune(nn.Module):
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
 
 
-        shift_amount1 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
-        shift_amount2 = torch.randint(low=-P // 2,high = P // 2,size=(1,))[0].item()
+        shift_amount1 = torch.randint(low=1,high = P // 2,size=(1,))[0].item()
+        shift_amount2 = torch.randint(low=-P // 2,high = -1,size=(1,))[0].item()
         feat1_negative = torch.roll(feat1_PD,shift_amount1)
         feat2_negative = torch.roll(feat2_PD,shift_amount2)
 
@@ -193,8 +193,14 @@ class CriterionFinetune(nn.Module):
                                            torch.sum(feat2_PD * feat1_PD,dim=1)])
         simi_negative = torch.concatenate([torch.sum(feat1_PD * feat1_negative,dim=1),
                                            torch.sum(feat2_PD * feat2_negative,dim=1)])
+
+        # simi_positive = torch.concatenate([torch.norm(feat1_PD - feat2_PD,dim=1),
+        #                                    torch.norm(feat2_PD - feat1_PD,dim=1)])
+        # simi_negative = torch.concatenate([torch.norm(feat1_PD - feat1_negative,dim=1),
+        #                                    torch.norm(feat2_PD - feat2_negative,dim=1)])
         
         loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - .7,min=0).mean() * 10000.
+        # loss_feat = torch.clip(simi_negative - simi_positive + .7).mean() * 10000
 
 
         loss = loss_obj + loss_height + loss_conf + loss_feat #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)

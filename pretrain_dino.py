@@ -102,7 +102,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray,output_folder):
     vis_conf(conf,vis_img,16,os.path.join(output_folder,'conf.png'))
 
 
-def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,projector:ProjectHead,criterion:nn.Module):
+def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,criterion:nn.Module):
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -120,8 +120,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,pro
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 
-    project_feat1 = projector(feat1_sample)
-    project_feat2 = projector(feat2_sample)
+    # project_feat1 = projector(feat1_sample)
+    # project_feat2 = projector(feat2_sample)
 
     feat_noise_amp1 = torch.rand(feat1.shape[0],1,feat1.shape[2],feat1.shape[3]).to(args.device) * .3
     feat_noise_amp2 = torch.rand(feat2.shape[0],1,feat2.shape[2],feat2.shape[3]).to(args.device) * .3
@@ -152,8 +152,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,pro
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
 
-    project_feat1_PD = project_feat1.permute(0,2,3,1).flatten(0,2)
-    project_feat2_PD = project_feat2.permute(0,2,3,1).flatten(0,2)
+    project_feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
+    project_feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
     conf2_P = conf2.permute(0,2,3,1).reshape(-1)
     obj1_P3 = obj1.flatten(0,2)
@@ -246,8 +246,8 @@ def pretrain(args):
     pprint("Building Encoder")
 
     encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
-    projector = ProjectHead(encoder.output_channels,128)
-    encoder_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(projector.parameters()),lr = args.lr_encoder_max)
+    # projector = ProjectHead(encoder.output_channels,128)
+    encoder_optimizer = optim.AdamW(params=encoder.adapter.parameters(),lr = args.lr_encoder_max)
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
                                              total_steps=dataset_num * args.max_epoch,
@@ -259,7 +259,7 @@ def pretrain(args):
     
     if args.resume_training:
         encoder.load_adapter(os.path.join(args.checkpoints_path,'encoder.pth'))
-        projector.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'projector.pth'),map_location='cpu').items()})
+        # projector.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'projector.pth'),map_location='cpu').items()})
         encoder_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_optimizer.pth'),map_location='cpu'))
         encoder_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'encoder_scheduler.pth'),map_location='cpu'))
         
@@ -268,7 +268,7 @@ def pretrain(args):
         pprint('Encoder Loaded')
 
     encoder = encoder.to(args.device)
-    projector = projector.to(args.device)
+    # projector = projector.to(args.device)
     for state in encoder_optimizer.state.values():
         for k, v in state.items():
             if isinstance(v, torch.Tensor):
@@ -276,7 +276,7 @@ def pretrain(args):
     encoder_op = encoder
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
-        projector = distibute_model(projector,args.local_rank)
+        # projector = distibute_model(projector,args.local_rank)
         encoder_op = encoder.module
     
 
@@ -357,7 +357,7 @@ def pretrain(args):
                 "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean = compute_loss(args,epoch,compose_data,encoder,decoder,projector,criterion)
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean = compute_loss(args,epoch,compose_data,encoder,decoder,criterion)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -472,11 +472,11 @@ def pretrain(args):
                 # encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
                 encoder_optimizer_state_dict = encoder_optimizer.state_dict()
                 encoder_scheduler_state_dict = encoder_scheduler.state_dict()
-                projector_state_dict = projector.state_dict()
+                # projector_state_dict = projector.state_dict()
                 encoder_op.save_adapter(os.path.join(path,'encoder.pth'))
                 torch.save(encoder_optimizer_state_dict,os.path.join(path,'encoder_optimizer.pth'))
                 torch.save(encoder_scheduler_state_dict,os.path.join(path,'encoder_scheduler.pth'))
-                torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
+                # torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
                 for i in range(dataset_num):
                     decoder_state_dict = {k:v.detach().cpu() for k,v in decoders[i].state_dict().items()}
                     decoder_optimizer_state_dict = optimizers[i].state_dict()

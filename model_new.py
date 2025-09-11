@@ -165,6 +165,7 @@ class Adapter(nn.Module):
     def forward(self,x):
         feat = self.cnn(x)
         conf = self.conf_head(x)
+        feat = F.normalize(feat,dim=1)
         return feat,conf
 
 class EncoderDino(nn.Module):
