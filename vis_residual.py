@@ -194,7 +194,7 @@ if __name__ == '__main__':
         img_idx = args.img_idx
     
     img = data[keys[img_idx]]['images'][f'image_{args.view_idx}'][:]
-    residual_raw = data[keys[img_idx]]['residuals'][f'image_{args.view_idx}'][:]
+    residual_raw = data[keys[img_idx]]['residuals'][f'residual_{args.view_idx}'][:]
 
     os.makedirs(args.output_folder,exist_ok=True)
     vis_raw(img,residual_raw,args.output_folder)
