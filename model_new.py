@@ -318,7 +318,7 @@ class Decoder(nn.Module):
         digit_total = None
         for i in range(self.digit_num):
             xy_res = self.output_xy_list[i](res)
-            height_res = self.output_height_list(res)
+            height_res = self.output_height_list[i](res)
             mu_xy = F.tanh(xy_res[:,:2]) * (0.1 ** i)
             log_sigma_xy = F.tanh(xy_res[:,2:]) * 10. * (0.1 ** i)
             mu_h = F.tanh(height_res[:,:1]) * (0.1 ** i)
