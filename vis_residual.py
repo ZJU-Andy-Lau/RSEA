@@ -199,7 +199,7 @@ if __name__ == '__main__':
 
     os.makedirs(args.output_folder,exist_ok=True)
     vis_raw(img,residual_raw,args.output_folder)
-    vis_mask(img,residual_average(residual_raw,16))
+    vis_mask(img,residual_average(residual_raw,16),args.output_folder)
 
 
 
