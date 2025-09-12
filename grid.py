@@ -60,7 +60,7 @@ class Grid():
                 'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
                 'h':None
             }
-            self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
+            self.mapper = Decoder(in_channels=self.encoder.output_channels,digit_num=options.digit_num,block_num=options.mapper_blocks_num)
             self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
             self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
                                                 total_steps=self.options.grid_training_iters,
