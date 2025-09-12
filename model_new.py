@@ -340,8 +340,8 @@ class Decoder(nn.Module):
         digit_list = [digit]
 
         for i in range(self.digit_num - 1):
-            modulate_xy_input = torch.cat([digit[:,:2],digit[3:5] / 5.,res],dim=1)
-            modulate_h_input = torch.cat([digit[2:3],digit[5:],res] / 5.,dim=1)
+            modulate_xy_input = torch.cat([digit[:,:2],digit[:,3:5] / 5.,res],dim=1)
+            modulate_h_input = torch.cat([digit[:,2:3],digit[:,5:],res] / 5.,dim=1)
             delta_xy = self.modulate_xy(modulate_xy_input)
             delta_h = self.modulate_height(modulate_h_input)
             delta_logit = torch.cat([delta_xy[:,:2],delta_h[:,:1],delta_xy[:,2:],delta_h[:,1:]],dim=1)
