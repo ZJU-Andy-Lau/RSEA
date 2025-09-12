@@ -340,21 +340,21 @@ class Decoder(nn.Module):
         digit_list = [digit]
 
         for i in range(self.digit_num - 1):
-            modulate_xy_input = torch.cat([digit[:,:2],digit[:,3:5] / 5.,res],dim=1)
-            modulate_h_input = torch.cat([digit[:,2:3],digit[:,5:] / 5.,res] ,dim=1)
+            modulate_xy_input = torch.cat([digit_list[-1][:,:2],digit_list[-1][:,3:5] / 5.,res],dim=1)
+            modulate_h_input = torch.cat([digit_list[-1][:,2:3],digit_list[-1][:,5:] / 5.,res] ,dim=1)
             delta_xy = self.modulate_xy(modulate_xy_input)
             delta_h = self.modulate_height(modulate_h_input)
             delta_logit = torch.cat([delta_xy[:,:2],delta_h[:,:1],delta_xy[:,2:],delta_h[:,1:]],dim=1)
             logit = logit + delta_logit
-            digit = F.tanh(logit)
-            digit[:,3:] = digit[:,3:] * 5.
+            new_digit = F.tanh(logit)
+            new_digit[:,3:] = new_digit[:,3:] * 5.
             # delta_mu_xy = F.tanh(delta_xy[:,:2])
             # delta_log_sigma_xy = F.tanh(delta_xy[:,2:])
             # delta_mu_h = F.tanh(delta_h[:,:1])
             # delta_log_sigma_h = F.tanh(delta_h[:,1:])
             # delta = torch.cat([delta_mu_xy,delta_mu_h,delta_log_sigma_xy,delta_log_sigma_h],dim=1)
             # digit = digit + delta
-            digit_list.append(digit)
+            digit_list.append(new_digit)
 
 
             # xy_res = self.output_xy_list[i](res)
