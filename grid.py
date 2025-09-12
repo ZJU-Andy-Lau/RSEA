@@ -335,7 +335,7 @@ class Grid():
                     objs_p33 = element.buffer['objs'][idxs].contiguous()
                     locals_p32 = element.buffer['locals'][idxs].contiguous()
 
-                    features_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                    features_pD = F.normalize(torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32),dim=1)
                     confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
                     objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
@@ -428,7 +428,7 @@ class Grid():
                 #for-swt
                 # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -442,7 +442,8 @@ class Grid():
                 #for-swt
                 # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================
@@ -676,7 +677,7 @@ class Grid():
                 #for-swt
                 # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 
                 #===================生成负样本特征=====================
 
@@ -691,7 +692,8 @@ class Grid():
                 #for-swt
                 # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================

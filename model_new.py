@@ -287,16 +287,32 @@ class Decoder(nn.Module):
         self.digit_num = max(digit_num,1)
         self.use_bn = use_bn
         self.blocks = nn.ModuleList([self.get_block(in_channels) for _ in range(block_num)])
-        self.output_xy_list = nn.ModuleList([nn.Sequential(
+        self.init_xy = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,4,1,1,0)
-        ) for _ in range(self.digit_num)])
-        self.output_height_list = nn.ModuleList([nn.Sequential(
+        )
+        self.init_height = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,2,1,1,0)
-        ) for _ in range(self.digit_num)])
+        )
+        
+        self.modulate_xy = nn.Sequential(
+            nn.Conv2d(in_channels + 4,in_channels,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,4,1,1,0),
+        )
+        self.modulate_height = nn.Sequential(
+            nn.Conv2d(in_channels + 2,in_channels,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,2,1,1,0),
+        )
+
         self.score_head = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
@@ -315,21 +331,47 @@ class Decoder(nn.Module):
             x = block(res)
             res = res + x
 
-        digit_list = []
-        digit_total = None
-        for i in range(self.digit_num):
-            xy_res = self.output_xy_list[i](res)
-            height_res = self.output_height_list[i](res)
-            mu_xy = F.tanh(xy_res[:,:2]) * (0.1 ** i)
-            log_sigma_xy = F.tanh(xy_res[:,2:]) * 10. * (0.1 ** i)
-            mu_h = F.tanh(height_res[:,:1]) * (0.1 ** i)
-            log_sigma_h = F.tanh(height_res[:,1:]) * 10. * (0.1 ** i)
-            digit = torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
-            if digit_total is None:
-                digit_total = digit
-            else:
-                digit_total = digit_total + digit
-            digit_list.append(digit_total)
+        xy_res = self.init_xy(res)
+        height_res = self.init_height(res)
+        logit = torch.cat([xy_res[:,:2],height_res[:,:1],xy_res[:,2:],height_res[:,1:]],dim=1)# mu_x,mu_y,mu_h,s_x,s_y,s_h
+        digit = F.tanh(logit)
+        digit[:,3:] = digit[:,3:] * 5.
+        
+        digit_list = [digit]
+
+        for i in range(self.digit_num - 1):
+            modulate_xy_input = torch.cat([digit[:,:2],digit[3:5] / 5.,res],dim=1)
+            modulate_h_input = torch.cat([digit[2:3],digit[5:],res] / 5.,dim=1)
+            delta_xy = self.modulate_xy(modulate_xy_input)
+            delta_h = self.modulate_height(modulate_h_input)
+            delta_logit = torch.cat([delta_xy[:,:2],delta_h[:,:1],delta_xy[:,2:],delta_h[:,1:]],dim=1)
+            logit = logit + delta_logit
+            digit = F.tanh(logit)
+            digit[:,3:] = digit[:,3:] * 5.
+            # delta_mu_xy = F.tanh(delta_xy[:,:2])
+            # delta_log_sigma_xy = F.tanh(delta_xy[:,2:])
+            # delta_mu_h = F.tanh(delta_h[:,:1])
+            # delta_log_sigma_h = F.tanh(delta_h[:,1:])
+            # delta = torch.cat([delta_mu_xy,delta_mu_h,delta_log_sigma_xy,delta_log_sigma_h],dim=1)
+            # digit = digit + delta
+            digit_list.append(digit)
+
+
+            # xy_res = self.output_xy_list[i](res)
+            # height_res = self.output_height_list[i](res)
+            # mu_xy = F.tanh(xy_res[:,:2])
+            # log_sigma_xy = F.tanh(xy_res[:,2:])
+            # mu_h = F.tanh(height_res[:,:1])
+            # log_sigma_h = F.tanh(height_res[:,1:])
+            # digit = torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1)
+            # if digit_total is None:
+            #     digit_total = digit
+            # else:
+            #     digit_total = digit_total + digit
+
+            # if i < self.digit_num - 1:
+
+            # digit_list.append(digit_total)
 
         # xy_res = self.output_xy(res)
         # height_res = self.output_height(res)

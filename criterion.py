@@ -31,6 +31,43 @@ def get_dis_matrix(points_a:torch.Tensor,points_b:torch.Tensor):
     # return torch.sqrt(torch.sum((points_a.unsqueeze(1) - points_b.unsqueeze(0)) ** 2,dim=-1) + 1e-6)
     return torch.cdist(points_a,points_b,p=2)
 
+def calculate_dynamic_weights(N: int, r: float) -> np.ndarray:
+    """
+    计算用于深度监督的动态损失权重。
+
+    权重会根据训练进程从“初期预测”向“后期修正”平滑过渡。
+    
+    参数:
+    N (int): 权重的数量，即损失函数的项数 (例如，1个初始预测 + N-1次修正)。
+    r (float): 训练进程比例，取值范围为 [0.0, 1.0]。
+               0.0 代表训练开始，1.0 代表训练结束。
+
+    返回:
+    np.ndarray: 一个包含N个权重的NumPy数组，其总和为1。
+    """
+    if not 0.0 <= r <= 1.0:
+        raise ValueError("训练进程比例 'r' 必须在 [0.0, 1.0] 之间。")
+    if N < 1:
+        raise ValueError("权重数量 'N' 必须大于等于1。")
+    
+    # 1. 定义训练初期的权重分布 (早期权重高，后期权重低)
+    # 例如，对于 N=4, initial_weights = [4, 3, 2, 1]
+    initial_weights = np.arange(N, 0, -1, dtype=np.float32)
+    
+    # 2. 定义训练末期的权重分布 (早期权重低，后期权重高)
+    # 例如，对于 N=4, final_weights = [1, 2, 3, 4]
+    final_weights = np.arange(1, N + 1, dtype=np.float32)
+    
+    # 3. 根据训练进程 'r' 进行线性插值
+    # r=0时，weights = initial_weights
+    # r=1时，weights = final_weights
+    weights = (1 - r) * initial_weights + r * final_weights
+    
+    # 4. 归一化，确保所有权重之和为1
+    normalized_weights = weights / np.sum(weights)
+    
+    return normalized_weights
+
 @torch.no_grad()
 def get_near_points(points1,points2,batch_size,threshold):
     point_num = len(points1)
@@ -355,7 +392,7 @@ class CriterionTrainGrid(nn.Module):
         conf = torch.clip(conf - conf.mean() + 1.,min=0.)
 
         digit_num = len(mu_xyh_list)
-        digit_weights = [(i + 1.) / ((1. + digit_num) * digit_num * .5) for i in range(digit_num)]
+        digit_weights = calculate_dynamic_weights(digit_num,progress)
 
         total_loss = 0
 
