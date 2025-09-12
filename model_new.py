@@ -321,11 +321,11 @@ class Decoder(nn.Module):
         )
         # self.bn = bnac(in_channels)
 
-
     def forward(self, res, per_digit = False):
         # res = res / torch.norm(res,dim=1,keepdim=True)
         # if self.use_bn:
         #     res = self.bn(res)
+        torch.autograd.set_detect_anomaly(True)
         valid_score = self.score_head(res)
         for block in self.blocks:
             x = block(res)
