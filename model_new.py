@@ -321,11 +321,11 @@ class Decoder(nn.Module):
         )
         # self.bn = bnac(in_channels)
 
+
     def forward(self, res, per_digit = False):
         # res = res / torch.norm(res,dim=1,keepdim=True)
         # if self.use_bn:
         #     res = self.bn(res)
-        torch.autograd.set_detect_anomaly(True)
         valid_score = self.score_head(res)
         for block in self.blocks:
             x = block(res)
@@ -335,26 +335,28 @@ class Decoder(nn.Module):
         height_res = self.init_height(res)
         logit = torch.cat([xy_res[:,:2],height_res[:,:1],xy_res[:,2:],height_res[:,1:]],dim=1)# mu_x,mu_y,mu_h,s_x,s_y,s_h
         digit = F.tanh(logit)
-        digit[:,3:] = digit[:,3:] * 5.
+        digit = torch.cat([digit[:,:3],digit[:,3:] * 5.],dim=1)
+        # digit[:,3:] = digit[:,3:] * 5.
         
         digit_list = [digit]
 
         for i in range(self.digit_num - 1):
-            modulate_xy_input = torch.cat([digit_list[-1][:,:2],digit_list[-1][:,3:5] / 5.,res],dim=1)
-            modulate_h_input = torch.cat([digit_list[-1][:,2:3],digit_list[-1][:,5:] / 5.,res] ,dim=1)
+            modulate_xy_input = torch.cat([digit[:,:2],digit[:,3:5] / 5.,res],dim=1)
+            modulate_h_input = torch.cat([digit[:,2:3],digit[:,5:] / 5.,res] ,dim=1)
             delta_xy = self.modulate_xy(modulate_xy_input)
             delta_h = self.modulate_height(modulate_h_input)
             delta_logit = torch.cat([delta_xy[:,:2],delta_h[:,:1],delta_xy[:,2:],delta_h[:,1:]],dim=1)
             logit = logit + delta_logit
-            new_digit = F.tanh(logit)
-            new_digit[:,3:] = new_digit[:,3:] * 5.
+            digit = F.tanh(logit)
+            digit = torch.cat([digit[:,:3],digit[:,3:] * 5.],dim=1)
+            # digit[:,3:] = digit[:,3:] * 5.
             # delta_mu_xy = F.tanh(delta_xy[:,:2])
             # delta_log_sigma_xy = F.tanh(delta_xy[:,2:])
             # delta_mu_h = F.tanh(delta_h[:,:1])
             # delta_log_sigma_h = F.tanh(delta_h[:,1:])
             # delta = torch.cat([delta_mu_xy,delta_mu_h,delta_log_sigma_xy,delta_log_sigma_h],dim=1)
             # digit = digit + delta
-            digit_list.append(new_digit)
+            digit_list.append(digit)
 
 
             # xy_res = self.output_xy_list[i](res)
