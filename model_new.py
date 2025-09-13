@@ -147,19 +147,23 @@ class Adapter(nn.Module):
         self.input_channels = input_channels
         self.output_channels = output_channels
         self.cnn = nn.Sequential(
-            nn.Conv2d(self.input_channels,self.output_channels,3,1,1),
+            nn.Conv2d(self.input_channels,self.input_channels // 4,1,1,0),
+            nn.BatchNorm2d(self.input_channels // 4),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
+            nn.Conv2d(self.input_channels // 4,self.output_channels,1,1,0),
+            nn.BatchNorm2d(self.output_channels),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
         )
 
         self.conf_head = nn.Sequential(
-            nn.Conv2d(self.input_channels,self.output_channels,1,1,0),
+            nn.Conv2d(self.input_channels,self.input_channels // 4,1,1,0),
+            nn.BatchNorm2d(self.input_channels // 4),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels, self.output_channels // 2,1,1,0),
+            nn.Conv2d(self.input_channels // 4, self.input_channels // 16,1,1,0),
+            nn.BatchNorm2d(self.input_channels // 4),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels // 2, 1 ,1,1,0),
+            nn.Conv2d(self.input_channels // 16, 1 ,1,1,0),
             nn.Sigmoid()
         )
     def forward(self,x):
@@ -170,9 +174,10 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,output_channels=512,verbose = 1):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23]):
         super().__init__()
         self.verbose = verbose
+        self.layers = layers
         self.SAMPLE_FACTOR = 16
         self.input_channels = 3
         self.output_channels = output_channels
@@ -181,14 +186,15 @@ class EncoderDino(nn.Module):
         self.backbone.eval()
         self.backbone.requires_grad_(False)
 
-        self.adapter = Adapter(input_channels=1024,output_channels=output_channels)
+        self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels)
 
 
     def forward(self, x):
         B = x.shape[0]
         H,W = x.shape[-2:]
         with torch.no_grad():
-            feat_backbone = self.backbone.get_intermediate_layers(x)[0]
+            feat_backbone = self.backbone.get_intermediate_layers(x = x, n = self.layers)
+            feat_backbone = torch.cat(feat_backbone,dim=-1)
             feat_backbone = feat_backbone.reshape(B,H // self.SAMPLE_FACTOR,W // self.SAMPLE_FACTOR,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
         return feat,conf
