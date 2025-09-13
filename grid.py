@@ -335,7 +335,7 @@ class Grid():
                     objs_p33 = element.buffer['objs'][idxs].contiguous()
                     locals_p32 = element.buffer['locals'][idxs].contiguous()
 
-                    features_pD = F.normalize(torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32),dim=1)
+                    features_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
                     objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
