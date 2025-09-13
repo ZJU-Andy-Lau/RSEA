@@ -161,7 +161,7 @@ class Adapter(nn.Module):
             nn.BatchNorm2d(self.input_channels // 4),
             nn.ReLU(),
             nn.Conv2d(self.input_channels // 4, self.input_channels // 16,1,1,0),
-            nn.BatchNorm2d(self.input_channels // 4),
+            nn.BatchNorm2d(self.input_channels // 16),
             nn.ReLU(),
             nn.Conv2d(self.input_channels // 16, 1 ,1,1,0),
             nn.Sigmoid()
