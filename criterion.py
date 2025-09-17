@@ -190,7 +190,7 @@ class CriterionFinetune(nn.Module):
         super().__init__()
         self.bce = nn.BCELoss()
 
-    def forward(self,epoch,
+    def forward(self,epoch,max_epoch,
                 feat1_PD,feat2_PD,
                 pred1_P3,pred2_P3,
                 conf1_P,conf2_P,
@@ -238,11 +238,11 @@ class CriterionFinetune(nn.Module):
         
         # loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - .7,min=0).mean() * 10000.
         loss_feat = torch.clip(simi_positive - simi_negative + 1.,min=0.).mean() * 1000 + simi_positive.mean() * 1000
-
+        loss_feat_weight = min(1.,epoch / max_epoch)
         # print(f"feat dis mean:{(simi_negative - simi_positive).mean().item()}  feat_mod:{torch.norm(feat1_PD,dim=1).mean().item()}")
 
 
-        loss = loss_obj + loss_height + loss_conf + loss_feat #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
+        loss = loss_obj + loss_height + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
         return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold
         

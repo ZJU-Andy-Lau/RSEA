@@ -183,7 +183,7 @@ def compute_loss(args,epoch,data,encoder:Encoder,decoder:DecoderFinetune,project
     residual2_P = residual2.reshape(-1).detach()
     conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
 
-    loss,loss_obj,loss_height,loss_conf,loss_feat,k = criterion(epoch,
+    loss,loss_obj,loss_height,loss_conf,loss_feat,k = criterion(epoch,args.max_epoch,
                                                                 project_feat1_PD,project_feat2_PD,
                                                                 pred1_P3,pred2_P3,
                                                                 conf1_P,conf2_P,
