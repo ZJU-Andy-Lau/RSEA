@@ -60,7 +60,7 @@ class Block():
         state_dict = {
             'mapper':self.mapper.state_dict(),
             'diag':torch.from_numpy(self.diag),
-            'diag_pix':torch.from_numpy(self.diag_pix),
+            'diag_ratio':torch.from_numpy(self.diag_ratio),
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
             'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),

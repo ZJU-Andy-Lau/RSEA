@@ -123,8 +123,8 @@ class Grid():
                 'h':None
             }
             diag_ratio = np.array([
-                [int(np.abs(diag[0,1] - self.diag[0,1]) / h) , int(np.abs(diag[0,0] - self.diag[0,0]) / w)],
-                [int(np.abs(diag[1,1] - self.diag[0,1]) / h) , int(np.abs(diag[1,0] - self.diag[0,0]) / w)]
+                [np.abs(diag[0,1] - self.diag[0,1]) / h , np.abs(diag[0,0] - self.diag[0,0]) / w],
+                [np.abs(diag[1,1] - self.diag[0,1]) / h , np.abs(diag[1,0] - self.diag[0,0]) / w]
             ],dtype=int)
             print(f"diag:{diag} \n diag_ratio:{diag_ratio} \n==============================\n")
             block = Block(self.options,diag,diag_ratio,map_coeffs)
@@ -870,13 +870,13 @@ class Grid():
         for block_idx in range(state_dict['block_num']):
             block_state_dict = state_dict[f'block_{block_idx}']
             block_diag = block_state_dict['diag'].numpy()
-            block_diag_pix = block_state_dict['diag_pix'].numpy()
+            block_diag_ratio = block_state_dict['diag_ratio'].numpy()
             block_map_coeffs = {
                 'x':block_state_dict['map_coeffs_x'].numpy(),
                 'y':block_state_dict['map_coeffs_y'].numpy(),
                 'h':block_state_dict['map_coeffs_h'].numpy(),
             }
-            block = Block(self.options,block_diag,block_diag_pix,block_map_coeffs)
+            block = Block(self.options,block_diag,block_diag_ratio,block_map_coeffs)
             block.mapper.load_state_dict(block_state_dict['mapper'])
             block.status = block_state_dict['status']
             self.blocks.append(block)        
