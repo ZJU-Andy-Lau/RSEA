@@ -153,7 +153,7 @@ class Adapter(nn.Module):
             nn.Conv2d(self.input_channels // 4,self.output_channels,1,1,0),
             nn.BatchNorm2d(self.output_channels),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
+            nn.Conv2d(self.output_channels,self.output_channels,3,1,1),
         )
 
         self.conf_head = nn.Sequential(
@@ -163,7 +163,7 @@ class Adapter(nn.Module):
             nn.Conv2d(self.input_channels // 4, self.input_channels // 16,1,1,0),
             nn.BatchNorm2d(self.input_channels // 16),
             nn.ReLU(),
-            nn.Conv2d(self.input_channels // 16, 1 ,1,1,0),
+            nn.Conv2d(self.input_channels // 16, 1 ,3,1,1,padding_mode='replicate'),
             nn.Sigmoid()
         )
     def forward(self,x):
