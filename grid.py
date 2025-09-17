@@ -125,7 +125,7 @@ class Grid():
             diag_ratio = np.array([
                 [np.abs(diag[0,1] - self.diag[0,1]) / h , np.abs(diag[0,0] - self.diag[0,0]) / w],
                 [np.abs(diag[1,1] - self.diag[0,1]) / h , np.abs(diag[1,0] - self.diag[0,0]) / w]
-            ],dtype=int)
+            ])
             print(f"diag:{diag} \n diag_ratio:{diag_ratio} \n==============================\n")
             block = Block(self.options,diag,diag_ratio,map_coeffs)
             blocks.append(block)
