@@ -335,6 +335,7 @@ class Grid():
         total_loss_photo = 0
         # total_reg = 0
         count = 0
+        progress = 0
         no_update_count = 0
         early_stop_iter = -1
         last_mapper_state_dict = None
