@@ -311,7 +311,7 @@ class Grid():
         patches_per_batch = self.options.patches_per_batch // 4 * 4
         
         optimizer = AdamW(mapper.parameters(),lr=self.options.grid_train_lr_max)
-        scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+        scheduler = MultiStageOneCycleLR(optimizer=optimizer,
                                             total_steps=self.options.grid_training_iters,
                                             warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
                                             cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
