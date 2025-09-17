@@ -36,6 +36,8 @@ if __name__ == '__main__':
     parser.add_argument('--grid_size', type=int, default=3000,
                         help='step length of sliding window when cropping input data')
     
+    parser.add_argument('--block_size', type=int,default=500)
+    
     parser.add_argument('--max_buffer_size', type=int, default=270000,
                         help='max patch number in buffer')
 

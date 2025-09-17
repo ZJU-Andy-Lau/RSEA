@@ -443,7 +443,7 @@ class RSEA():
             images = self.imgs
         
         if not os.path.exists(log_path):
-            df = pd.DataFrame(columns=['num_blocks','grid_size','median','mean','max','min','@0.5m','@1m','@3m'])
+            df = pd.DataFrame(columns=['mapper_blocks_num','grid_size','median','mean','max','min','@0.5m','@1m','@3m'])
         else:
             df = pd.read_csv(log_path)
 
@@ -473,7 +473,7 @@ class RSEA():
         distances = np.stack(distances,axis=-1).reshape(-1)
 
         log = {
-            'num_blocks':self.options.mapper_blocks_num,
+            'mapper_blocks_num':self.options.mapper_blocks_num,
             'grid_size':self.options.grid_size,
             'median':np.median(distances),
             'mean':distances.mean(),

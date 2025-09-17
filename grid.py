@@ -1,6 +1,7 @@
 from enum import Enum
 import warnings
 
+from dinov3.dinov3.eval.segmentation.models.utils.ops.test import D
 import scheduler
 warnings.filterwarnings('ignore')
 import argparse
@@ -34,18 +35,19 @@ from pykeops.torch import LazyTensor
 
 from rs_image import RSImage
 from element import Element
+from block import Block
 
 def redirect_output(output_path:str,info:str):
     with open(output_path,'a') as f:
         f.write(info)
 
-class GridStatus(Enum):
+class Status(Enum):
     NOT_INIT = 0
     WELL_TRAINED = 1
     BAD_TRAINED = 2
 
 class Grid():
-    STATES = GridStatus
+    STATES = Status
     def __init__(self,options,encoder:Encoder,output_path:str,diag:np.ndarray = None,grid_path:str = None,device:str = None):
 
         self.options = options
@@ -53,30 +55,29 @@ class Grid():
         self.status = self.STATES.NOT_INIT
         if diag is None and grid_path is None:
             raise ValueError("Grid loaded error: Neither diag nor grid path is given")
+        self.options.mapper_input_channel = self.encoder.output_channels
+        
         if grid_path is None :
             self.diag = diag #[[x,y],[x,y]]
-            self.map_coeffs = {
-                'x':np.array([.6 * np.abs(diag[0,0] - diag[1,0]), .5 * (diag[0,0] + diag[1,0])]),
-                'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
-                'h':None
-            }
-            self.mapper = Decoder(in_channels=self.encoder.output_channels,digit_num=options.digit_num,block_num=options.mapper_blocks_num)
-            self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-            self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
-                                                total_steps=self.options.grid_training_iters,
-                                                warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
-                                                cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
-            self.train_iter_idx = 0
+            # self.map_coeffs = {
+            #     'x':np.array([.6 * np.abs(diag[0,0] - diag[1,0]), .5 * (diag[0,0] + diag[1,0])]),
+            #     'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
+            #     'h':None
+            # }
+            # self.mapper = Decoder(in_channels=self.encoder.output_channels,digit_num=options.digit_num,block_num=options.mapper_blocks_num)
+            # self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
+            # self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+            #                                     total_steps=self.options.grid_training_iters,
+            #                                     warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+            #                                     cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+            # self.train_iter_idx = 0
+            self.blocks = self.__devide_blocks__(self.options.block_size)
+
         else:
             self.load_grid(grid_path)
-        self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()]) #[min_x,min_y,max_x,max_y]
-        # print(f"\n Grid range: x: {self.border[0]:.2f} ~ {self.border[2]:.2f} \t y: {self.border[1]:.2f} ~ {self.border[3]:.2f}\n")
+        self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()])#[min_x,min_y,max_x,max_y]
         self.output_path = output_path
         self.elements:List[Element] = []
-        # self.transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
-        #     ])
         self.transform = nn.Sequential(
             # K.Normalize(
             #     mean=torch.tensor([0.485, 0.456, 0.406]), 
@@ -87,16 +88,6 @@ class Grid():
                 std=torch.tensor([0.213, 0.156, 0.143])
             )
         ).eval()
-        # self.transform = nn.Sequential(
-        #     K.RandomGrayscale(p=0.3),
-        #     K.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1, p=.9),
-        #     K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
-        #     K.RandomInvert(p=0.3),
-        #     K.Normalize(
-        #         mean=torch.tensor([0.485, 0.456, 0.406]),
-        #         std=torch.tensor([0.229, 0.224, 0.225])
-        #     )
-        # )
         self.train_data = []
         self.SAMPLE_FACTOR = 16
         self.pred_resolution = .7
@@ -109,9 +100,42 @@ class Grid():
     def to_device(self,device):
         self.device = device
         self.encoder.to(device)
-        self.mapper.to(device)
+        # self.mapper.to(device)
+        for block in self.blocks:
+            block.mapper.to(device)
         for element in self.elements:
             element.to_device(device)
+    
+    def __devide_blocks__(self,block_size) -> list[Block]:
+        h,w = np.abs(self.diag[1,1] - self.diag[0,1]), np.abs(self.diag[1,0] - self.diag[0,0])
+        # h_pix,w_pix = int(h / self.pred_resolution),int(w / self.pred_resolution)
+        h_block_num = int(np.ceil(h / block_size))
+        w_block_num = int(np.ceil(w / block_size))
+        h_shrink_ratio = h / (h_block_num * block_size)
+        w_shrink_ratio = w / (w_block_num * block_size)
+        y_tls = self.diag[0,1] - (np.arange(0,(h_block_num - 1) * block_size + 1,block_size) * h_shrink_ratio) 
+        x_tls = self.diag[0,0] + (np.arange(0,(w_block_num - 1) * block_size + 1,block_size) * w_shrink_ratio)
+        diags = np.stack([
+            np.stack([x_tls,y_tls],axis=-1),
+            np.stack([x_tls + block_size,y_tls - block_size],axis=-1)
+        ],axis=1)
+        
+        blocks = []
+        for diag in diags:
+            map_coeffs = {
+                'x':np.array([.6 * np.abs(diag[0,0] - diag[1,0]), .5 * (diag[0,0] + diag[1,0])]),
+                'y':np.array([.6 * np.abs(diag[0,1] - diag[1,1]), .5 * (diag[0,1] + diag[1,1])]),
+                'h':None
+            }
+            diag_ratio = np.array([
+                [int(np.abs(diag[0,1] - self.diag[0,1]) / h) , int(np.abs(diag[0,0] - self.diag[0,0]) / w)],
+                [int(np.abs(diag[1,1] - self.diag[0,1]) / h) , int(np.abs(diag[1,0] - self.diag[0,0]) / w)]
+            ],dtype=int)
+            print(f"diag:{diag} \n diag_ratio:{diag_ratio} \n==============================\n")
+            block = Block(self.options,diag,diag_ratio,map_coeffs)
+            blocks.append(block)
+        return blocks
+
         
     def update_task_state(self,task_info,update_info):
         state = task_info['state'][task_info['id']]
@@ -134,13 +158,13 @@ class Grid():
             return img_raw,dem,np.array([top,left]),np.array([bottom,right])
         elif mode == 'interpolate':
             img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines,
-                                                            (int((self.border[2] - self.border[0]) / self.pred_resolution),
-                                                            int((self.border[3] - self.border[1]) / self.pred_resolution)),
+                                                            (int((self.border[3] - self.border[1]) / self.pred_resolution),
+                                                            int((self.border[2] - self.border[0]) / self.pred_resolution)),
                                                             need_local=True)
             
             dem = img.resample_dem_by_sampline(corner_samplines,
-                                                (int((self.border[2] - self.border[0]) / self.pred_resolution),
-                                                 int((self.border[3] - self.border[1]) / self.pred_resolution)))
+                                                (int((self.border[3] - self.border[1]) / self.pred_resolution),
+                                                int((self.border[2] - self.border[0]) / self.pred_resolution)))
 
             return img_raw,dem,local_hw2
         else:
@@ -148,10 +172,17 @@ class Grid():
 
     def get_height_map_coeffs(self):
         heights = []
+        locals = []
         for element in self.elements:
             heights.append(element.buffer['objs'][:,2])
+            locals.append(element.buffer['locals'])
         heights = torch.concatenate(heights).cpu().numpy()
-        self.map_coeffs['h'] = get_map_coef(heights)
+        locals = torch.concatenate(locals).cpu().numpy()
+        for block in self.blocks:
+            mask = (locals[:,0] >= block.diag[0,0]) & (locals[:,1] >= block[0,1]) & (locals[:,0] < block.diag[1,0]) & (locals[:,1] < block[1,1])
+            height = heights[mask]
+            block.map_coeffs['h'] = get_map_coef(height)
+        # self.map_coeffs['h'] = get_map_coef(heights)
 
 
     def add_img(self,img:RSImage):
@@ -196,7 +227,7 @@ class Grid():
             if not task_info is None:
                 self.update_task_state(task_info,{'progress':idx+1})
 
-        self.get_height_map_coeffs()
+        # self.get_height_map_coeffs()
     
     def train_elements(self,save = True):
         for element in self.elements:
@@ -258,21 +289,37 @@ class Grid():
         warped = torch.stack([x,y,h],dim=-1)
         return warped
 
-    def train_mapper(self,task_info = None,save_checkpoint = True):
+    def train(self,task_info = None):
+        self.get_height_map_coeffs()
+        for block_idx in range(len(self.blocks)):
+            self.train_mapper(block_idx,task_info)
+        for element in self.elements:
+            element.clear_buffer()
+        self.elements = None
+        if not task_info is None:
+            self.update_task_state(task_info,{
+                'status':f"Grid {task_info['id']}:训练完成"
+            })
+
+    def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
+        block = self.blocks[block_idx]
+        mapper = block.mapper
+
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
         patches_per_batch = self.options.patches_per_batch // 4 * 4
-        self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-        self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
+        
+        optimizer = AdamW(mapper.parameters(),lr=self.options.grid_train_lr_max)
+        scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
                                             total_steps=self.options.grid_training_iters,
                                             warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
                                             cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
-        optimizer = self.optimizer
-        scheduler = self.scheduler
+        optimizer = optimizer
+        scheduler = scheduler
         criterion = CriterionTrainGrid()
         bce = nn.BCELoss()
-        self.mapper.train()
+        mapper.train()
         # if self.options.use_gpu:
-        self.mapper.to(self.device)
+        mapper.to(self.device)
 
         min_photo_loss = 1e8
 
@@ -293,33 +340,42 @@ class Grid():
         early_stop_iter = -1
         last_mapper_state_dict = None
         # pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
-        progress = self.train_iter_idx * len(self.elements)
         if not task_info is None:
             self.update_task_state(task_info,{
-                'status':f"Grid {task_info['id']}:Decoder训练",
+                'status':f"Grid {task_info['id']}:Block {block_idx + 1} 训练",
                 'total':self.options.grid_training_iters * len(self.elements)
             })
         else:
             pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
-            pbar.update(progress)
-        for self.train_iter_idx in range(self.train_iter_idx,self.options.grid_training_iters):
-            iter_idx = self.train_iter_idx
+
+        for iter_idx in range(self.options.grid_training_iters):
             noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
-                if iter_idx % 2 != 0:
-                    sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
-                                                            min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
-                                                    torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
-                                                            min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
+                # if iter_idx % 2 != 0:
+                if True:
+                    # sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
+                    #                                         min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
+                    #                                 torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
+                    #                                         min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
+                    #                                 dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
+                    # sample_linesamps = torch.concatenate([sample_linesamps,
+                    #                                     torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
+                    #                                     torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
+                    #                                     torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
+                    #                                     dim=0)
+                    block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
+                    block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
+                    linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp],element.local_raw[block_br_linesamp]
+                    sample_linesamps = torch.stack([torch.randint(linesamp_min[0],linesamp_max[0],(patches_per_batch // 4,)),
+                                                    torch.randint(linesamp_min[1],linesamp_max[1],(patches_per_batch // 4,))],
                                                     dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
                     sample_linesamps = torch.concatenate([sample_linesamps,
-                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
-                                                        torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
-                                                        torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
+                                                        torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
+                                                        torch.stack([sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1)],
                                                         dim=0)
-                    # torch.cuda.synchronize()
-                    # dists,idxs = element.kd_tree.query(sample_linesamps,nr_nns_searches=3)
+
                     dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
                     # torch.cuda.synchronize()
                     valid_mask = dists.max(dim=1).values < 64
@@ -339,24 +395,6 @@ class Grid():
                     confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
                     objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
-
-
-
-
-                    # dists = 1. / (dists[valid_mask] + 1e-6)
-                    # idxs = idxs[valid_mask]
-                    # dists = dists / torch.mean(dists,dim=-1,keepdim=True)
-                    # features_pD = element.buffer['features'][idxs].contiguous()
-                    # confs_p1 = element.buffer['confs'][idxs].contiguous()
-                    # objs_p3 = element.buffer['objs'][idxs].contiguous()
-                    # locals_p2 = sample_linesamps[valid_mask]
-                    # features_pD = features_pD * dists.unsqueeze(-1)
-                    # confs_p1 = confs_p1 * dists
-                    # objs_p3 = objs_p3 * dists.unsqueeze(-1)
-                    # features_pD = torch.mean(features_pD,dim=1).to(torch.float32)
-                    # confs_p1 = torch.mean(confs_p1,dim=1).to(torch.float32)
-                    # objs_p3 = torch.mean(objs_p3,dim=1).to(torch.float32)
-
 
                     if vis_flag <= 2:
                         def visualize_points(points1, points2, output_path, padding=50, point_radius=5):
@@ -404,7 +442,7 @@ class Grid():
 
                             # 保存图像到指定路径
                             cv2.imwrite(output_path, canvas)
-                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][idxs].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{vis_flag}.png'),point_radius=2)
+                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals'])[:10000])].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
                         vis_flag += 1
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
@@ -416,7 +454,7 @@ class Grid():
 
                 
                 # 筛出在grid的border范围内的，范围外的不参与学习
-                inside_border_mask = (objs_p3[:,0] >= self.border[0]) & (objs_p3[:,0] <= self.border[2]) & (objs_p3[:,1] >= self.border[1]) & (objs_p3[:,1] <= self.border[3])
+                inside_border_mask = (objs_p3[:,0] >= block.border[0]) & (objs_p3[:,0] <= block.border[2]) & (objs_p3[:,1] >= block.border[1]) & (objs_p3[:,1] <= block.border[3])
                 features_pD = features_pD[inside_border_mask]
                 confs_p1 = confs_p1[inside_border_mask]
                 objs_p3 = objs_p3[inside_border_mask]
@@ -448,14 +486,14 @@ class Grid():
 
                 #=====================================================
 
-                output_16p1_list,valid_score_positive = self.mapper(features_1Dp1,per_digit = True)
-                valid_score_nagetive = self.mapper.forward_valid(negative_feature_1Dp1)
+                output_16p1_list,valid_score_positive = mapper(features_1Dp1,per_digit = True)
+                valid_score_nagetive = mapper.forward_valid(negative_feature_1Dp1)
                 
                 mu_xyh_p3_list = []
                 log_sigma_xyh_p3_list = []
                 for output_16p1 in output_16p1_list:
                     output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
-                    mu_xyh_p3_list.append(self.warp_by_poly(output_p6[:,:3],self.map_coeffs))
+                    mu_xyh_p3_list.append(self.warp_by_poly(output_p6[:,:3],block.map_coeffs))
                     log_sigma_xyh_p3_list.append(output_p6[:,3:])
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
@@ -507,7 +545,7 @@ class Grid():
             scheduler.step()
 
             if loss_photo > min_photo_loss * 10.:
-                self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                mapper.load_state_dict(best_mapper_state_dict['model'])
                 optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                 if no_update_count > 0:
                     scheduler.trigger_cooldown()
@@ -530,7 +568,7 @@ class Grid():
                     no_update_count = 0
                     if last_mapper_state_dict is None:
                         best_mapper_state_dict = {
-                            'model':deepcopy(self.mapper.state_dict()),
+                            'model':deepcopy(mapper.state_dict()),
                             'optimizer':deepcopy(optimizer.state_dict())
                         }
                     else:
@@ -539,19 +577,19 @@ class Grid():
                     no_update_count += 1
                 
                 if no_update_count >= 200 or (no_update_count > 0 and total_loss_photo > min_photo_loss * 10.):
-                    self.mapper.load_state_dict(best_mapper_state_dict['model'])
+                    mapper.load_state_dict(best_mapper_state_dict['model'])
                     optimizer.load_state_dict(best_mapper_state_dict['optimizer'])
                     scheduler.trigger_cooldown()
                     no_update_count = -1e9 #防止重复启动
                     early_stop_iter = iter_idx + self.options.grid_cooldown_iters
 
                 last_mapper_state_dict = {
-                        'model':deepcopy(self.mapper.state_dict()),
+                        'model':deepcopy(mapper.state_dict()),
                         'optimizer':deepcopy(optimizer.state_dict())
                     }
 
-                if save_checkpoint:
-                    self.save_grid()
+                # if save_checkpoint:
+                #     self.save_grid()
                 total_loss = 0
                 total_loss_dist = 0
                 total_loss_obj = 0
@@ -564,20 +602,14 @@ class Grid():
                 break
         # if early_stop_iter > 0:
         #     print("early stopped")
-        self.mapper.load_state_dict(best_mapper_state_dict['model'])
+        mapper.load_state_dict(best_mapper_state_dict['model'])
         if min_photo_loss < 25.:
-            self.status = self.STATES.WELL_TRAINED
+            block.status = self.STATES.WELL_TRAINED
         else:
-            self.status = self.STATES.BAD_TRAINED
+            block.status = self.STATES.BAD_TRAINED
         # torch.save(best_mapper_state_dict,os.path.join(self.output_path,'grid_mapper.pth'))
         self.save_grid()
-        for element in self.elements:
-            element.clear_buffer()
-        self.elements = None
-        if not task_info is None:
-            self.update_task_state(task_info,{
-                'status':f"Grid {task_info['id']}:训练完成"
-            })
+        
     
     def finetune_mapper(self,task_info = None,save_checkpoint = True):
         max_patch_num = max(*[element.patch_num for element in self.elements],0)
@@ -828,41 +860,31 @@ class Grid():
 
     def save_grid(self):
         state_dict = {
-            'mapper':self.mapper.state_dict(),
-            'optimizer':self.optimizer.state_dict(),
-            'scheduler':self.scheduler.state_dict(),
-            'train_iter_idx':self.train_iter_idx,
             'diag':torch.from_numpy(self.diag),
-            'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
-            'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
-            'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),
-            'num_blocks':self.options.mapper_blocks_num,
-            'status':self.status
+            'mapper_blocks_num':self.options.mapper_blocks_num,
+            'block_num':len(self.blocks),
+            **{f'block_{block_idx}':block.get_block_state_dict() for block_idx,block in enumerate(self.blocks)}
         }
         torch.save(state_dict,os.path.join(self.output_path,'grid_data.pth'))
 
     def load_grid(self,path:str):
         state_dict = torch.load(os.path.join(path,'grid_data.pth'))
         name = os.path.basename(path)
-        self.options.mapper_blocks_num = state_dict['num_blocks']
-        self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=self.options.mapper_blocks_num)
-        self.mapper.load_state_dict(state_dict['mapper'])
-        self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-        self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
-                                            total_steps=self.options.grid_training_iters,
-                                            warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
-                                            cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
-        self.optimizer.load_state_dict(state_dict['optimizer'])
-        self.scheduler.load_state_dict(state_dict['scheduler'])
-        self.train_iter_idx = state_dict['train_iter_idx']
-        self.diag = state_dict['diag'].cpu().numpy()
-        self.map_coeffs = {
-            'x':state_dict['map_coeffs_x'].cpu().numpy(),
-            'y':state_dict['map_coeffs_y'].cpu().numpy(),
-            'h':state_dict['map_coeffs_h'].cpu().numpy(),
-        }
-        self.status = state_dict['status']
-        
+        self.options.mapper_blocks_num = state_dict['mapper_blocks_num']
+        self.blocks = []
+        for block_idx in range(state_dict['block_num']):
+            block_state_dict = state_dict[f'block_{block_idx}']
+            block_diag = block_state_dict['diag'].numpy()
+            block_diag_pix = block_state_dict['diag_pix'].numpy()
+            block_map_coeffs = {
+                'x':block_state_dict['map_coeffs_x'].numpy(),
+                'y':block_state_dict['map_coeffs_y'].numpy(),
+                'h':block_state_dict['map_coeffs_h'].numpy(),
+            }
+            block = Block(self.options,block_diag,block_diag_pix,block_map_coeffs)
+            block.mapper.load_state_dict(block_state_dict['mapper'])
+            block.status = block_state_dict['status']
+            self.blocks.append(block)        
         
         print(f"Grid '{name} loaded succesfully'")
     
@@ -895,6 +917,8 @@ class Grid():
         if local is None:
             local = get_coord_mat(H,W)
         
+        index = get_coord_mat(H,W)
+
         flex_step = False
         if step is None:
             flex_step = True
@@ -908,18 +932,22 @@ class Grid():
         col_num = 0
         crop_imgs = []
         crop_locals = []
+        crop_indexs = []
 
         if not step is None and step <= 0 :
             img = cv2.resize(img,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
             local = cv2.resize(local,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
+            index = cv2.resize(index,(crop_size + self.encoder.SAMPLE_FACTOR,crop_size + self.encoder.SAMPLE_FACTOR))
             for i in range(self.encoder.SAMPLE_FACTOR):
                 for j in range(self.encoder.SAMPLE_FACTOR):
                     crop_imgs.append(img[i:crop_size + i,j:crop_size + j])
                     crop_locals.append(local[i:crop_size + i,j:crop_size + j])
+                    crop_indexs.append(index[i:crop_size + i,j:crop_size + j])
             crop_imgs = np.stack(crop_imgs)
             crop_locals = np.stack(crop_locals)
+            crop_indexs = np.stack(crop_indexs)
 
-            return crop_imgs,crop_locals
+            return crop_imgs,crop_locals,crop_indexs
             
 
         for ratio in size_ratios:
@@ -951,9 +979,11 @@ class Grid():
 
                     img_crop = cv2.resize(img[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
                     local_crop = cv2.resize(local[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
+                    index_crop = cv2.resize(index[row_start:row_end,col_start:col_end],(crop_size,crop_size), interpolation=cv2.INTER_LINEAR)
 
                     crop_imgs.append(img_crop)
                     crop_locals.append(local_crop)
+                    crop_indexs.append(index_crop)
 
                     cut_number += 1
                     pbar.update(1)
@@ -969,11 +999,13 @@ class Grid():
                 row = np.random.randint(0,H - crop_size)
                 crop_imgs.append(img[row:row + crop_size,col:col + crop_size])
                 crop_locals.append(local[row:row + crop_size,col:col + crop_size])
+                crop_indexs.append(index[row:row + crop_size,col:col + crop_size])
             
         crop_imgs = np.stack(crop_imgs)
         crop_locals = np.stack(crop_locals)
+        crop_indexs = np.stack(crop_indexs)
 
-        return crop_imgs,crop_locals
+        return crop_imgs,crop_locals,crop_indexs
 
     @torch.no_grad()
     def pred_xyh(self,img_raw:np.ndarray,local_hw2:np.ndarray) -> Dict[str,np.ndarray]:
@@ -984,16 +1016,12 @@ class Grid():
         self.encoder.eval().to(self.device)
         self.mapper.eval().to(self.device)
 
-        if self.options.crop_step > 0:
-            crop_step = self.options.crop_step
-        else:
-            crop_step = min(int(np.sqrt((H - self.options.crop_size) * (W - self.options.crop_size) / 64.)),self.options.crop_size)
-        crop_imgs_NHWC,crop_locals_NHW2 = self.__crop_img__(img = img_raw,
-                                                            crop_size = self.options.crop_size,
-                                                            expect_num = 256,
-                                                            size_ratios = [1.],
-                                                            random_ratio = 1.,
-                                                            local=local_hw2)
+        crop_imgs_NHWC,crop_locals_NHW2,crop_indexs_NHW2 = self.__crop_img__(img = img_raw,
+                                                                            crop_size = self.options.crop_size,
+                                                                            expect_num = 256,
+                                                                            size_ratios = [1.],
+                                                                            random_ratio = 1.,
+                                                                            local=local_hw2)
         print("Tranforming Images")
         imgs_NCHW = torch.from_numpy(crop_imgs_NHWC).permute(0,3,1,2)
         imgs_NCHW = imgs_NCHW.float() / 255.0
@@ -1004,6 +1032,8 @@ class Grid():
         imgs_NCHW = torch.concatenate(imgs_NCHW,dim=0)
         locals_NHW2= torch.from_numpy(crop_locals_NHW2)
         locals_Nhw2 = downsample(locals_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,mode='avg',device=self.device)
+        indexs_NHW2 = torch.from_numpy(crop_indexs_NHW2)
+        indexs_Nhw2 = downsample(indexs_NHW2,self.encoder.SAMPLE_FACTOR,use_cuda=True,mode='avg',device=self.device)
         total_patch_num = locals_Nhw2.shape[0] * locals_Nhw2.shape[1] * locals_Nhw2.shape[2]
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
 
@@ -1011,11 +1041,13 @@ class Grid():
         features_PD = []
         confs_P1 = []
         locals_P2 = []
+        indexs_P2 = []
 
         print("Extracting Features")
         for batch_idx in trange(batch_num):
             batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
+            batch_indexs = indexs_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
@@ -1027,41 +1059,64 @@ class Grid():
             features_PD.append(feat[valid_mask][select_idxs])
             confs_P1.append(conf[valid_mask][select_idxs])
             locals_P2.append(batch_locals[valid_mask][select_idxs])
+            indexs_P2.append(batch_indexs[valid_mask][select_idxs])
 
         features_PD = torch.cat(features_PD,dim=0)
         confs_P1 = torch.cat(confs_P1,dim=0)
         locals_P2 = torch.cat(locals_P2,dim=0)
+        indexs_P2 = torch.cat(indexs_P2,dim=0)
 
         patches_per_batch = self.options.patches_per_batch
         batch_num = int(np.ceil(features_PD.shape[0] / patches_per_batch))
+
+
+
         print("Predicting Geographic Coordinates")
         mu_xyh_preds = []
         sigma_xyh_preds = []
         valid_scores = []
-        for batch_idx in trange(batch_num):
-            features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]
+        linesamps_gt = []
+
+        for block in tqdm(self.blocks):
+            line_min,line_max,samp_min,samp_max = block.diag_ratio[0,0] * H, block.diag_ratio[1,0] * H, block.diag_ratio[0,1] * W, block.diag_ratio[1,1] * W
+            inside_block_mask = (indexs_P2[:,0] >= line_min) & (indexs_P2[:,1] >= samp_min) & (indexs_P2[:,0] <= line_max) & (indexs_P2[:,1] <= samp_max)
+            features_1Dp1 = features_PD[inside_block_mask].permute(1,0)[None,:,:,None]
             output_16p1,valid_score = self.mapper(features_1Dp1)
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
             valid_score_p1 = valid_score.reshape(-1)
 
-            if mu_xyh_p3.shape[0] != sigma_xyh_p3.shape[0] or mu_xyh_p3.shape[0] != valid_score_p1.shape[0]:
-                print(mu_xyh_p3.shape,sigma_xyh_p3.shape,valid_score_p1.shape)
-                raise ValueError("shape doesn't match")
-
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)
             valid_scores.append(valid_score_p1)
+            linesamps_gt.append(locals_P2[inside_block_mask])
+
+        # for batch_idx in trange(batch_num):
+        #     features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]
+        #     output_16p1,valid_score = self.mapper(features_1Dp1)
+        #     output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
+        #     mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+        #     sigma_xyh_p3 = torch.exp(output_p6[:,3:])
+        #     valid_score_p1 = valid_score.reshape(-1)
+
+        #     if mu_xyh_p3.shape[0] != sigma_xyh_p3.shape[0] or mu_xyh_p3.shape[0] != valid_score_p1.shape[0]:
+        #         print(mu_xyh_p3.shape,sigma_xyh_p3.shape,valid_score_p1.shape)
+        #         raise ValueError("shape doesn't match")
+
+        #     mu_xyh_preds.append(mu_xyh_p3)
+        #     sigma_xyh_preds.append(sigma_xyh_p3)
+        #     valid_scores.append(valid_score_p1)
         
         mu_xyh_P3 = torch.concatenate(mu_xyh_preds,dim=0)
         sigma_xyh_P3 = torch.concatenate(sigma_xyh_preds,dim=0)
         valid_scores_P1 = torch.concatenate(valid_scores,dim=0)
+        linesamps_gt_P2 = torch.concatenate(linesamps_gt,dim=0) 
        
         res = {
             'mu_xyh_P3':mu_xyh_P3,
             'sigma_xyh_P3':sigma_xyh_P3,
-            'locals_P2':locals_P2,
+            'locals_P2':linesamps_gt_P2,
             'confs_P1':confs_P1,
             'valid_score_P1':valid_scores_P1
         }
