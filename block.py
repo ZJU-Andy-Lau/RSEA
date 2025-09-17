@@ -34,7 +34,7 @@ from pykeops.torch import LazyTensor
 
 from rs_image import RSImage
 from element import Element
-from grid import Status
+from utils import Status
 
 
 class Block():

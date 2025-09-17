@@ -1,4 +1,4 @@
-from enum import Enum
+from utils import Status
 import warnings
 import scheduler
 warnings.filterwarnings('ignore')
@@ -39,10 +39,7 @@ def redirect_output(output_path:str,info:str):
     with open(output_path,'a') as f:
         f.write(info)
 
-class Status(Enum):
-    NOT_INIT = 0
-    WELL_TRAINED = 1
-    BAD_TRAINED = 2
+
 
 class Grid():
     STATES = Status

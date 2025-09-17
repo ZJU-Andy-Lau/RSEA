@@ -17,6 +17,7 @@ import argparse
 from rpc import RPCModelParameterTorch
 from typing import Tuple
 from sklearn.decomposition import PCA
+from enum import Enum
 
 def get_current_time():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -767,3 +768,9 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
     
     cv2.imwrite(output_path.replace('.png','_cont.png'),canvas_cont)
     cv2.imwrite(output_path.replace('.png','_div.png'),canvas_div)
+
+
+class Status(Enum):
+    NOT_INIT = 0
+    WELL_TRAINED = 1
+    BAD_TRAINED = 2
