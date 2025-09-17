@@ -1,3 +1,4 @@
+import stat
 from utils import Status
 import warnings
 import scheduler
@@ -368,7 +369,7 @@ class Grid():
                     #                                     dim=0)
                     block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
                     block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
-                    linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0],block_br_linesamp[1]]
+                    linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0] - 1,block_br_linesamp[1] - 1]
                     sample_linesamps = torch.stack([torch.rand((patches_per_batch // 4,)) * (linesamp_max[0] - linesamp_min[0]) + linesamp_min[0],
                                                     torch.rand((patches_per_batch // 4,)) * (linesamp_max[1] - linesamp_min[1]) + linesamp_min[1]],
                                                     dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
@@ -873,6 +874,7 @@ class Grid():
         state_dict = torch.load(os.path.join(path,'grid_data.pth'))
         name = os.path.basename(path)
         self.options.mapper_blocks_num = state_dict['mapper_blocks_num']
+        self.diag = state_dict['diag'].numpy()
         self.blocks = []
         for block_idx in range(state_dict['block_num']):
             block_state_dict = state_dict[f'block_{block_idx}']
