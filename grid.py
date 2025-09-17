@@ -367,10 +367,6 @@ class Grid():
                     block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
                     block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
                     linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0],block_br_linesamp[1]]
-                    print(f"block_tl_linesamp:{block_tl_linesamp}")
-                    print(f"block_br_linesamp:{block_br_linesamp}")
-                    print(f"linesamp_min:{linesamp_min}")
-                    print(f"linesamp_max:{linesamp_max}")
                     sample_linesamps = torch.stack([torch.rand((patches_per_batch // 4,)) * (linesamp_max[0] - linesamp_min[0]) + linesamp_min[0],
                                                     torch.rand((patches_per_batch // 4,)) * (linesamp_max[1] - linesamp_min[1]) + linesamp_min[1]],
                                                     dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
