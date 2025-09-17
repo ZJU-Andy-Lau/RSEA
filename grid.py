@@ -178,7 +178,7 @@ class Grid():
         heights = torch.concatenate(heights).cpu().numpy()
         xys = torch.concatenate(xys).cpu().numpy()
         for block in self.blocks:
-            mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] >= block.diag[0,1]) & (xys[:,0] < block.diag[1,0]) & (xys[:,1] < block.diag[1,1])
+            mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] <= block.diag[0,1]) & (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
             height = heights[mask]
             print(f"valid_num:{mask.sum()}")
             print(f"height shape:{height.shape}")
