@@ -95,7 +95,6 @@ class Grid():
     def to_device(self,device):
         self.device = device
         self.encoder.to(device)
-        # self.mapper.to(device)
         for block in self.blocks:
             block.mapper.to(device)
         for element in self.elements:
@@ -117,6 +116,8 @@ class Grid():
             np.stack([x_tls,y_tls],axis=-1),
             np.stack([x_tls + block_size,y_tls - block_size],axis=-1)
         ],axis=1)
+
+        print(f"diags:{diags.astype(int)}")
         
         blocks = []
         for diag in diags:
@@ -1012,7 +1013,6 @@ class Grid():
         """
         H,W = img_raw.shape[:2]
         self.encoder.eval().to(self.device)
-        self.mapper.eval().to(self.device)
 
         crop_imgs_NHWC,crop_locals_NHW2,crop_indexs_NHW2 = self.__crop_img__(img = img_raw,
                                                                             crop_size = self.options.crop_size,
@@ -1076,10 +1076,11 @@ class Grid():
         linesamps_gt = []
 
         for block in tqdm(self.blocks):
+            block.mapper.eval().to(self.device)
             line_min,line_max,samp_min,samp_max = block.diag_ratio[0,0] * H, block.diag_ratio[1,0] * H, block.diag_ratio[0,1] * W, block.diag_ratio[1,1] * W
             inside_block_mask = (indexs_P2[:,0] >= line_min) & (indexs_P2[:,1] >= samp_min) & (indexs_P2[:,0] <= line_max) & (indexs_P2[:,1] <= samp_max)
             features_1Dp1 = features_PD[inside_block_mask].permute(1,0)[None,:,:,None]
-            output_16p1,valid_score = self.mapper(features_1Dp1)
+            output_16p1,valid_score = block.mapper(features_1Dp1)
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
