@@ -180,6 +180,9 @@ class Grid():
         for block in self.blocks:
             mask = (locals[:,0] >= block.diag[0,0]) & (locals[:,1] >= block.diag[0,1]) & (locals[:,0] < block.diag[1,0]) & (locals[:,1] < block.diag[1,1])
             height = heights[mask]
+            print(f"mask shape:{mask.shape}")
+            print(f"height shape:{height.shape}")
+            print(f"height:{height}")
             block.map_coeffs['h'] = get_map_coef(height)
         # self.map_coeffs['h'] = get_map_coef(heights)
 
