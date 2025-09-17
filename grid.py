@@ -110,6 +110,9 @@ class Grid():
         w_shrink_ratio = w / (w_block_num * block_size)
         y_tls = self.diag[0,1] - (np.arange(0,(h_block_num - 1) * block_size + 1,block_size) * h_shrink_ratio) 
         x_tls = self.diag[0,0] + (np.arange(0,(w_block_num - 1) * block_size + 1,block_size) * w_shrink_ratio)
+        x_tls,y_tls = np.meshgrid(x_tls,y_tls,indexing='xy')
+        x_tls,y_tls = x_tls.ravel(),y_tls.ravel()
+
         diags = np.stack([
             np.stack([x_tls,y_tls],axis=-1),
             np.stack([x_tls + block_size,y_tls - block_size],axis=-1)
@@ -174,7 +177,7 @@ class Grid():
         heights = torch.concatenate(heights).cpu().numpy()
         locals = torch.concatenate(locals).cpu().numpy()
         for block in self.blocks:
-            mask = (locals[:,0] >= block.diag[0,0]) & (locals[:,1] >= block[0,1]) & (locals[:,0] < block.diag[1,0]) & (locals[:,1] < block[1,1])
+            mask = (locals[:,0] >= block.diag[0,0]) & (locals[:,1] >= block.diag[0,1]) & (locals[:,0] < block.diag[1,0]) & (locals[:,1] < block.diag[1,1])
             height = heights[mask]
             block.map_coeffs['h'] = get_map_coef(height)
         # self.map_coeffs['h'] = get_map_coef(heights)
