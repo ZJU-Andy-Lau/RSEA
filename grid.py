@@ -1,7 +1,5 @@
 from enum import Enum
 import warnings
-
-from dinov3.dinov3.eval.segmentation.models.utils.ops.test import D
 import scheduler
 warnings.filterwarnings('ignore')
 import argparse
