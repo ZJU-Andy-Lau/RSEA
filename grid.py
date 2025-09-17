@@ -74,14 +74,16 @@ class Grid():
         self.output_path = output_path
         self.elements:List[Element] = []
         self.transform = nn.Sequential(
-            # K.Normalize(
-            #     mean=torch.tensor([0.485, 0.456, 0.406]), 
-            #     std=torch.tensor([0.229, 0.224, 0.225])
-            # )
+            #for-swt
             K.Normalize(
-                mean=torch.tensor([0.430, 0.411, 0.296]), 
-                std=torch.tensor([0.213, 0.156, 0.143])
+                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                std=torch.tensor([0.229, 0.224, 0.225])
             )
+            #for-dino
+            # K.Normalize(
+            #     mean=torch.tensor([0.430, 0.411, 0.296]), 
+            #     std=torch.tensor([0.213, 0.156, 0.143])
+            # )
         ).eval()
         self.train_data = []
         self.SAMPLE_FACTOR = 16
@@ -464,9 +466,9 @@ class Grid():
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                # features_1Dp1 = features_1Dp1 + patch_feature_noise
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -478,9 +480,9 @@ class Grid():
                 negative_noise_amp =  100. / dis
                 negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
                 #for-swt
-                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                # negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
 
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
@@ -707,9 +709,9 @@ class Grid():
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                # features_1Dp1 = features_1Dp1 + patch_feature_noise
                 
                 #===================生成负样本特征=====================
 
@@ -722,9 +724,9 @@ class Grid():
                 negative_noise_amp =  100. / dis
                 negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
                 #for-swt
-                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                # negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
 
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
