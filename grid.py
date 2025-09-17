@@ -117,7 +117,7 @@ class Grid():
             np.stack([x_tls + block_size,y_tls - block_size],axis=-1)
         ],axis=1)
 
-        print(f"diags:{diags.astype(int)}")
+        # print(f"diags:{diags.astype(int)}")
         
         blocks = []
         for diag in diags:
@@ -130,7 +130,7 @@ class Grid():
                 [np.abs(diag[0,1] - self.diag[0,1]) / h , np.abs(diag[0,0] - self.diag[0,0]) / w],
                 [np.abs(diag[1,1] - self.diag[0,1]) / h , np.abs(diag[1,0] - self.diag[0,0]) / w]
             ])
-            print(f"diag:{diag} \n diag_ratio:{diag_ratio} \n==============================\n")
+            # print(f"diag:{diag} \n diag_ratio:{diag_ratio} \n==============================\n")
             block = Block(self.options,diag,diag_ratio,map_coeffs)
             blocks.append(block)
         return blocks
@@ -180,9 +180,6 @@ class Grid():
         for block in self.blocks:
             mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] <= block.diag[0,1]) & (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
             height = heights[mask]
-            print(f"valid_num:{mask.sum()}")
-            print(f"height shape:{height.shape}")
-            print(f"height:{height}")
             block.map_coeffs['h'] = get_map_coef(height)
         # self.map_coeffs['h'] = get_map_coef(heights)
 
@@ -369,6 +366,10 @@ class Grid():
                     block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
                     block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
                     linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp],element.local_raw[block_br_linesamp]
+                    print(f"block_tl_linesamp:{block_tl_linesamp}")
+                    print(f"block_br_linesamp:{block_br_linesamp}")
+                    print(f"linesamp_min:{linesamp_min}")
+                    print(f"linesamp_max:{linesamp_max}")
                     sample_linesamps = torch.stack([torch.randint(linesamp_min[0],linesamp_max[0],(patches_per_batch // 4,)),
                                                     torch.randint(linesamp_min[1],linesamp_max[1],(patches_per_batch // 4,))],
                                                     dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
