@@ -251,8 +251,8 @@ def pretrain(args):
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
                                              total_steps=dataset_num * args.max_epoch,
-                                             warmup_ratio=min(50. / args.max_epoch,.1),
-                                             cooldown_ratio=.7)
+                                             warmup_ratio=.6,
+                                             cooldown_ratio=.2)
     
     args.output_channels = encoder.output_channels
     
