@@ -171,16 +171,16 @@ class Grid():
 
     def get_height_map_coeffs(self):
         heights = []
-        locals = []
+        xys = []
         for element in self.elements:
             heights.append(element.buffer['objs'][:,2])
-            locals.append(element.buffer['locals'])
+            xys.append(element.buffer['objs'][:,:2])
         heights = torch.concatenate(heights).cpu().numpy()
-        locals = torch.concatenate(locals).cpu().numpy()
+        xys = torch.concatenate(xys).cpu().numpy()
         for block in self.blocks:
-            mask = (locals[:,0] >= block.diag[0,0]) & (locals[:,1] >= block.diag[0,1]) & (locals[:,0] < block.diag[1,0]) & (locals[:,1] < block.diag[1,1])
+            mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] >= block.diag[0,1]) & (xys[:,0] < block.diag[1,0]) & (xys[:,1] < block.diag[1,1])
             height = heights[mask]
-            print(f"mask shape:{mask.shape}")
+            print(f"valid_num:{mask.sum()}")
             print(f"height shape:{height.shape}")
             print(f"height:{height}")
             block.map_coeffs['h'] = get_map_coef(height)
