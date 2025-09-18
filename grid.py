@@ -1087,7 +1087,7 @@ class Grid():
             features_1Dp1 = features_PD[inside_block_mask].permute(1,0)[None,:,:,None]
             output_16p1,valid_score = block.mapper(features_1Dp1)
             output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
-            mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],self.map_coeffs)
+            mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],block.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
             valid_score_p1 = valid_score.reshape(-1)
 
