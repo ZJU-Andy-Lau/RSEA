@@ -251,8 +251,8 @@ def pretrain(args):
 
     encoder_scheduler = MultiStageOneCycleLR(optimizer=encoder_optimizer,
                                              total_steps=dataset_num * args.max_epoch,
-                                             warmup_ratio=.6,
-                                             cooldown_ratio=.2)
+                                             warmup_ratio=min(50. / args.max_epoch,.1),
+                                             cooldown_ratio=.7)
     
     args.output_channels = encoder.output_channels
     
@@ -378,14 +378,14 @@ def pretrain(args):
             loss.backward()
             # scaler.scale(loss).backward()
 
-            encoder_optimizer.step()
+            # encoder_optimizer.step()
             decoder_optimizer.step()
             # scaler.step(encoder_optimizer)
             # for idx in dataset_idxs:
             #     scaler.step(optimizers[idx])
             # scaler.update()
 
-            encoder_scheduler.step()
+            # encoder_scheduler.step()
             
             loss_rec = loss.clone().detach()
             loss_obj_rec = loss_obj.clone().detach()
@@ -423,7 +423,8 @@ def pretrain(args):
 
                 print(f"epoch:{epoch} iter:{iter_idx+1}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t en_lr:{encoder_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
-
+        encoder_optimizer.step()
+        encoder_scheduler.step()
         for scheduler in schedulers:
             scheduler.step()            
         
