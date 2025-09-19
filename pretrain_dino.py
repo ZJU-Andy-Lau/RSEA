@@ -106,7 +106,6 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
 
 
 def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,criterion:nn.Module):
-    t0 = time.perf_counter()
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -117,34 +116,34 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     overlap2 = data['overlap2'].squeeze(0).to(args.device)
     obj_map_coef = data['obj_map_coef']
     B,H,W = obj1.shape[:3]
-    t1 = time.perf_counter()
+
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
-    t2 = time.perf_counter()
+
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 
     # project_feat1 = projector(feat1_sample)
     # project_feat2 = projector(feat2_sample)
 
-    feat_noise_amp1 = torch.rand(feat1.shape[0],1,feat1.shape[2],feat1.shape[3]).to(args.device) * .3
-    feat_noise_amp2 = torch.rand(feat2.shape[0],1,feat2.shape[2],feat2.shape[3]).to(args.device) * .3
-    feat_noise1 = F.normalize(torch.normal(mean=0.,std=feat1.std().item(),size=feat1.shape),dim=1).to(args.device) * feat_noise_amp1
-    feat_noise2 = F.normalize(torch.normal(mean=0.,std=feat2.std().item(),size=feat2.shape),dim=1).to(args.device) * feat_noise_amp2
+    # feat_noise_amp1 = torch.rand(feat1.shape[0],1,feat1.shape[2],feat1.shape[3]).to(args.device) * .3
+    # feat_noise_amp2 = torch.rand(feat2.shape[0],1,feat2.shape[2],feat2.shape[3]).to(args.device) * .3
+    # feat_noise1 = F.normalize(torch.normal(mean=0.,std=feat1.std().item(),size=feat1.shape),dim=1).to(args.device) * feat_noise_amp1
+    # feat_noise2 = F.normalize(torch.normal(mean=0.,std=feat2.std().item(),size=feat2.shape),dim=1).to(args.device) * feat_noise_amp2
 
 
-    feat_input1 = feat1 + feat_noise1
-    feat_input2 = feat2 + feat_noise2
+    feat_input1 = feat1 #+ feat_noise1
+    feat_input2 = feat2 #+ feat_noise2
     # feat_input1 = feat1
     # feat_input2 = feat2
-    t3 = time.perf_counter()
+
     output1_B3hw = decoder(feat_input1)
     output2_B3hw = decoder(feat_input2)
     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
     pred1_P3 = warp_by_poly(output1_P3,obj_map_coef)
     pred2_P3 = warp_by_poly(output2_P3,obj_map_coef)
-    t4 = time.perf_counter()
+
     decoder_freeze = deepcopy(decoder)
     for params in decoder_freeze.parameters():
         params.requires_grad_ = False
@@ -155,7 +154,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     output2_freeze_P3 = output2_freeze_B3hw.permute(0,2,3,1).flatten(0,2)
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
-    t5 = time.perf_counter()
+
     project_feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
     project_feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
@@ -176,8 +175,6 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
     loss = loss + loss_dis * max(min(1.,epoch / 50. - 1.),0.)
-    t6 = time.perf_counter()
-    print('rand:',dist.get_rank(),t1 - t0,t2 - t1,t3 - t2,t4 - t3,t5 - t4,t6 - t5)
 
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean
 
@@ -509,7 +506,7 @@ def pretrain(args):
                 vis_img_raw = cv2.imread(args.vis_img_path)
                 vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
-                feat,conf_cont,conf_div = vis(encoder,vis_img,os.path.join(path,f'vis_{epoch}'))
+                feat,conf_cont,conf_div = vis(encoder,vis_img)
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
