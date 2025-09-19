@@ -248,6 +248,12 @@ def pretrain(args):
     sampler = ImageSampler(dataset,shuffle=True)
     dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=8,drop_last=False,pin_memory=True,shuffle=False)
     dataset_num = dataset.dataset_num
+    train_images = dataset.get_train_images()
+    if dist.get_rank() == 0:
+        for i,img in enumerate(train_images):
+            tag = f'train_imgs/{i}'
+            logger.add_image(tag,img,0,dataformats='HWC')
+
 
     pprint("Building Encoder")
 
@@ -535,6 +541,8 @@ def pretrain(args):
 
         # print(f"\n9---------debug:{dist.get_rank()}\n")
         dist.barrier()
+    if dist.get_rank() == 0:
+        logger.close()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

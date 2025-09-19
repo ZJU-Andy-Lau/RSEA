@@ -506,7 +506,8 @@ class Grid():
                                                                                             confs_p1,
                                                                                             locals_p2,
                                                                                             objs_p3,
-                                                                                            element.rpc) #,loss_bias,loss_reg
+                                                                                            element.rpc) #,loss_bias,
+                print(loss_photo)
                 
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0).to(valid_pred.device) # positive,negative
