@@ -8,6 +8,8 @@ import torch.nn.functional as F
 import torch.nn.init as init
 from torch.nn.parallel import DistributedDataParallel
 import torch.distributed as dist
+from torch.utils.tensorboard import SummaryWriter
+
 from torchvision import transforms
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
@@ -87,8 +89,8 @@ def output_img(imgs_raw:torch.Tensor,output_path:str,name:str):
         cv2.imwrite(f'{output_path}/{name}_{idx}.png',img.astype(np.uint8))
 
 @torch.no_grad()
-def vis(encoder:EncoderDino,vis_img:np.ndarray,output_folder):
-    os.makedirs(output_folder,exist_ok=True)
+def vis(encoder:EncoderDino,vis_img:np.ndarray):
+    # os.makedirs(output_folder,exist_ok=True)
     transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.430, 0.411, 0.296), (0.213, 0.156, 0.143)) # (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
@@ -98,11 +100,13 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray,output_folder):
     h,w,c = feat.shape[-2],feat.shape[-1],feat.shape[1]
     feat = feat.permute(0,2,3,1).reshape(h,w,c).cpu().numpy()
     conf = conf.reshape(h,w).cpu().numpy()
-    vis_feat_pca(feat,os.path.join(output_folder,'feat_pca.png'))
-    vis_conf(conf,vis_img,16,os.path.join(output_folder,'conf.png'))
+    feat = vis_feat_pca(feat)
+    conf_cont,conf_div = vis_conf(conf)
+    return feat,conf_cont,conf_div
 
 
 def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,criterion:nn.Module):
+    t0 = time.perf_counter()
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -113,10 +117,10 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     overlap2 = data['overlap2'].squeeze(0).to(args.device)
     obj_map_coef = data['obj_map_coef']
     B,H,W = obj1.shape[:3]
-
+    t1 = time.perf_counter()
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
-
+    t2 = time.perf_counter()
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
 
@@ -133,14 +137,14 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     feat_input2 = feat2 + feat_noise2
     # feat_input1 = feat1
     # feat_input2 = feat2
-    
+    t3 = time.perf_counter()
     output1_B3hw = decoder(feat_input1)
     output2_B3hw = decoder(feat_input2)
     output1_P3 = output1_B3hw.permute(0,2,3,1).flatten(0,2)
     output2_P3 = output2_B3hw.permute(0,2,3,1).flatten(0,2)
     pred1_P3 = warp_by_poly(output1_P3,obj_map_coef)
     pred2_P3 = warp_by_poly(output2_P3,obj_map_coef)
-
+    t4 = time.perf_counter()
     decoder_freeze = deepcopy(decoder)
     for params in decoder_freeze.parameters():
         params.requires_grad_ = False
@@ -151,7 +155,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     output2_freeze_P3 = output2_freeze_B3hw.permute(0,2,3,1).flatten(0,2)
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
-
+    t5 = time.perf_counter()
     project_feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
     project_feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
@@ -172,6 +176,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
     loss = loss + loss_dis * max(min(1.,epoch / 50. - 1.),0.)
+    t6 = time.perf_counter()
+    print('rand:',dist.get_rank(),t1 - t0,t2 - t1,t3 - t2,t4 - t3,t5 - t4,t6 - t5)
 
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean
 
@@ -195,7 +201,8 @@ def pretrain(args):
         obj_map_coefs = [{k:v.numpy() for k,v in i.items()} for i in obj_map_coefs]
         log_name = training_configs['log_name']
         if rank == 0:
-            logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
+            # logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],name = log_name)
+            logger = SummaryWriter(log_dir=os.path.join('./log',f'{log_name}_tensorboard'))
         else:
             logger = None
     else:
@@ -204,8 +211,10 @@ def pretrain(args):
         last_loss = None
         epoch = 0
         obj_map_coefs = None
+        log_name = args.log_prefix
         if rank == 0:
-            logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],prefix = f'{args.log_prefix}_finetune_log')
+            # logger = TableLogger('./log',['epoch','loss','loss_obj','loss_height','loss_conf','loss_feat','loss_dis','k','lr_encoder','lr_decoder'],prefix = f'{args.log_prefix}_finetune_log')
+            logger = SummaryWriter(log_dir=os.path.join('./log',f'{args.log_prefix}_tensorboard'))
         else:
             logger = None
 
@@ -493,28 +502,40 @@ def pretrain(args):
                     'epoch':torch.tensor(epoch),
                     'min_loss':torch.tensor(min_loss),
                     'last_loss':torch.tensor(last_loss),
-                    'log_name':logger.file_name
+                    'log_name':log_name
                 }
                 torch.save(training_configs,os.path.join(path,'training_configs.pth'))
                 
                 vis_img_raw = cv2.imread(args.vis_img_path)
                 vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
-                vis(encoder,vis_img,os.path.join(path,f'vis_{epoch}'))
+                feat,conf_cont,conf_div = vis(encoder,vis_img,os.path.join(path,f'vis_{epoch}'))
+                logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
+                logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
+                logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
 
         
-            logger.update({
-                'epoch':epoch,
-                'loss':total_loss,
-                'loss_obj':total_loss_obj,
-                'loss_height':total_loss_height,
-                'loss_dis':total_loss_dis,
-                'loss_conf':total_loss_conf,
-                'loss_feat':total_loss_feat,
-                'k':k.item(),
-                'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
-                'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
-            })
+            # logger.update({
+            #     'epoch':epoch,
+            #     'loss':total_loss,
+            #     'loss_obj':total_loss_obj,
+            #     'loss_height':total_loss_height,
+            #     'loss_dis':total_loss_dis,
+            #     'loss_conf':total_loss_conf,
+            #     'loss_feat':total_loss_feat,
+            #     'k':k.item(),
+            #     'lr_encoder':f"{encoder_optimizer.param_groups[0]['lr']:.7f}",
+            #     'lr_decoder':f"{optimizers[0].param_groups[0]['lr']:.7f}"
+            # })
+            logger.add_scalar('loss/total_loss', total_loss, epoch)
+            logger.add_scalar('loss/loss_obj', total_loss_obj, epoch)
+            logger.add_scalar('loss/loss_dis', total_loss_dis, epoch)
+            logger.add_scalar('loss/loss_height', total_loss_height, epoch)
+            logger.add_scalar('loss/loss_conf', total_loss_conf, epoch)
+            logger.add_scalar('loss/loss_feat', total_loss_feat, epoch)
+            logger.add_scalar('train/lr_encoder',encoder_optimizer.param_groups[0]['lr'], epoch)
+            logger.add_scalar('train/lr_decoder',optimizers[0].param_groups[0]['lr'], epoch)
+
         # print(f"\n9---------debug:{dist.get_rank()}\n")
         dist.barrier()
 

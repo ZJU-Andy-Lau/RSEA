@@ -729,7 +729,7 @@ def resample_from_quad(
             
     return resampled_image, coordinate_map
 
-def vis_feat_pca(feat:np.ndarray,output_path):
+def vis_feat_pca(feat:np.ndarray,output_path = None):
     """
     feat shape:(H,W,C)
     """
@@ -739,9 +739,12 @@ def vis_feat_pca(feat:np.ndarray,output_path):
     feat = pca.fit_transform(feat)
     feat = 255. * (feat - feat.min()) / (feat.max() - feat.min())
     feat = feat.reshape(H,W,3).astype(np.uint8)
-    cv2.imwrite(output_path,feat)
+    if not output_path is None:
+        cv2.imwrite(output_path,feat)
+    else:
+        return feat
     
-def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
+def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
     points = (get_coord_mat(conf.shape[0],conf.shape[1]) * ds + ds * .5).reshape(-1,2)
     scores = conf.reshape(-1)
     canvas_cont = deepcopy(img)
@@ -766,8 +769,11 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path):
         cv2.circle(canvas_cont,(p[1],p[0]),radius=1,color=color_cont,thickness=-1)
         cv2.circle(canvas_div,(p[1],p[0]),radius=1,color=color_div,thickness=-1)
     
-    cv2.imwrite(output_path.replace('.png','_cont.png'),canvas_cont)
-    cv2.imwrite(output_path.replace('.png','_div.png'),canvas_div)
+    if not output_path is None:
+        cv2.imwrite(output_path.replace('.png','_cont.png'),canvas_cont)
+        cv2.imwrite(output_path.replace('.png','_div.png'),canvas_div)
+    else:
+        return canvas_cont,canvas_div
 
 
 class Status(Enum):
