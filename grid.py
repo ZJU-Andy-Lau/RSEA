@@ -181,9 +181,7 @@ class Grid():
         heights = torch.concatenate(heights).cpu().numpy()
         xys = torch.concatenate(xys).cpu().numpy()
         for block in self.blocks:
-            print(block.diag.astype(int))
             mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] <= block.diag[0,1]) & (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
-            print(mask.shape,mask.sum())
             height = heights[mask]
             block.map_coeffs['h'] = get_map_coef(height)
         # self.map_coeffs['h'] = get_map_coef(heights)
@@ -509,7 +507,6 @@ class Grid():
                                                                                             locals_p2,
                                                                                             objs_p3,
                                                                                             element.rpc) #,loss_bias,
-                print(loss_photo)
                 
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0).to(valid_pred.device) # positive,negative
