@@ -101,7 +101,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
     feat = feat.permute(0,2,3,1).reshape(h,w,c).cpu().numpy()
     conf = conf.reshape(h,w).cpu().numpy()
     feat = vis_feat_pca(feat)
-    conf_cont,conf_div = vis_conf(conf)
+    conf_cont,conf_div = vis_conf(conf,vis_img,16)
     return feat,conf_cont,conf_div
 
 
@@ -174,7 +174,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
                                                                 H,W)
     
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
-    loss = loss + loss_dis * max(min(1.,epoch / 50. - 1.),0.)
+    loss = loss + loss_dis * min(1.,epoch / args.max_epoch)
 
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean
 
