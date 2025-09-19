@@ -402,7 +402,7 @@ class PretrainDataset(Dataset):
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
     def get_train_images(self):
-        return [self.database[key]['images']['image_0'][:] for key in self.database_keys]
+        return [np.stack([self.database[key]['images']['image_0'][:]] * 3,axis=-1) for key in self.database_keys]
     
     def __len__(self):
         return self.dataset_num
