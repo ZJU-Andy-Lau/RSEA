@@ -753,13 +753,13 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
     def score_to_color_cont(score):
         red = int((1 - score) * 255)
         green = int(score * 255)
-        return (0, green, red)
+        return (red , green, 0)
     
     def score_to_color_div(score,div = .5):
         if score >= div:
             return (0,255,0)
         else:
-            return (0,0,255)
+            return (255,0,0)
     
     for p,score in zip(points,scores):
         p = p.astype(int)
@@ -770,8 +770,8 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
         cv2.circle(canvas_div,(p[1],p[0]),radius=1,color=color_div,thickness=-1)
     
     if not output_path is None:
-        cv2.imwrite(output_path.replace('.png','_cont.png'),canvas_cont)
-        cv2.imwrite(output_path.replace('.png','_div.png'),canvas_div)
+        cv2.imwrite(output_path.replace('.png','_cont.png'),cv2.cvtColor(canvas_cont,cv2.COLOR_RGB2BGR))
+        cv2.imwrite(output_path.replace('.png','_div.png'),cv2.cvtColor(canvas_div,cv2.COLOR_RGB2BGR))
     else:
         return canvas_cont,canvas_div
 
