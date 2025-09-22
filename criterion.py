@@ -235,9 +235,11 @@ class CriterionFinetune(nn.Module):
                                            torch.norm(feat2_PD - feat1_PD,dim=1)])
         simi_negative = torch.concatenate([torch.norm(feat1_PD - feat1_negative,dim=1),
                                            torch.norm(feat2_PD - feat2_negative,dim=1)])
-        
+        feat_length = torch.clip(torch.norm(feat1_PD,dim=1) - 2.,min = 0.).mean() + torch.clip(torch.norm(feat2_PD,dim=1) - 2.,min = 0.).mean()
+
+
         # loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - .7,min=0).mean() * 10000.
-        loss_feat = torch.clip(simi_positive - simi_negative + 2.,min=0.).mean() * 1000 + simi_positive.mean() * 2000
+        loss_feat = torch.clip(simi_positive - simi_negative + 2.,min=0.).mean() * 1000 + simi_positive.mean() * 2000 + feat_length * 1000
         loss_feat_weight = min(1.,epoch / (max_epoch / 2.))
         # print(f"feat dis mean:{(simi_negative - simi_positive).mean().item()}  feat_mod:{torch.norm(feat1_PD,dim=1).mean().item()}")
 
