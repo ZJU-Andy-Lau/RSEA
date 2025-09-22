@@ -1006,8 +1006,8 @@ class Grid():
         print("Extracting Features")
         for batch_idx in trange(batch_num):
             batch_imgs = imgs_NCHW[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device)
-            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
-            batch_indexs = indexs_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
+            batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size,1:-1,1:-1].to(self.device).flatten(0,2)
+            batch_indexs = indexs_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size,1:-1,1:-1].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
             feat = feat[:,:,1:-1,1:-1]
             conf = conf[:,:,1:-1,1:-1]
