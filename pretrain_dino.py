@@ -240,9 +240,9 @@ def pretrain(args):
                               input_size = 1024,
                               obj_map_coefs = obj_map_coefs,
                               norm_coefs={
-                                  'mean':(0.430, 0.411, 0.296),
-                                  'std':(0.213, 0.156, 0.143)
-                              },
+                                    'mean':(0.485, 0.456, 0.406),
+                                    'std':(0.229, 0.224, 0.225)
+                                },
                               use_clahe = False,
                               mode='train')
     sampler = ImageSampler(dataset,shuffle=True)

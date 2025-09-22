@@ -76,15 +76,15 @@ class Grid():
         self.elements:List[Element] = []
         self.transform = nn.Sequential(
             #for-swt
-            # K.Normalize(
-            #     mean=torch.tensor([0.485, 0.456, 0.406]), 
-            #     std=torch.tensor([0.229, 0.224, 0.225])
-            # )
-            #for-dino
             K.Normalize(
-                mean=torch.tensor([0.430, 0.411, 0.296]), 
-                std=torch.tensor([0.213, 0.156, 0.143])
+                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                std=torch.tensor([0.229, 0.224, 0.225])
             )
+            #for-dino
+            # K.Normalize(
+            #     mean=torch.tensor([0.430, 0.411, 0.296]), 
+            #     std=torch.tensor([0.213, 0.156, 0.143])
+            # )
         ).eval()
         self.train_data = []
         self.SAMPLE_FACTOR = 16
