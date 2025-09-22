@@ -333,11 +333,13 @@ class RSEA():
         bad_grids_num = 0
         for grid_path in grid_paths[:grid_num]:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
-            if new_grid.status == new_grid.STATES.WELL_TRAINED:
-                self.grids.append(new_grid)
-                good_grids_num += 1
-            else:
-                bad_grids_num += 1
+            # if new_grid.status == new_grid.STATES.WELL_TRAINED:
+            #     self.grids.append(new_grid)
+            #     good_grids_num += 1
+            # else:
+            #     bad_grids_num += 1
+            self.grids.append(new_grid)
+            good_grids_num += 1
         print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
     
 

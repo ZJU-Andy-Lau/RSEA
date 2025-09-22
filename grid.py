@@ -434,13 +434,13 @@ class Grid():
                             # 绘制第一组点（绿色）
                             for point in points1:
                                 # 将坐标转换为整数元组，并加上边距
-                                center = (int(point[0]) + padding, int(point[1]) + padding)
+                                center = (int(point[1]) + padding, int(point[0]) + padding)
                                 cv2.circle(canvas, center, point_radius, green_color, thickness=-1) # thickness=-1 表示实心圆
 
                             # 绘制第二组点（红色）
                             for point in points2:
                                 # 将坐标转换为整数元组，并加上边距
-                                center = (int(point[0]) + padding, int(point[1]) + padding)
+                                center = (int(point[1]) + padding, int(point[0]) + padding)
                                 cv2.circle(canvas, center, point_radius, red_color, thickness=-1)
 
                             # 保存图像到指定路径
