@@ -806,17 +806,19 @@ def visualize_subset_points(points1, points2, output_path, padding=50, point_rad
     green_color = (0, 255, 0)
     red_color = (0, 0, 255)
 
+    # 绘制第二组点（红色）
+    for point in points2:
+        # 将坐标转换为整数元组，并加上边距
+        center = (int(point[1]) + padding, int(point[0]) + padding)
+        cv2.circle(canvas, center, point_radius, red_color, thickness=-1)
+
     # 绘制第一组点（绿色）
     for point in points1:
         # 将坐标转换为整数元组，并加上边距
         center = (int(point[1]) + padding, int(point[0]) + padding)
         cv2.circle(canvas, center, point_radius, green_color, thickness=-1) # thickness=-1 表示实心圆
 
-    # 绘制第二组点（红色）
-    for point in points2:
-        # 将坐标转换为整数元组，并加上边距
-        center = (int(point[1]) + padding, int(point[0]) + padding)
-        cv2.circle(canvas, center, point_radius, red_color, thickness=-1)
+    
 
     # 保存图像到指定路径
     cv2.imwrite(output_path, canvas)

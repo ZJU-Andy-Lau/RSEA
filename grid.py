@@ -1009,6 +1009,8 @@ class Grid():
             batch_locals = locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             batch_indexs = indexs_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].to(self.device).flatten(0,2)
             feat,conf = self.encoder(batch_imgs)
+            feat = feat[:,:,1:-1,1:-1]
+            conf = conf[:,:,1:-1,1:-1]
             # features_NDhw.append(feat)
             # confs_Nhw.append(conf)
             feat = feat.permute(0,2,3,1).flatten(0,2)
