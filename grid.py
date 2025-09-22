@@ -1123,10 +1123,11 @@ class Grid():
             valid_score_p1 = valid_score.reshape(-1)
 
             indexs_inside = indexs_P2[inside_block_mask]
-            cluster_idxs = find_cluster(indexs_inside,k=2.,m=3)
+            cluster_idxs = find_cluster(indexs_inside,k=1.,m=3)
             feature_dis = torch.cdist(features_PD[inside_block_mask][cluster_idxs],features_PD[inside_block_mask][cluster_idxs])
             mu_dis = torch.cdist(mu_xyh_p3[cluster_idxs],mu_xyh_p3[cluster_idxs])
-            print(f"block {block_idx + 1}: feature distance:\n{feature_dis}\nmu distance:\n{mu_dis}")
+            local_dis = torch.cdist(indexs_inside[cluster_idxs],indexs_inside[cluster_idxs])
+            print(f"block {block_idx + 1}: feature distance:\n{feature_dis}\nmu distance:\n{mu_dis}\nlocal distance:\n{local_dis}")
 
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)
