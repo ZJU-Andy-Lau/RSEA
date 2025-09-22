@@ -13,7 +13,7 @@ import os
 import cv2
 from datetime import datetime,timedelta
 import time
-from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef
+from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef,visualize_subset_points
 
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
@@ -400,52 +400,7 @@ class Grid():
                     locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
 
                     if vis_flag <= 2:
-                        def visualize_points(points1, points2, output_path, padding=50, point_radius=5):
-                            # 将两组点合并，以确定画布的整体尺寸
-                            all_points = np.vstack((points1, points2)) if points1.size > 0 and points2.size > 0 else \
-                                        points1 if points1.size > 0 else points2
-
-                            min_x = np.min(all_points[:, 0])
-                            min_y = np.min(all_points[:, 1])
-
-                            # 计算所有点的最大 x 和 y 坐标
-                            max_x = np.max(all_points[:, 0]) - min_x
-                            max_y = np.max(all_points[:, 1]) - min_y
-
-                            points1[:,0] -= min_x
-                            points1[:,1] -= min_y
-                            points2[:,0] -= min_x
-                            points2[:,1] -= min_y
-                            
-                            
-
-                            # 根据最大坐标和边距计算画布尺寸
-                            canvas_width = int(max_x + padding * 2)
-                            canvas_height = int(max_y + padding * 2)
-
-                            # 创建一个白色画布 (BGR 格式)
-                            # np.ones 创建一个浮点数数组，乘以 255，然后转换为 uint8 类型
-                            canvas = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
-
-                            # 定义颜色 (OpenCV 使用 BGR 顺序)
-                            green_color = (0, 255, 0)
-                            red_color = (0, 0, 255)
-
-                            # 绘制第一组点（绿色）
-                            for point in points1:
-                                # 将坐标转换为整数元组，并加上边距
-                                center = (int(point[1]) + padding, int(point[0]) + padding)
-                                cv2.circle(canvas, center, point_radius, green_color, thickness=-1) # thickness=-1 表示实心圆
-
-                            # 绘制第二组点（红色）
-                            for point in points2:
-                                # 将坐标转换为整数元组，并加上边距
-                                center = (int(point[1]) + padding, int(point[0]) + padding)
-                                cv2.circle(canvas, center, point_radius, red_color, thickness=-1)
-
-                            # 保存图像到指定路径
-                            cv2.imwrite(output_path, canvas)
-                        visualize_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals']))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
+                        visualize_subset_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals']))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
                         vis_flag += 1
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
@@ -1080,7 +1035,7 @@ class Grid():
         valid_scores = []
         linesamps_gt = []
 
-        for block in tqdm(self.blocks):
+        for block_idx,block in enumerate(tqdm(self.blocks)):
             block.mapper.eval().to(self.device)
             line_min,line_max,samp_min,samp_max = block.diag_ratio[0,0] * H, block.diag_ratio[1,0] * H, block.diag_ratio[0,1] * W, block.diag_ratio[1,1] * W
             inside_block_mask = (indexs_P2[:,0] >= line_min) & (indexs_P2[:,1] >= samp_min) & (indexs_P2[:,0] <= line_max) & (indexs_P2[:,1] <= samp_max)
@@ -1095,6 +1050,8 @@ class Grid():
             sigma_xyh_preds.append(sigma_xyh_p3)
             valid_scores.append(valid_score_p1)
             linesamps_gt.append(locals_P2[inside_block_mask])
+
+            visualize_subset_points(indexs_P2[inside_block_mask].cpu().numpy(),indexs_P2[torch.randperm(len(indexs_P2))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'block_{block_idx + 1}_pred_points_local.png'),point_radius=2)
 
         # for batch_idx in trange(batch_num):
         #     features_1Dp1 = features_PD[batch_idx * patches_per_batch : (batch_idx + 1) * patches_per_batch].permute(1,0)[None,:,:,None]

@@ -286,7 +286,11 @@ class RSEA():
 
     def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,valid_scores:torch.Tensor) -> torch.Tensor:
 
-        print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")
+        raw_dis = torch.norm(src - tgt_mu,dim=-1)
+        plt.hist(raw_dis.cpu().numpy(),bins=100)
+        plt.savefig(os.path.join(self.root,'raw_dis_hist.png'))
+        print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")
+        print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")       
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"avg_sigma:{avg_sigma.item()}")
 
@@ -299,7 +303,7 @@ class RSEA():
 
         
         total_num = len(valid_scores)
-        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold= 5 * avg_sigma.item())
+        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold= 200)
         inliers = mask.ravel() == 1
 
         src = src[inliers]

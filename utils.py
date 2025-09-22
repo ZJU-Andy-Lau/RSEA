@@ -775,6 +775,51 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
     else:
         return canvas_cont,canvas_div
 
+def visualize_subset_points(points1, points2, output_path, padding=50, point_radius=5):
+    # 将两组点合并，以确定画布的整体尺寸
+    all_points = np.vstack((points1, points2)) if points1.size > 0 and points2.size > 0 else \
+                points1 if points1.size > 0 else points2
+
+    min_x = np.min(all_points[:, 0])
+    min_y = np.min(all_points[:, 1])
+
+    # 计算所有点的最大 x 和 y 坐标
+    max_x = np.max(all_points[:, 0]) - min_x
+    max_y = np.max(all_points[:, 1]) - min_y
+
+    points1[:,0] -= min_x
+    points1[:,1] -= min_y
+    points2[:,0] -= min_x
+    points2[:,1] -= min_y
+    
+    
+
+    # 根据最大坐标和边距计算画布尺寸
+    canvas_width = int(max_x + padding * 2)
+    canvas_height = int(max_y + padding * 2)
+
+    # 创建一个白色画布 (BGR 格式)
+    # np.ones 创建一个浮点数数组，乘以 255，然后转换为 uint8 类型
+    canvas = np.ones((canvas_height, canvas_width, 3), dtype=np.uint8) * 255
+
+    # 定义颜色 (OpenCV 使用 BGR 顺序)
+    green_color = (0, 255, 0)
+    red_color = (0, 0, 255)
+
+    # 绘制第一组点（绿色）
+    for point in points1:
+        # 将坐标转换为整数元组，并加上边距
+        center = (int(point[1]) + padding, int(point[0]) + padding)
+        cv2.circle(canvas, center, point_radius, green_color, thickness=-1) # thickness=-1 表示实心圆
+
+    # 绘制第二组点（红色）
+    for point in points2:
+        # 将坐标转换为整数元组，并加上边距
+        center = (int(point[1]) + padding, int(point[0]) + padding)
+        cv2.circle(canvas, center, point_radius, red_color, thickness=-1)
+
+    # 保存图像到指定路径
+    cv2.imwrite(output_path, canvas)
 
 class Status(Enum):
     NOT_INIT = 0
