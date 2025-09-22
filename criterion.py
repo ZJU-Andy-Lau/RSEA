@@ -237,14 +237,14 @@ class CriterionFinetune(nn.Module):
                                            torch.norm(feat2_PD - feat2_negative,dim=1)])
         
         # loss_feat = torch.clip(1. - simi_positive,min=0.).mean() * 10000. + torch.clip(simi_negative - .7,min=0).mean() * 10000.
-        loss_feat = torch.clip(simi_positive - simi_negative + 1.,min=0.).mean() * 100 + simi_positive.mean() * 100
-        loss_feat_weight = min(1.,epoch / max_epoch)
+        loss_feat = torch.clip(simi_positive - simi_negative + 2.,min=0.).mean() * 1000 + simi_positive.mean() * 2000
+        loss_feat_weight = min(1.,epoch / (max_epoch / 2.))
         # print(f"feat dis mean:{(simi_negative - simi_positive).mean().item()}  feat_mod:{torch.norm(feat1_PD,dim=1).mean().item()}")
 
 
         loss = loss_obj + loss_height + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
-        return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold
+        return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold,simi_positive.mean(),simi_negative.mean()
         
 class CriterionFinetuneDis(nn.Module):
     def __init__(self):
