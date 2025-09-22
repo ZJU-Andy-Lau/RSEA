@@ -399,9 +399,7 @@ class Grid():
                     objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                     locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
 
-                    if vis_flag <= 2:
-                        visualize_subset_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals']))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
-                        vis_flag += 1
+                    
                 else:
                     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
                     features_pD = element.buffer['features'][sample_idxs].contiguous()
@@ -417,6 +415,10 @@ class Grid():
                 confs_p1 = confs_p1[inside_border_mask]
                 objs_p3 = objs_p3[inside_border_mask]
                 locals_p2 = locals_p2[inside_border_mask]
+
+                if vis_flag < 1:
+                    visualize_subset_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals']))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
+                    vis_flag += 1
 
                 patch_num = confs_p1.shape[0]
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
@@ -434,7 +436,7 @@ class Grid():
                 negative_avg_local = torch.mean(negative_locals,dim=1) # p,2
                 dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
                 negative_noise_amp =  100. / dis
-                negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
+                negative_noise = patch_noise_buffer[0,:,torch.randperm(max_patch_num * 5)[:patch_num],0].permute(1,0) # p,D
                 #for-swt
                 # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
@@ -976,7 +978,7 @@ class Grid():
 
         crop_imgs_NHWC,crop_locals_NHW2,crop_indexs_NHW2 = self.__crop_img__(img = img_raw,
                                                                             crop_size = self.options.crop_size,
-                                                                            expect_num = 256,
+                                                                            expect_num = 32,
                                                                             size_ratios = [1.],
                                                                             random_ratio = 1.,
                                                                             local=local_hw2)

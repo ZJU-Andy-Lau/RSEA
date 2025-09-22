@@ -32,6 +32,8 @@ from typing import List,Dict
 from rs_image import RSImage
 from grid import Grid
 
+from utils import visualize_subset_points
+
 def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs, options):
     device = torch.device(f'cuda:{rank}')
     while True:
@@ -289,6 +291,7 @@ class RSEA():
         raw_dis = torch.norm(src - tgt_mu,dim=-1)
         plt.hist(raw_dis.cpu().numpy(),bins=100)
         plt.savefig(os.path.join(self.root,'raw_dis_hist.png'))
+        visualize_subset_points(src.cpu().numpy()[:10000],tgt_mu.cpu().numpy()[:10000],os.path.join(self.root,'raw_points.png'),point_radius=2)
         print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")
         print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")       
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
