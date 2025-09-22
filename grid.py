@@ -1,4 +1,6 @@
 import stat
+
+from scipy import cluster
 from utils import Status
 import warnings
 import scheduler
@@ -1039,6 +1041,76 @@ class Grid():
         valid_scores = []
         linesamps_gt = []
 
+        def find_cluster(points: torch.Tensor, m: int, k: float) -> List[int]:
+            """
+            在一个 (N, 2) 的点集中，随机寻找一个大小为 m 的簇。
+            簇的定义是：簇内任意两点之间的欧氏距离都小于 k。
+
+            Args:
+                points (torch.Tensor): 一个形状为 (N, 2) 的 Tensor，代表 N 个点的二维坐标。
+                m (int): 期望的簇中点的数量。
+                k (float): 簇内点对之间的最大距离阈值。
+
+            Returns:
+                Optional[List[int]]: 一个包含 m 个点索引的列表，代表找到的簇。
+                                    如果找不到满足条件的簇，则返回 None。
+            """
+            # 获取点的总数
+            n = points.shape[0]
+
+            # --- 处理边界情况 ---
+            if m > n:
+                print("错误：期望的簇大小 m 大于点的总数 N。")
+                return None
+            if m <= 1:
+                # 如果簇大小为 0 或 1，直接返回前 m 个点的索引
+                return list(range(m))
+
+            # --- 核心算法 ---
+            
+            # 1. 计算所有点对之间的距离矩阵，方便快速查找
+            dist_matrix = torch.cdist(points, points)
+
+            # 2. 生成一个随机打乱的索引序列，用于遍历起始点
+            indices = torch.randperm(n).tolist()
+
+            # 3. 遍历每个点，尝试将其作为“种子点”来构建一个簇
+            for i in indices:
+                cluster = [i]
+                
+                # 4. 找到所有与种子点 i 距离小于 k 的点，作为候选点
+                # .nonzero() 返回满足条件的索引, .view(-1) 确保它是一维的
+                potential_neighbors_idx = (dist_matrix[i] < k).nonzero().view(-1).tolist()
+                
+                # 从候选列表中移除种子点自身
+                candidates = [idx for idx in potential_neighbors_idx if idx != i]
+                random.shuffle(candidates) # 随机打乱候选点，增加找到的簇的随机性
+
+                # 5. 尝试从候选点中添加点到簇中，直到簇的大小达到 m
+                for candidate_idx in candidates:
+                    # 如果簇已经足够大，就跳出循环
+                    if len(cluster) == m:
+                        break
+
+                    # 检查当前候选点与簇中已有的所有点是否都“兼容”
+                    # (即它们之间的距离都小于 k)
+                    is_compatible = True
+                    for point_in_cluster_idx in cluster:
+                        if dist_matrix[candidate_idx, point_in_cluster_idx] >= k:
+                            is_compatible = False
+                            break
+                    
+                    # 如果兼容，则将该候选点加入簇
+                    if is_compatible:
+                        cluster.append(candidate_idx)
+                
+                # 6. 如果成功找到了一个大小为 m 的簇，就返回结果
+                if len(cluster) == m:
+                    return sorted(cluster) # 返回排序后的索引列表，方便查看
+
+            # 7. 如果遍历完所有点都找不到满足条件的簇，则返回 None
+            return None
+
         for block_idx,block in enumerate(tqdm(self.blocks)):
             block.mapper.eval().to(self.device)
             line_min,line_max,samp_min,samp_max = block.diag_ratio[0,0] * H, block.diag_ratio[1,0] * H, block.diag_ratio[0,1] * W, block.diag_ratio[1,1] * W
@@ -1049,6 +1121,12 @@ class Grid():
             mu_xyh_p3 = self.warp_by_poly(output_p6[:,:3],block.map_coeffs)
             sigma_xyh_p3 = torch.exp(output_p6[:,3:])
             valid_score_p1 = valid_score.reshape(-1)
+
+            indexs_inside = indexs_P2[inside_block_mask]
+            cluster_idxs = find_cluster(indexs_inside,k=2.,m=3)
+            feature_dis = torch.cdist(features_PD[inside_block_mask][cluster_idxs],features_PD[inside_block_mask][cluster_idxs])
+            mu_dis = torch.cdist(mu_xyh_p3[cluster_idxs],mu_xyh_p3[cluster_idxs])
+            print(f"block {block_idx + 1}: feature distance:\n{feature_dis}\nmu distance:\n{mu_dis}")
 
             mu_xyh_preds.append(mu_xyh_p3)
             sigma_xyh_preds.append(sigma_xyh_p3)

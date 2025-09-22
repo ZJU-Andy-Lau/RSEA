@@ -291,6 +291,7 @@ class RSEA():
         raw_dis = torch.norm(src - tgt_mu,dim=-1)
         plt.hist(raw_dis.cpu().numpy(),bins=100)
         plt.savefig(os.path.join(self.root,'raw_dis_hist.png'))
+        plt.close()
         visualize_subset_points(src.cpu().numpy()[:10000],tgt_mu.cpu().numpy()[:10000],os.path.join(self.root,'raw_points.png'),point_radius=2)
         print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")
         print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")       
