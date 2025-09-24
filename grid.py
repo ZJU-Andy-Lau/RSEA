@@ -347,7 +347,7 @@ class Grid():
         # pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
         if not task_info is None:
             self.update_task_state(task_info,{
-                'status':f"Grid {task_info['id']}:Block {block_idx + 1} 训练",
+                'status':f"Grid {task_info['id']}:Block {block_idx + 1} / {len(self.blocks)} 训练",
                 'total':self.options.grid_training_iters * len(self.elements)
             })
         else:
