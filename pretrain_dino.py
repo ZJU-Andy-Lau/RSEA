@@ -232,7 +232,7 @@ def pretrain(args):
             if args.dataset_select is None:
                 dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
             else:
-                dataset_indices = torch.tensor(args.dataset_select.split(','),dtype=int,device=args.device)
+                dataset_indices = torch.tensor([int(i) for i in args.dataset_select.split(',')],dtype=int,device=args.device)
             indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
             indices_str = " ".join(indices_str)
             with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
