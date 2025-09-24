@@ -118,10 +118,12 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     B,H,W = obj1.shape[:3]
 
     if only_decoder:
-        with torch.no_grad():
-            feat1,conf1 = encoder(img1)
-            feat2,conf2 = encoder(img2)
+        encoder.eval()
+        feat1,conf1 = encoder(img1)
+        feat2,conf2 = encoder(img2)
+        feat1,conf1,feat2,conf2 = feat1.detach(),conf1.detach(),feat2.detach(),conf2.detach()
     else:
+        encoder.train()
         feat1,conf1 = encoder(img1)
         feat2,conf2 = encoder(img2)
 
