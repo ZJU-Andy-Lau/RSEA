@@ -216,11 +216,16 @@ def pretrain(args):
             logger = None
 
     if not args.resume_training:
+        if not args.dataset_select is None:
+            args.dataset_num = len(args.dataset_select.split(','))
         dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
         if rank == 0:
             with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
                 total_num = len(f.keys())
-            dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
+            if args.dataset_select is None:
+                dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
+            else:
+                dataset_indices = torch.tensor(args.dataset_select.split(','),dtype=int,device=args.device)
             indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
             indices_str = " ".join(indices_str)
             with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
@@ -579,6 +584,7 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decoder_max',type=float,default=1e-3) #1e-3
     parser.add_argument('--min_loss',type=float,default=1e8)
     parser.add_argument('--log_prefix',type=str,default='')
+    parser.add_argument('--dataset_select',type=str,default=None)
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
     args = parser.parse_args()
