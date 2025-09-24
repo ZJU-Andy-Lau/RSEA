@@ -1,7 +1,6 @@
 import math
 import re
 import os
-from symbol import parameters
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
