@@ -1,6 +1,7 @@
 import math
 import re
 import os
+from symbol import parameters
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -199,17 +200,31 @@ class EncoderDino(nn.Module):
         feat,conf = self.adapter(feat_backbone)
         return feat,conf
     
+    def unfreeze_backbone(self,layers:List[int] = []):
+        parameters = []
+        for layer in layers:
+            block = self.backbone.blocks[layer]
+            block.requires_grad_(True)
+            parameters.extend(list(block.parameters()))
+            if self.verbose > 0:
+                print(f"Unfreeze backbone layer {layer}")
+        return parameters
+    
     def load_adapter(self,adapter_path:str):
         self.adapter.load_state_dict({k.replace("module.",""):v for k,v in torch.load(adapter_path,map_location='cpu').items()},strict=True)
     
     def save_adapter(self,output_path:str):
         state_dict = {k:v.detach().cpu() for k,v in self.adapter.state_dict().items()}
         torch.save(state_dict,output_path)
-    
-    def train(self, mode = True):
-        super().train(mode)
-        self.backbone.eval()
-        return self
+
+    def save_backbone(self,output_path:str):
+        state_dict = {k:v.detach().cpu() for k,v in self.backbone.state_dict().items()}
+        torch.save(state_dict,output_path)
+
+    # def train(self, mode = True):
+    #     super().train(mode)
+    #     self.backbone.eval()
+    #     return self
 
 class ProjectHead(nn.Module):
     def __init__(self,input_channels,output_channels = None):
