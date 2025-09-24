@@ -117,15 +117,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     obj_map_coef = data['obj_map_coef']
     B,H,W = obj1.shape[:3]
 
-    if only_decoder:
-        encoder.eval()
-        feat1,conf1 = encoder(img1)
-        feat2,conf2 = encoder(img2)
-        feat1,conf1,feat2,conf2 = feat1.detach(),conf1.detach(),feat2.detach(),conf2.detach()
-    else:
-        encoder.train()
-        feat1,conf1 = encoder(img1)
-        feat2,conf2 = encoder(img2)
+    feat1,conf1 = encoder(img1)
+    feat2,conf2 = encoder(img2)
 
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
@@ -184,6 +177,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
     if not only_decoder:
         loss = loss + loss_dis * min(1.,epoch / (args.max_epoch * .7))
+    else:
+        loss = loss + loss_dis * 0.
 
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn
 

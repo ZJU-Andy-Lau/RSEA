@@ -246,7 +246,7 @@ class CriterionFinetune(nn.Module):
 
 
         if only_decoder:
-            loss = loss_obj
+            loss = loss_obj + loss_height + loss_conf * 0. + loss_feat * 0.
         else:
             loss = loss_obj + loss_height + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
