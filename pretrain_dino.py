@@ -524,7 +524,7 @@ def pretrain(args):
             
             if total_loss_obj < min_loss:
                 min_loss = total_loss_obj
-                backbone_state_dict = {k:v.detach().cpu() for k,v in encode_op.backbone.state_dict().items()}
+                backbone_state_dict = {k:v.detach().cpu() for k,v in encoder_op.backbone.state_dict().items()}
                 torch.save(backbone_state_dict,os.path.join(args.encoder_output_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
                 encoder_op.save_adapter(os.path.join(args.encoder_output_path,'adapter.pth'))
                 print('best updated')
