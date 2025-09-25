@@ -329,7 +329,7 @@ class Grid():
         min_photo_loss = 1e8
 
         patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.output_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
-        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
+        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .05
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
 
         vis_flag = 0
@@ -414,8 +414,6 @@ class Grid():
                 objs_anchor_p3 = objs_anchor_p3[inside_border_mask]
                 locals_anchor_p2 = locals_anchor_p2[inside_border_mask]
 
-                feature_dis = torch.norm(features_sample_pD - features_anchor_pD,dim=1)
-
 
                     
                 # else:
@@ -463,7 +461,7 @@ class Grid():
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================
-
+                feature_dis = torch.norm(features_sample_1Dp1 - features_anchor_1Dp1,dim=1).squeeze()
                 output_sample_16p1,valid_score_sample = mapper(features_sample_1Dp1)
                 output_anchor_16p1,valid_score_anchor = mapper(features_anchor_1Dp1)
                 valid_score_positive = (valid_score_sample + valid_score_anchor) / 2.
