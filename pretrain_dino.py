@@ -332,9 +332,9 @@ def pretrain(args):
         decoder = DecoderFinetune(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
         optimizer = optim.AdamW(params=decoder.parameters(),lr = args.lr_decoder_max)
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
-                                        total_steps=args.max_epoch,
+                                        total_steps=only_decoder_epoch,
                                         warmup_ratio=min(50. / args.max_epoch,.1),
-                                        cooldown_ratio=.7)
+                                        cooldown_ratio=.2)
         
         if args.resume_training:
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})
@@ -525,7 +525,7 @@ def pretrain(args):
 
             # torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'adapter_{epoch}.pth')))
             
-            if total_loss_obj < min_loss:
+            if total_loss_obj < min_loss and epoch >= only_decoder_epoch + 50:
                 min_loss = total_loss_obj
                 backbone_state_dict = {k:v.detach().cpu() for k,v in encoder_op.backbone.state_dict().items()}
                 torch.save(backbone_state_dict,os.path.join(args.encoder_output_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
