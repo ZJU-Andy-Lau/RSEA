@@ -46,7 +46,7 @@ class Block():
         self.options = options
         self.diag = diag
         self.diag_ratio = diag_ratio 
-        self.mapper = Decoder(in_channels=options.mapper_input_channel,digit_num=options.digit_num,block_num=options.mapper_blocks_num)
+        self.mapper = Decoder(in_channels=options.mapper_input_channel,block_num=options.mapper_blocks_num)
         # self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
         # self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
         #                                         total_steps=self.options.grid_training_iters,
