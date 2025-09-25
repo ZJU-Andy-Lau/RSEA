@@ -332,9 +332,9 @@ def pretrain(args):
         decoder = DecoderFinetune(in_channels=args.output_channels,block_num=args.decoder_block_num,use_bn=False)
         optimizer = optim.AdamW(params=decoder.parameters(),lr = args.lr_decoder_max)
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
-                                        total_steps=only_decoder_epoch,
+                                        total_steps=args.max_epoch,
                                         warmup_ratio=min(50. / args.max_epoch,.1),
-                                        cooldown_ratio=.2)
+                                        cooldown_ratio=.7)
         
         if args.resume_training:
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})

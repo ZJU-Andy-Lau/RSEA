@@ -27,7 +27,7 @@ def residual_average(arr:np.ndarray, a:int) -> np.ndarray:
     new_W = ((W + a - 1) // a) * a
     padded = np.pad(arr, ((0, new_H - H), (0, new_W - W), (0, 0)),constant_values=np.nan)
     reshaped = padded.reshape(new_H//a, a, new_W//a, a, C)
-    output = np.nanmean(reshaped,axis=(1,3))
+    output = np.nanmedian(reshaped,axis=(1,3))
     if is_2d:
         output = output.squeeze(axis=-1)
     return output
