@@ -285,8 +285,55 @@ class DecoderFinetune(nn.Module):
         height_res = self.output_height(res)
         return torch.cat([xy_res,height_res],dim=1)
     
-    
 class Decoder(nn.Module):
+    def get_block(self,channels):
+        return nn.Sequential(
+            nn.Conv2d(channels,channels * 2,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(channels * 2,channels * 2,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(channels * 2,channels,1,1,0)
+        )
+
+    def __init__(self,in_channels=512,block_num=5,use_bn=False):
+        super().__init__()
+        block_num = max(block_num,1)
+        self.use_bn = use_bn
+        self.blocks = nn.ModuleList([self.get_block(in_channels) for _ in range(block_num)])
+        self.output_xy = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,4,1,1,0),
+        )
+        self.output_height = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,2,1,1,0),
+        )
+        # self.bn = bnac(in_channels)
+
+
+    def forward(self, res):
+        valid_score = self.score_head(res)
+        for block in self.blocks:
+            x = block(res)
+            res = res + x
+        xy_res = self.output_xy(res)
+        height_res = self.output_height(res)
+        
+        mu_xy = F.tanh(xy_res[:,:2])
+        log_sigma_xy = F.tanh(xy_res[:,2:]) * 5.
+        mu_h = F.tanh(height_res[:,:1])
+        log_sigma_h = F.tanh(height_res[:,1:]) * 5.
+
+        return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1),valid_score
+    
+    def forward_valid(self,res):
+        valid_score = self.score_head(res)
+        return valid_score
+
+
+class Decoder_Modulate(nn.Module):
     """
     MLP network predicting per-pixel scene coordinates given a feature vector. All layers are 1x1 convolutions.
     """

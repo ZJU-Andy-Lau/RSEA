@@ -1,3 +1,4 @@
+from pyexpat import features
 import stat
 
 from scipy import cluster
@@ -354,81 +355,96 @@ class Grid():
             pbar = tqdm(total=self.options.grid_training_iters * len(self.elements))
 
         for iter_idx in range(self.options.grid_training_iters):
-            noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
+            noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch * 2]
             optimizer.zero_grad()
             for element in self.elements:
                 # if iter_idx % 2 != 0:
-                if True:
-                    # sample_linesamps = torch.stack([torch.clip(torch.randint(int(element.top_left_linesamp[0]) - 5,int(element.top_left_linesamp[0]) + element.H + 5,(patches_per_batch // 4,)),
-                    #                                         min=int(element.top_left_linesamp[0]),max=int(element.top_left_linesamp[0]) + element.H - 1),
-                    #                                 torch.clip(torch.randint(int(element.top_left_linesamp[1]) - 5,int(element.top_left_linesamp[1]) + element.W + 5,(patches_per_batch // 4,)),
-                    #                                         min=int(element.top_left_linesamp[1]),max=int(element.top_left_linesamp[1]) + element.W - 1)],
-                    #                                 dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
-                    # sample_linesamps = torch.concatenate([sample_linesamps,
-                    #                                     torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1),
-                    #                                     torch.stack([2 * int(element.top_left_linesamp[0]) + element.H - 1 - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
-                    #                                     torch.stack([sample_linesamps[:,0],2 * int(element.top_left_linesamp[1]) + element.W - 1 - sample_linesamps[:,1]],dim=-1)],
-                    #                                     dim=0)
-                    block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
-                    block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
-                    linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0] - 1,block_br_linesamp[1] - 1]
-                    sample_linesamps = torch.stack([torch.rand((patches_per_batch // 4,)) * (linesamp_max[0] - linesamp_min[0]) + linesamp_min[0],
-                                                    torch.rand((patches_per_batch // 4,)) * (linesamp_max[1] - linesamp_min[1]) + linesamp_min[1]],
-                                                    dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
-                    sample_linesamps = torch.concatenate([sample_linesamps,
-                                                        torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1),
-                                                        torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
-                                                        torch.stack([sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1)],
-                                                        dim=0)
 
-                    dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
-                    # torch.cuda.synchronize()
-                    valid_mask = dists.max(dim=1).values < 64
-                    if valid_mask.sum() == 0:
-                        continue
-                    # break
-                    dists_ratio = dists[valid_mask] / torch.sum(dists[valid_mask],dim=1,keepdim=True) # n,3
-                    reverse_dists_ratio = 1. / dists_ratio
-                    reverse_dists_ratio = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
-                    idxs = idxs[valid_mask]
-                    features_p3D = element.buffer['features'][idxs].contiguous()
-                    confs_p3 = element.buffer['confs'][idxs].contiguous()
-                    objs_p33 = element.buffer['objs'][idxs].contiguous()
-                    locals_p32 = element.buffer['locals'][idxs].contiguous()
+                block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
+                block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
+                linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0] - 1,block_br_linesamp[1] - 1]
+                sample_linesamps = torch.stack([torch.rand((patches_per_batch // 4,)) * (linesamp_max[0] - linesamp_min[0]) + linesamp_min[0],
+                                                torch.rand((patches_per_batch // 4,)) * (linesamp_max[1] - linesamp_min[1]) + linesamp_min[1]],
+                                                dim=-1).to(dtype=element.buffer['locals'].dtype,device=element.buffer['locals'].device)
+                sample_linesamps = torch.concatenate([sample_linesamps,
+                                                    torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1),
+                                                    torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
+                                                    torch.stack([sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1)],
+                                                    dim=0)
 
-                    features_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
-                    confs_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
-                    objs_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
-                    locals_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
+                # torch.cuda.synchronize()
+                valid_mask = dists.max(dim=1).values < 256 and dists.min(dim=1).values < 16
+                if valid_mask.sum() == 0:
+                    continue
+                dists = dists[valid_mask]
+                idxs = idxs[valid_mask]
+                
+                dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,3
+                reverse_dists_ratio = 1. / dists_ratio
+                reverse_dists_ratio = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
+                
+                min_dist_idxs = torch.argmin(dists,dim=1)
+                min_dist_idxs = idxs[torch.arange(len(min_dist_idxs),device=idxs.device),min_dist_idxs] # n
+                
+                features_p3D = element.buffer['features'][idxs].contiguous()
+                confs_p3 = element.buffer['confs'][idxs].contiguous()
+                objs_p33 = element.buffer['objs'][idxs].contiguous()
+                locals_p32 = element.buffer['locals'][idxs].contiguous()
+
+                features_sample_pD = torch.sum(features_p3D * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                confs_sample_p1 = torch.sum(confs_p3 * reverse_dists_ratio,dim=1).to(torch.float32)
+                objs_sample_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+                locals_sample_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
+
+                inside_border_mask = (objs_sample_p3[:,0] >= block.border[0]) & (objs_sample_p3[:,0] <= block.border[2]) & (objs_sample_p3[:,1] >= block.border[1]) & (objs_sample_p3[:,1] <= block.border[3]) & \
+                                     (objs_anchor_p3[:,0] >= block.border[0]) & (objs_anchor_p3[:,0] <= block.border[2]) & (objs_anchor_p3[:,1] >= block.border[1]) & (objs_anchor_p3[:,1] <= block.border[3])
+                features_sample_pD = features_sample_pD[inside_border_mask]
+                confs_sample_p1 = confs_sample_p1[inside_border_mask]
+                objs_sample_p3 = objs_sample_p3[inside_border_mask]
+                locals_sample_p2 = locals_sample_p2[inside_border_mask]
+
+                features_anchor_pD = element.buffer['features'][min_dist_idxs].to(torch.float32)
+                confs_anchor_p1 = element.buffer['confs'][min_dist_idxs].to(torch.float32)
+                objs_anchor_p3 = element.buffer['objs'][min_dist_idxs].to(torch.float32)
+                locals_anchor_p2 = element.buffer['locals'][min_dist_idxs].to(torch.float32)
+
+                features_anchor_pD = features_anchor_pD[inside_border_mask]
+                confs_anchor_p1 = confs_anchor_p1[inside_border_mask]
+                objs_anchor_p3 = objs_anchor_p3[inside_border_mask]
+                locals_anchor_p2 = locals_anchor_p2[inside_border_mask]
+
+                feature_dis = torch.norm(features_sample_pD - features_anchor_pD,dim=1)
+
 
                     
-                else:
-                    sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
-                    features_pD = element.buffer['features'][sample_idxs].contiguous()
-                    confs_p1 = element.buffer['confs'][sample_idxs].contiguous()
-                    objs_p3 = element.buffer['objs'][sample_idxs].contiguous()
-                    locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
-                    valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
+                # else:
+                #     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
+                #     features_pD = element.buffer['features'][sample_idxs].contiguous()
+                #     confs_p1 = element.buffer['confs'][sample_idxs].contiguous()
+                #     objs_p3 = element.buffer['objs'][sample_idxs].contiguous()
+                #     locals_p2 = element.buffer['locals'][sample_idxs].contiguous()
+                #     valid_mask = torch.full((patches_per_batch,),True,dtype=bool)
 
                 
                 # 筛出在grid的border范围内的，范围外的不参与学习
-                inside_border_mask = (objs_p3[:,0] >= block.border[0]) & (objs_p3[:,0] <= block.border[2]) & (objs_p3[:,1] >= block.border[1]) & (objs_p3[:,1] <= block.border[3])
-                features_pD = features_pD[inside_border_mask]
-                confs_p1 = confs_p1[inside_border_mask]
-                objs_p3 = objs_p3[inside_border_mask]
-                locals_p2 = locals_p2[inside_border_mask]
+                
 
                 if vis_flag < 1:
-                    visualize_subset_points(locals_p2.cpu().numpy(),element.buffer['locals'][torch.randperm(len(element.buffer['locals']))[:10000]].reshape(-1,2).cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
+                    visualize_subset_points(locals_sample_p2.cpu().numpy(),locals_anchor_p2.cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
                     vis_flag += 1
 
-                patch_num = confs_p1.shape[0]
-                features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
-                patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                patch_num = inside_border_mask.sum()
+                features_sample_1Dp1 = features_sample_pD.permute(1,0)[None,:,:,None]
+                features_anchor_1Dp1 = features_anchor_pD.permute(1,0)[None,:,:,None]
+                feature_sample_noise = patch_noise_buffer[:,:,noise_idx[:patch_num],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                feature_anchor_noise = patch_noise_buffer[:,:,noise_idx[patch_num:],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                # features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
+                # features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
+                features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -448,23 +464,26 @@ class Grid():
 
                 #=====================================================
 
-                output_16p1_list,valid_score_positive = mapper(features_1Dp1,per_digit = True)
+                output_sample_16p1,valid_score_sample = mapper(features_sample_1Dp1)
+                output_anchor_16p1,valid_score_anchor = mapper(features_anchor_1Dp1)
+                valid_score_positive = (valid_score_sample + valid_score_anchor) / 2.
                 valid_score_nagetive = mapper.forward_valid(negative_feature_1Dp1)
                 
-                mu_xyh_p3_list = []
-                log_sigma_xyh_p3_list = []
-                for output_16p1 in output_16p1_list:
-                    output_p6 = output_16p1.permute(0,2,3,1).flatten(0,2)
-                    mu_xyh_p3_list.append(self.warp_by_poly(output_p6[:,:3],block.map_coeffs))
-                    log_sigma_xyh_p3_list.append(output_p6[:,3:])
+                output_sample_p6 = output_sample_16p1.permute(0,2,3,1).flatten(0,2)
+                output_anchor_p6 = output_anchor_16p1.permute(0,2,3,1).flatten(0,2)
+                mu_xyh_sample_p3 = self.warp_by_poly(output_sample_p6[:,:3],block.map_coeffs)
+                mu_xyh_anchor_p3 = self.warp_by_poly(output_anchor_p6[:,:3],block.map_coeffs)
+                log_sigma_xyh_sample_p3 = output_sample_p6[:,3:]
+                log_sigma_xyh_anchor_p3 = output_anchor_p6[:,3:]
 
-                loss,loss_distribution,loss_obj,loss_height,loss_photo,sigma_avg = criterion(iter_idx,
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
-                                                                                            mu_xyh_p3_list,
-                                                                                            log_sigma_xyh_p3_list,
-                                                                                            confs_p1,
-                                                                                            locals_p2,
-                                                                                            objs_p3,
+                                                                                            feature_dis,
+                                                                                            [mu_xyh_sample_p3,mu_xyh_anchor_p3],
+                                                                                            [log_sigma_xyh_sample_p3,log_sigma_xyh_anchor_p3],
+                                                                                            [confs_sample_p1,confs_anchor_p1],
+                                                                                            [locals_sample_p2,locals_anchor_p2],
+                                                                                            [objs_sample_p3,objs_anchor_p3],
                                                                                             element.rpc) #,loss_bias,
                 
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
@@ -485,7 +504,7 @@ class Grid():
                 info = {
                         'i':f'{progress}',
                         'lr':f'{scheduler.get_last_lr()[0]:.2e}',
-                        'd':f'{loss_distribution.item():.2f}', 
+                        'd':f'{loss_dis.item():.2f}', 
                         's':f'{sigma_avg:.2f}',
                         'o':f'{loss_obj.item():.2f}',
                         'p':f'{loss_photo.item():.2f}',
