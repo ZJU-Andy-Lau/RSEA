@@ -437,8 +437,8 @@ class Grid():
                 patch_num = inside_border_mask.sum()
                 features_sample_1Dp1 = features_sample_pD.permute(1,0)[None,:,:,None]
                 features_anchor_1Dp1 = features_anchor_pD.permute(1,0)[None,:,:,None]
-                feature_sample_noise = patch_noise_buffer[:,:,noise_idx[:patch_num],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
-                feature_anchor_noise = patch_noise_buffer[:,:,noise_idx[patch_num:],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                feature_sample_noise = patch_noise_buffer[:,:,noise_idx[:patches_per_batch],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
+                feature_anchor_noise = patch_noise_buffer[:,:,noise_idx[patches_per_batch:],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
                 features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
                 features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
