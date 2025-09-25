@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 from model_new import Encoder,AffineFitter
 import cv2
-from utils import mercator2lonlat
+from utils import mercator2lonlat,visualize_subset_points
 import queue
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
@@ -286,7 +286,12 @@ class RSEA():
         return np.stack([tl,br],axis=0)
 
     def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,valid_scores:torch.Tensor) -> torch.Tensor:
-
+        raw_dis = torch.norm(src - tgt_mu,dim=-1)
+        plt.hist(raw_dis.cpu().numpy(),bins=100)
+        plt.savefig(os.path.join(self.root,'raw_dis_hist.png'))
+        plt.close()
+        visualize_subset_points(src.cpu().numpy()[:10000],tgt_mu.cpu().numpy()[:10000],os.path.join(self.root,'raw_points.png'),point_radius=2)
+        print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")
         print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"avg_sigma:{avg_sigma.item()}")

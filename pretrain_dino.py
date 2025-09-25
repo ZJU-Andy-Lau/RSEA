@@ -281,12 +281,12 @@ def pretrain(args):
 
     adapter_scheduler = MultiStageOneCycleLR(optimizer=adapter_optimizer,
                                              total_steps=args.max_epoch - only_decoder_epoch,
-                                             warmup_ratio=min(50. / args.max_epoch,.1),
+                                             warmup_ratio=min(100. / args.max_epoch,.1),
                                              cooldown_ratio=.7)
     
     backbone_scheduler = MultiStageOneCycleLR(optimizer=backbone_optimizer,
                                               total_steps=args.max_epoch - only_decoder_epoch,
-                                              warmup_ratio=min(50. / args.max_epoch,.1),
+                                              warmup_ratio=min(100. / args.max_epoch,.1),
                                               cooldown_ratio=.7)
 
 

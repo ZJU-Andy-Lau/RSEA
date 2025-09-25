@@ -329,7 +329,7 @@ class Grid():
         min_photo_loss = 1e8
 
         patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.output_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
-        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1
+        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * .1 + .1
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
 
         vis_flag = 0
@@ -1000,7 +1000,7 @@ class Grid():
 
         crop_imgs_NHWC,crop_locals_NHW2,crop_indexs_NHW2 = self.__crop_img__(img = img_raw,
                                                                             crop_size = self.options.crop_size,
-                                                                            expect_num = 32,
+                                                                            expect_num = 64,
                                                                             size_ratios = [1.],
                                                                             random_ratio = 1.,
                                                                             local=local_hw2)

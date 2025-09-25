@@ -85,8 +85,8 @@ class Element():
         )
         
         # self.encoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(options.encoder_path)).items()})
-        self.encoder = encoder
-        self.encoder.eval()
+        self.encoder = encoder.eval()
+        # self.encoder.eval()
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         # self.use_gpu = options.use_gpu
         self.output_path = output_path
@@ -242,7 +242,7 @@ class Element():
         select_ratio = min(1. * self.options.max_buffer_size / total_patch_num,1.)
         self._log("select_ratio:",select_ratio)
         # avg = nn.AvgPool2d(self.SAMPLE_FACTOR,self.SAMPLE_FACTOR)
-        self.encoder.eval().to(self.device)
+        self.encoder = self.encoder.eval().to(self.device)
 
         # if self.use_gpu:
         #     imgs_NHW = imgs_NHW.to(self.device)
