@@ -436,8 +436,9 @@ class CriterionTrainGrid(nn.Module):
         # loss_reg = affine_loss(linesamp_gt,linesamp_pred,conf)
         dis_pred = torch.norm(mu_xyh_sample - mu_xyh_anchor,dim=1)
         dis_gt = torch.norm(xyh_gt_sample - xyh_gt_anchor,dim=1)
-        loss_dis = progress * torch.clip(dis_pred - dis_gt,min=0.)
+
+        loss_dis = torch.clip(dis_pred - dis_gt,min=0.)
     
-        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + loss_dis.mean()# + loss_bias + loss_reg
+        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + progress * loss_dis.mean()# + loss_bias + loss_reg
 
         return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_dis.mean(),sigma_avg.item() #,loss_bias.item(),loss_reg.item()
