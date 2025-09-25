@@ -509,6 +509,7 @@ class Grid():
                         'o':f'{loss_obj.item():.2f}',
                         'p':f'{loss_photo.item():.2f}',
                         'h':f'{loss_height.item():.2f}',
+                        'f':f'{feature_dis.mean().item():.2f}',
                         # 'r':f'{loss_reg:.2f}',
                         'v':f'{loss_valid:.2f}',
                         'min':f'{min_photo_loss:.2f}'
