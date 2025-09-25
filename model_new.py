@@ -310,6 +310,12 @@ class Decoder(nn.Module):
             nn.ReLU(),
             nn.Conv2d(in_channels // 16,2,1,1,0),
         )
+        self.score_head = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,1,1,1,0),
+            nn.Sigmoid()
+        )
         # self.bn = bnac(in_channels)
 
 
