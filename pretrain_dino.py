@@ -271,7 +271,10 @@ def pretrain(args):
     only_decoder_epoch = int(args.max_epoch * args.only_decoder_ratio)
     
 
-    encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
+    if args.resume_training:
+        encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+    else:
+        encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
     # projector = ProjectHead(encoder.output_channels,128)
     adapter_optimizer = optim.AdamW(params=encoder.adapter.parameters(),lr = args.lr_encoder_max)
     backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)
