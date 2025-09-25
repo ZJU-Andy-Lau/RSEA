@@ -397,17 +397,17 @@ class Grid():
                 objs_sample_p3 = torch.sum(objs_p33 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
                 locals_sample_p2 = torch.sum(locals_p32 * reverse_dists_ratio.unsqueeze(-1),dim=1).to(torch.float32)
 
+                features_anchor_pD = element.buffer['features'][min_dist_idxs].to(torch.float32)
+                confs_anchor_p1 = element.buffer['confs'][min_dist_idxs].to(torch.float32)
+                objs_anchor_p3 = element.buffer['objs'][min_dist_idxs].to(torch.float32)
+                locals_anchor_p2 = element.buffer['locals'][min_dist_idxs].to(torch.float32)
+
                 inside_border_mask = (objs_sample_p3[:,0] >= block.border[0]) & (objs_sample_p3[:,0] <= block.border[2]) & (objs_sample_p3[:,1] >= block.border[1]) & (objs_sample_p3[:,1] <= block.border[3]) & \
                                      (objs_anchor_p3[:,0] >= block.border[0]) & (objs_anchor_p3[:,0] <= block.border[2]) & (objs_anchor_p3[:,1] >= block.border[1]) & (objs_anchor_p3[:,1] <= block.border[3])
                 features_sample_pD = features_sample_pD[inside_border_mask]
                 confs_sample_p1 = confs_sample_p1[inside_border_mask]
                 objs_sample_p3 = objs_sample_p3[inside_border_mask]
                 locals_sample_p2 = locals_sample_p2[inside_border_mask]
-
-                features_anchor_pD = element.buffer['features'][min_dist_idxs].to(torch.float32)
-                confs_anchor_p1 = element.buffer['confs'][min_dist_idxs].to(torch.float32)
-                objs_anchor_p3 = element.buffer['objs'][min_dist_idxs].to(torch.float32)
-                locals_anchor_p2 = element.buffer['locals'][min_dist_idxs].to(torch.float32)
 
                 features_anchor_pD = features_anchor_pD[inside_border_mask]
                 confs_anchor_p1 = confs_anchor_p1[inside_border_mask]
