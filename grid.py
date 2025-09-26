@@ -356,6 +356,7 @@ class Grid():
             select_idx = torch.randperm(max_patch_num)[:patches_per_batch]
             optimizer.zero_grad()
             for element in self.elements:
+                t0 = time.perf_counter()
                 noise_idx = torch.randperm(max_patch_num * 5)[:patches_per_batch]
                 element_select_idx = select_idx % element.patch_num
                 features_sample_pD = element.buffer['features'][element_select_idx] # p,D
@@ -371,6 +372,7 @@ class Grid():
                 # features_noise_1Dp1 = F.normalize(features_noise_1Dp1 + feature_noise_noise,dim=1)
                 # for-dino
                 features_noise_1Dp1 = features_noise_1Dp1 + noise
+                t1 = time.perf_counter()
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patches_per_batch] # 3p,D
@@ -389,18 +391,23 @@ class Grid():
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
                 #=====================================================
+                t2 = time.perf_counter()
                 feature_dis = torch.norm(features_sample_1Dp1 - features_noise_1Dp1,dim=1).squeeze()
                 output_sample_16p1,valid_score_sample = mapper(features_sample_1Dp1)
+                t3 = time.perf_counter()
                 output_noise_16p1,valid_score_noise = mapper(features_noise_1Dp1)
+                t4 = time.perf_counter()
                 valid_score_positive = (valid_score_sample + valid_score_noise) / 2.
                 valid_score_nagetive = mapper.forward_valid(negative_feature_1Dp1)
-                
+                t5 = time.perf_counter()
+
                 output_sample_p6 = output_sample_16p1.permute(0,2,3,1).flatten(0,2)
                 output_noise_p6 = output_noise_16p1.permute(0,2,3,1).flatten(0,2)
                 mu_xyh_sample_p3 = self.warp_by_poly(output_sample_p6[:,:3],block.map_coeffs)
                 mu_xyh_noise_p3 = self.warp_by_poly(output_noise_p6[:,:3],block.map_coeffs)
                 log_sigma_xyh_sample_p3 = output_sample_p6[:,3:]
                 log_sigma_xyh_noise_p3 = output_noise_p6[:,3:]
+                t6 = time.perf_counter()
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
@@ -411,14 +418,20 @@ class Grid():
                                                                                             [locals_sample_p2,locals_sample_p2],
                                                                                             [objs_sample_p3,objs_sample_p3],
                                                                                             element.rpc) #,loss_bias,
-                
+                t7 = time.perf_counter()
+
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patches_per_batch,),1.),torch.full((patches_per_batch,),0.)],dim=0).to(valid_pred.device) # positive,negative
                 loss_valid = bce(valid_pred,valid_label) * 100.
 
+                t8 = time.perf_counter()
+
                 loss = loss + loss_valid
                 loss.backward()
 
+                t9 = time.perf_counter()
+
+                print(f"element:{element.id} \n sample:{t1 - t0:.2f}s, neg-sample:{t2 - t1:.2f}s, pos-forward:{t3 - t2:.2f}s, noise-forward:{t4 - t3:.2f}s, valid-forward:{t5 - t4:.2f}s, warp:{t6 - t5:.2f}s, loss:{t7 - t6:.2f}s, bce-loss:{t8 - t7:.2f}s, backward:{t9 - t8:.2f}s \n============================\n")
                 total_loss += loss.item()
                 total_loss_dist += loss_distribution.item()
                 total_loss_obj += loss_obj.item()
