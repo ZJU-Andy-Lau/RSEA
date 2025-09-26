@@ -485,6 +485,7 @@ class Grid():
                 #for-dino
                 features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
                 features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
+                t1 = time.perf_counter()
                 #===================生成负样本特征=====================
 
                 negative_sample_linesamps = self.generate_points_one_shot(patch_num,element.local_raw[0,0][0],element.local_raw[0,0][1],element.local_raw[-1,-1][0],element.local_raw[-1,-1][1],
@@ -493,6 +494,8 @@ class Grid():
                 negative_feature_1Dp1 = element.buffer['features'][negative_idxs].permute(1,0)[None,:,:,None]
 
                 #=====================================================
+                t2 = time.perf_counter()
+                print(t2 - t1)
                 feature_dis = torch.norm(features_sample_1Dp1 - features_anchor_1Dp1,dim=1).squeeze()
                 output_sample_16p1,valid_score_sample = mapper(features_sample_1Dp1)
                 output_anchor_16p1,valid_score_anchor = mapper(features_anchor_1Dp1)
