@@ -15,10 +15,6 @@ import argparse
 import cv2
 import kornia.augmentation as K
 
-# 设置Matplotlib支持中文显示
-plt.rcParams['font.sans-serif'] = ['SimHei']  # 'SimHei' 是黑体
-plt.rcParams['axes.unicode_minus'] = False  # 解决负号'-'显示为方块的问题
-
 # --- 0. 辅助函数 ---
 
 def extract_features_at_coords(feature_map, coords, device='cpu'):
@@ -46,10 +42,10 @@ def extract_features_at_coords(feature_map, coords, device='cpu'):
 
 def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='cpu'):
     """运行清晰度和双射性诊断。"""
-    print("\n--- 开始诊断: 特征清晰度与双射性 ---")
+    print("\n--- Start Diagnosis: Feature Clarity & Bijectivity ---")
     
     # --- 1.1 t-SNE 可视化 ---
-    print("正在生成 t-SNE 可视化图...")
+    print("Generating t-SNE visualization...")
     
     H, W = image.shape[-2:]
     grid_y, grid_x = torch.meshgrid(
@@ -66,9 +62,9 @@ def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='
     
     with torch.no_grad():
         feature_map,_ = encoder(image)
-        # 检查encoder是否有downsample_factor属性
+        # 检查encoder是否有SAMPLE_FACTOR属性
         if not hasattr(encoder, 'SAMPLE_FACTOR'):
-            raise AttributeError("Encoder模型必须包含 'SAMPLE_FACTOR' 属性。")
+            raise AttributeError("Encoder model must have a 'SAMPLE_FACTOR' attribute.")
 
         features = extract_features_at_coords(feature_map, coords_normalized, device=device)
 
@@ -78,27 +74,27 @@ def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='
     features_2d = tsne.fit_transform(features_np)
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle(f"t-SNE 可视化 - {encoder.__class__.__name__}", fontsize=16)
+    fig.suptitle(f"t-SNE Visualization - {encoder.__class__.__name__}", fontsize=16)
 
     sc1 = ax1.scatter(features_2d[:, 0], features_2d[:, 1], c=coords_flat[:, 0].numpy(), cmap='viridis')
-    ax1.set_title("根据原始X坐标着色")
-    ax1.set_xlabel("t-SNE 维度1")
-    ax1.set_ylabel("t-SNE 维度2")
+    ax1.set_title("Colored by Original X-coordinate")
+    ax1.set_xlabel("t-SNE Dimension 1")
+    ax1.set_ylabel("t-SNE Dimension 2")
     fig.colorbar(sc1, ax=ax1)
     
     sc2 = ax2.scatter(features_2d[:, 0], features_2d[:, 1], c=coords_flat[:, 1].numpy(), cmap='viridis')
-    ax2.set_title("根据原始Y坐标着色")
-    ax2.set_xlabel("t-SNE 维度1")
+    ax2.set_title("Colored by Original Y-coordinate")
+    ax2.set_xlabel("t-SNE Dimension 1")
     fig.colorbar(sc2, ax=ax2)
     
     plt.tight_layout(rect=[0, 0, 1, 0.96])
     save_path = os.path.join(output_dir, "tsne_visualization.png")
     plt.savefig(save_path)
     plt.close(fig)
-    print(f"t-SNE 可视化图已保存至: {save_path}")
+    print(f"t-SNE visualization saved to: {save_path}")
 
     # --- 1.2 逆向探针量化 ---
-    print("\n正在训练逆向探针以量化特征信息...")
+    print("\nTraining inverse probe to quantify feature information...")
     
     class InverseProbeNet(nn.Module):
         def __init__(self, feature_dim):
@@ -118,15 +114,15 @@ def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='
 
     feature_dim = probe_features.shape[1]
     if probe_features.numel() == 0 or feature_dim == 0:
-        print("特征维度为0或为空，无法训练逆向探针。")
+        print("Feature dimension is 0 or empty, cannot train inverse probe.")
         return
         
     probe_net = InverseProbeNet(feature_dim).to(device)
     probe_optimizer = optim.Adam(probe_net.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
 
-    print("开始训练探针...")
-    for step in tqdm(range(1000), desc="训练逆向探针"):
+    print("Starting probe training...")
+    for step in tqdm(range(1000), desc="Training Inverse Probe"):
         probe_optimizer.zero_grad()
         pred_coords = probe_net(probe_features)
         loss = loss_fn(pred_coords, probe_targets)
@@ -134,19 +130,19 @@ def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='
         probe_optimizer.step()
     
     final_loss = loss.item()
-    print(f"逆向探针训练完成。最终均方误差 (MSE Loss): {final_loss:.6f}")
-    print("解读: 损失越低，说明特征中包含的坐标信息越丰富、越清晰。")
+    print(f"Inverse probe training finished. Final Mean Squared Error (MSE Loss): {final_loss:.6f}")
+    print("Interpretation: A lower loss indicates that the features contain richer and clearer coordinate information.")
 
 # --- 2. 平滑性诊断 ---
 
 def run_smoothness_diagnostics(encoder, image, output_dir, device='cpu'):
     """运行平滑性诊断。"""
-    print("\n--- 开始诊断: 特征平滑性 ---")
+    print("\n--- Start Diagnosis: Feature Smoothness ---")
     
     H, W = image.shape[-2:]
     
     # --- 2.1 特征轨迹线可视化 ---
-    print("正在生成特征轨迹线可视化图...")
+    print("Generating feature trajectory visualization...")
     
     path_y = H // 2
     path_x = torch.arange(0, W)
@@ -170,17 +166,17 @@ def run_smoothness_diagnostics(encoder, image, output_dir, device='cpu'):
 
     fig = plt.figure(figsize=(8, 8))
     plt.plot(trajectory_2d[:, 0], trajectory_2d[:, 1], marker='.', markersize=4)
-    plt.title(f"特征轨迹线 (PCA降维) - {encoder.__class__.__name__}")
-    plt.xlabel("主成分 1")
-    plt.ylabel("主成分 2")
+    plt.title(f"Feature Trajectory (PCA Reduced) - {encoder.__class__.__name__}")
+    plt.xlabel("Principal Component 1")
+    plt.ylabel("Principal Component 2")
     plt.grid(True)
     save_path = os.path.join(output_dir, "feature_trajectory.png")
     plt.savefig(save_path)
     plt.close(fig)
-    print(f"特征轨迹线图已保存至: {save_path}")
+    print(f"Feature trajectory plot saved to: {save_path}")
 
     # --- 2.2 局部敏感度量化 ---
-    print("\n正在计算局部敏感度...")
+    print("\nCalculating local sensitivity...")
     
     num_samples = 10000
     c1_x = torch.randint(0, W - 2, (num_samples,))
@@ -203,21 +199,21 @@ def run_smoothness_diagnostics(encoder, image, output_dir, device='cpu'):
         R = dist_feat.cpu().numpy()
         mean_r, var_r = np.mean(R), np.var(R)
 
-    print(f"局部敏感度分析完成。")
-    print(f"相邻特征距离的均值 (Mean of R): {mean_r:.6f}")
-    print(f"相邻特征距离的方差 (Variance of R): {var_r:.6f}")
-    print("解读: 均值和方差越小，说明特征空间对于坐标空间越平滑。")
+    print(f"Local sensitivity analysis complete.")
+    print(f"Mean of adjacent feature distances (Mean of R): {mean_r:.6f}")
+    print(f"Variance of adjacent feature distances (Variance of R): {var_r:.6f}")
+    print("Interpretation: Smaller mean and variance indicate a smoother feature space with respect to the coordinate space.")
 
     fig = plt.figure(figsize=(8, 5))
     plt.hist(R, bins=50)
-    plt.title(f"局部敏感度比率(R)分布 - {encoder.__class__.__name__}")
-    plt.xlabel("相邻特征距离")
-    plt.ylabel("频数")
+    plt.title(f"Local Sensitivity Ratio (R) Distribution - {encoder.__class__.__name__}")
+    plt.xlabel("Distance between Adjacent Features")
+    plt.ylabel("Frequency")
     plt.grid(True)
     save_path = os.path.join(output_dir, "sensitivity_distribution.png")
     plt.savefig(save_path)
     plt.close(fig)
-    print(f"局部敏感度分布图已保存至: {save_path}")
+    print(f"Local sensitivity distribution plot saved to: {save_path}")
 
 # --- 3. 主执行函数 ---
 if __name__ == '__main__':
@@ -228,12 +224,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"使用设备: {DEVICE}")
+    print(f"Using device: {DEVICE}")
 
     # 创建输出目录
     OUTPUT_DIR = f"./vis/diagnostic_results_{get_current_time()}"
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    print(f"所有诊断结果将保存在 '{OUTPUT_DIR}' 文件夹中。")
+    print(f"All diagnostic results will be saved in the '{OUTPUT_DIR}' folder.")
 
     transform = nn.Sequential(
             #for-swt
@@ -259,12 +255,12 @@ if __name__ == '__main__':
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
         encoder.eval() # 设置为评估模式
     except Exception as e:
-        print(f"实例化或加载模型时出错: {e}")
-        print("请确保 'model_new.py' 文件存在且其中包含一个有效的 'Encoder' 类。")
+        print(f"Error instantiating or loading model: {e}")
+        print("Please ensure 'model_new.py' exists and contains a valid 'Encoder' class.")
         exit()
 
     print("\n" + "="*50)
-    print(f"正在诊断 Encoder: {encoder.__class__.__name__}")
+    print(f"Diagnosing Encoder: {encoder.__class__.__name__}")
     print("="*50)
     
     # 运行所有诊断
@@ -272,5 +268,6 @@ if __name__ == '__main__':
     run_smoothness_diagnostics(encoder, img, OUTPUT_DIR, DEVICE)
     
     print("\n" + "="*50)
-    print(f"Encoder {encoder.__class__.__name__} 诊断结束。")
+    print(f"Encoder {encoder.__class__.__name__} diagnosis finished.")
     print("="*50)
+
