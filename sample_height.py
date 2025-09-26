@@ -132,11 +132,11 @@ if __name__ == '__main__':
     root = args.root
 
     start_time = time.time()
-    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i]
+    names = [i.split('.rpc')[0] for i in os.listdir(root) if 'rpc' in i][:1]
     for name in names:
         rpc = RPCModelParameterTorch()
         rpc.load_from_file(os.path.join(root,f'{name}.rpc'))
         rpc.to_gpu()
-        get_elevation(os.path.join(root,f'{name}.tif'),os.path.join(root,'dem_egm.tif'),os.path.join(root,f'{name}_height.tif'),rpc)
+        get_elevation(os.path.join(root,f'{name}.tif'),os.path.join(root,'dtm_egm.tif'),os.path.join(root,f'{name}_height.tif'),rpc)
     end_time = time.time()
     print(f"总耗时: {end_time - start_time:.2f} 秒")

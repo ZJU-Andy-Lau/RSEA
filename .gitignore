@@ -11,3 +11,4 @@ adjust_onetask.sh
 pretrain_swt.sh
 pretrain_dino.sh
 localize.sh
+*.sh

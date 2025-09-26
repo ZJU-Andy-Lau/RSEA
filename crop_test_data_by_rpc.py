@@ -194,7 +194,7 @@ if __name__ == '__main__':
     rpcs = []
     hws = []
     corner_yxs = []
-    dem_full = rasterio.open(os.path.join(root,'dem_egm.tif'),'r')
+    dem_full = rasterio.open(os.path.join(root,'dtm_egm.tif'),'r')
 
     for name in tqdm(names):
         img = rasterio.open(os.path.join(root,f'{name}.tif'),'r')
@@ -226,10 +226,10 @@ if __name__ == '__main__':
         if max_size > 0 :
             line_center = (line_min + line_max) // 2
             samp_center = (samp_min + samp_max) // 2
-            line_min = max(line_center - max_size // 2,line_min)
-            line_max = min(line_center + max_size // 2,line_max)
-            samp_min = max(samp_center - max_size // 2,samp_min)
-            samp_max = min(samp_center + max_size // 2,samp_max)
+            line_min = max(line_center - max_size // 2,line_min) + 6000
+            line_max = min(line_center + max_size // 2,line_max) + 6000
+            samp_min = max(samp_center - max_size // 2,samp_min) + 6000
+            samp_max = min(samp_center + max_size // 2,samp_max) + 6000
             
         print(f"\n({line_min},{samp_min}) - ({line_max},{samp_max})  ({line_max - line_min},{samp_max - samp_min})")
         window = Window(samp_min,line_min,samp_max - samp_min,line_max - line_min)

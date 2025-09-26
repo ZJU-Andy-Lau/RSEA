@@ -95,7 +95,7 @@ class ImageViewer(tk.Canvas):
         self.scale = min(scale_w, scale_h)
 
         self.view_x = (img_w - canvas_w / self.scale) / 2
-        self.view_y = (img_h - canvas_h / self.scale) / 2
+        self.view_y = (img_h - canvas_w / self.scale) / 2
         self._redraw()
 
     def _redraw(self):
@@ -110,19 +110,15 @@ class ImageViewer(tk.Canvas):
         if canvas_w <= 0 or canvas_h <= 0:
             return
 
-        # BUG修复: 使用仿射变换进行高精度重绘，消除抖动
-        # 计算从画布坐标到源图像坐标的变换矩阵
-        # x_src = (1/scale) * x_canvas + view_x
-        # y_src = (1/scale) * y_canvas + view_y
         transform_matrix = (1/self.scale, 0, self.view_x, 0, 1/self.scale, self.view_y)
 
-        # 使用仿射变换生成精确的视图
-        # Image.BICUBIC 提供了较好的重采样质量
+        # 【修改 1】: 将图像插值方式改为最近邻，实现像素放大效果
+        # Change interpolation method to NEAREST for pixelated zoom effect
         disp_img = self.pil_image.transform(
             (canvas_w, canvas_h),
             Image.AFFINE,
             transform_matrix,
-            Image.BICUBIC  # 使用双三次插值以获得更好的视觉效果
+            Image.NEAREST  # 原为 Image.BICUBIC
         )
         
         self.image_tk = ImageTk.PhotoImage(disp_img)
@@ -193,7 +189,7 @@ class TiePointPickerApp:
 
         # --- 数据存储 ---
         self.image_paths = []
-        self.full_loaded_images = [] # BUG修复1: 缓存加载后的完整影像
+        self.full_loaded_images = [] 
         self.loaded_image_patches = {} # {影像索引: PIL 图像}
         self.patch_origin_coords = {} # {影像索引: (r1, c1)}
         self.image_shapes = []
@@ -204,8 +200,8 @@ class TiePointPickerApp:
         self.point_files = []
         
         # --- 刺点数据 ---
-        self.saved_points: List[List[Tuple[float, float]]] = []
-        self.current_group_points: List[Optional[Tuple[float, float]]] = []
+        self.saved_points: List[List[Tuple[int, int]]] = []
+        self.current_group_points: List[Optional[Tuple[int, int]]] = []
         self.selected_point_info: Optional[Dict] = None
         self.tie_point_group_counter = 1
         
@@ -244,7 +240,6 @@ class TiePointPickerApp:
         self.img_left_label = ttk.Label(left_controls, text="影像: -")
         self.img_left_label.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
         
-        # BUG修复4: 添加 takefocus=True 使画布可以接收键盘焦点
         self.viewer_left = ImageViewer(left_panel, app_controller=self, bg="gray", takefocus=True)
         self.viewer_left.pack(fill=tk.BOTH, expand=True)
         self.viewer_left.bind("<Button-1>", lambda event: self._on_canvas_click(event, self.viewer_left, 0))
@@ -276,7 +271,9 @@ class TiePointPickerApp:
         """为主窗口绑定键盘快捷键。"""
         self.master.bind("<Control-s>", lambda event: self._save_current_group())
         self.master.bind("<Control-z>", lambda event: self._undo_last_point())
-        # BUG修复3: 微调的步长是屏幕上的1个像素
+        
+        # 【修改 4】: 将微调功能改为按原图整像素移动
+        # Change finetuning to move by one original image pixel
         self.master.bind("<Up>", lambda event: self._finetune_point(-1, 0))
         self.master.bind("<Down>", lambda event: self._finetune_point(1, 0))
         self.master.bind("<Left>", lambda event: self._finetune_point(0, -1))
@@ -295,7 +292,6 @@ class TiePointPickerApp:
         
         try:
             for p in self.image_paths:
-                # BUG修复1: 将影像读入内存
                 img = cv2.imread(p, cv2.IMREAD_COLOR)
                 if img is None: raise ValueError(f"无法读取影像: {p}")
                 self.full_loaded_images.append(img)
@@ -343,7 +339,7 @@ class TiePointPickerApp:
         """重置整个应用程序的状态。"""
         self.image_paths = []
         self.num_images = 0
-        self.full_loaded_images = [] # BUG修复1: 重置缓存
+        self.full_loaded_images = []
         self._reset_point_data()
         self.viewer_left.set_image(None)
         self.viewer_right.set_image(None)
@@ -366,7 +362,8 @@ class TiePointPickerApp:
                         for line in f:
                             parts = line.strip().split()
                             if len(parts) >= 2:
-                                r, c = float(parts[0]), float(parts[1])
+                                # 保存为整数坐标
+                                r, c = int(parts[0]), int(parts[1])
                                 self.saved_points[i].append((r, c))
                 except Exception as e:
                     print(f"读取点文件 {filepath} 时出错: {e}")
@@ -393,7 +390,6 @@ class TiePointPickerApp:
             if not (r1 < r2 and c1 < c2):
                 continue
             
-            # BUG修复1: 直接从内存中的完整影像裁切图块
             full_img = self.full_loaded_images[i]
             patch_bgr = full_img[r1:r2, c1:c2]
             if patch_bgr.size == 0: continue
@@ -410,7 +406,6 @@ class TiePointPickerApp:
 
     def _display_images(self):
         """更新查看器中显示的图像。"""
-        # 左侧查看器
         idx_l = self.img_idx_left.get()
         img_l = self.loaded_image_patches.get(idx_l)
         self.viewer_left.set_image(img_l)
@@ -419,7 +414,6 @@ class TiePointPickerApp:
         else:
             self.img_left_label.config(text=f"影像 {idx_l}: (无内容)")
 
-        # 右侧查看器
         idx_r = self.img_idx_right.get()
         img_r = self.loaded_image_patches.get(idx_r)
         self.viewer_right.set_image(img_r)
@@ -472,15 +466,26 @@ class TiePointPickerApp:
                     self._draw_single_point(viewer, r, c, patch_r1, patch_c1, color)
     
     def _draw_single_point(self, viewer: ImageViewer, abs_r, abs_c, patch_r1, patch_c1, color):
-        """根据绝对坐标绘制单个点的辅助函数。"""
+        """
+        【修改 2.2】: (重写) 根据绝对像素坐标高亮单个像素并添加标记。
+        (Rewritten) Highlight a single pixel and add a marker based on absolute pixel coordinates.
+        """
+        # abs_r 和 abs_c 是像素的整数坐标
         patch_y = abs_r - patch_r1
         patch_x = abs_c - patch_c1
         
-        canvas_x, canvas_y = viewer.image_to_canvas_coords(patch_x, patch_y)
+        # 获取像素左上角和右下角在画布上的坐标
+        cx1, cy1 = viewer.image_to_canvas_coords(patch_x, patch_y)
+        cx2, cy2 = viewer.image_to_canvas_coords(patch_x + 1, patch_y + 1)
         
-        size = 4
-        viewer.create_oval(canvas_x - size, canvas_y - size, canvas_x + size, canvas_y + size,
-                           fill=color, outline="white", width=1, tags="point")
+        # 绘制像素的轮廓
+        viewer.create_rectangle(cx1, cy1, cx2, cy2, outline=color, width=1, tags="point")
+
+        # 为了更醒目，在中心绘制一个十字标记 (固定屏幕尺寸)
+        ccx, ccy = (cx1 + cx2) / 2, (cy1 + cy2) / 2
+        cross_size = 5 # 十字标记在屏幕上的大小 (单位: 像素)
+        viewer.create_line(ccx - cross_size, ccy, ccx + cross_size, ccy, fill=color, width=1, tags="point")
+        viewer.create_line(ccx, ccy - cross_size, ccx, ccy + cross_size, fill=color, width=1, tags="point")
 
     def _on_canvas_click(self, event, viewer: ImageViewer, panel_id: int):
         if self.num_images == 0 or not viewer.pil_image: return
@@ -496,20 +501,25 @@ class TiePointPickerApp:
 
         abs_c = patch_c1 + patch_x
         abs_r = patch_r1 + patch_y
+        
+        # 【修改 2.1】: 选择最近的整数像素坐标
+        # Select the nearest integer pixel coordinate
+        selected_abs_r = int(round(abs_r))
+        selected_abs_c = int(round(abs_c))
 
         img_h, img_w = self.image_shapes[image_idx][:2]
-        if not (0 <= abs_r < img_h and 0 <= abs_c < img_w):
+        if not (0 <= selected_abs_r < img_h and 0 <= selected_abs_c < img_w):
             messagebox.showwarning("超出边界", "标记点超出了影像原始边界。")
             return
 
-        self.current_group_points[image_idx] = (abs_r, abs_c)
+        self.current_group_points[image_idx] = (selected_abs_r, selected_abs_c)
         self.selected_point_info = {
             "image_idx": image_idx,
             "panel_id": panel_id
         }
         
-        viewer.focus_set() # BUG修复4: 点击画布后，将焦点设置到该画布
-        print(f"面板 {panel_id}, 影像 {image_idx}: 点击 -> 绝对坐标 ({abs_r:.2f},{abs_c:.2f})")
+        viewer.focus_set()
+        print(f"面板 {panel_id}, 影像 {image_idx}: 点击 -> 绝对坐标 ({selected_abs_r},{selected_abs_c})")
 
         self._redraw_all_points()
         self._update_status_label()
@@ -536,27 +546,21 @@ class TiePointPickerApp:
         self._update_status_label()
         self._update_ui_state()
 
-    def _finetune_point(self, dr_screen, dc_screen):
-        """使用箭头键按屏幕像素微调所选点的位置。"""
-        # BUG修复4: 检查焦点，只有当焦点在图像视图上时才执行微调
+    def _finetune_point(self, dr_abs, dc_abs):
+        """
+        【修改 5】: (重构) 使用箭头键按原始影像的一个像素微调所选点的位置。
+        (Refactored) Use arrow keys to finetune the selected point by one pixel in the original image.
+        """
         focused_widget = self.master.focus_get()
         if focused_widget not in [self.viewer_left, self.viewer_right]:
             return
             
         if self.selected_point_info is None: return
         
-        panel_id = self.selected_point_info["panel_id"]
-        viewer = self.viewer_left if panel_id == 0 else self.viewer_right
-        
-        if not viewer.pil_image: return
-
         idx = self.selected_point_info["image_idx"]
         r, c = self.current_group_points[idx]
         
-        # BUG修复2&3: 根据缩放比例计算在绝对坐标系中的移动量
-        dr_abs = dr_screen / viewer.scale
-        dc_abs = dc_screen / viewer.scale
-        
+        # 直接对整数坐标进行加减
         new_r, new_c = r + dr_abs, c + dc_abs
         
         img_h, img_w = self.image_shapes[idx][:2]
@@ -577,8 +581,8 @@ class TiePointPickerApp:
                 filepath = self.point_files[img_idx]
                 with open(filepath, 'a') as f:
                     r, c = coords
-                    # 保存时四舍五入为整数
-                    f.write(f"{int(round(r))} {int(round(c))}\n")
+                    # 保存时已经是整数，无需转换
+                    f.write(f"{r} {c}\n")
                 self.saved_points[img_idx].append(coords)
             
             messagebox.showinfo("保存成功", f"第 {self.tie_point_group_counter} 组刺点已保存。")
@@ -603,7 +607,8 @@ class TiePointPickerApp:
         for i in range(self.num_images):
             coords = self.current_group_points[i]
             if coords:
-                status_parts.append(f"影像{i}: ({coords[0]:.1f}, {coords[1]:.1f})")
+                # 以整数形式显示坐标
+                status_parts.append(f"影像{i}: ({coords[0]}, {coords[1]})")
             else:
                 status_parts.append(f"影像{i}: 未标")
         
