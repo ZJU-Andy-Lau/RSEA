@@ -285,7 +285,49 @@ class Grid():
             new_A = A @ trans_avg_inv[:2,:2]
             new_t = t + A @ trans_avg_inv[:2,2]
             new_trans = np.hstack([new_A,new_t.reshape(2,1)])
-            element.af_trans = new_trans        
+            element.af_trans = new_trans   
+
+    def generate_points_one_shot(N, min_x, min_y, max_x, max_y, x1, y1, x2, y2):
+        # 1. 一次性生成 2*N 个候选点
+        num_candidates = 2 * N
+        candidates = torch.rand(num_candidates, 2)
+        
+        # 将坐标缩放到外层矩形 (min_x, min_y, max_x, max_y) 的范围内
+        candidates[:, 0] = candidates[:, 0] * (max_x - min_x) + min_x
+        candidates[:, 1] = candidates[:, 1] * (max_y - min_y) + min_y
+
+        # 2. 创建布尔掩码以筛选掉在排除区域内的点
+        mask = (candidates[:, 0] < x1) | (candidates[:, 0] > x2) | \
+            (candidates[:, 1] < y1) | (candidates[:, 1] > y2)
+        
+        valid_points = candidates[mask]
+        
+        num_valid = valid_points.shape[0]
+
+        # 3. 根据有效点的数量决定是截取还是填充
+        if num_valid >= N:
+            # 如果有效点足够，直接截取前 N 个
+            return valid_points[:N]
+        else:
+            # 如果有效点不够，进行填充
+            if num_valid == 0:
+                # 极端情况：2N个点全掉进了排除区，这几乎不可能除非排除区非常大。
+                # 返回一个错误或空张量是合理的。
+                raise ValueError("No valid points generated. Try increasing the initial sample size or check your boundary definitions.")
+                
+            # 计算需要填充多少个点
+            num_to_pad = N - num_valid
+            
+            # 通过重复（tiling）valid_points来创建填充序列
+            # math.ceil确保我们至少重复一次以覆盖所需数量
+            repeat_factor = np.ceil(num_to_pad / num_valid)
+            padding_source = valid_points.repeat(repeat_factor, 1)
+            
+            # 从重复的序列中取出所需数量的填充点
+            padding = padding_source[:num_to_pad]
+            
+            # 将原始的有效点和填充点拼接起来
+            return torch.cat([valid_points, padding], dim=0)     
 
     def warp_by_poly(self,raw,coefs):
         x = apply_polynomial(raw[:,0],coefs['x'])
@@ -359,7 +401,7 @@ class Grid():
             optimizer.zero_grad()
             for element in self.elements:
                 # if iter_idx % 2 != 0:
-                t1 = time.perf_counter()
+
                 block_tl_linesamp = (block.diag_ratio[0] * element.img_raw.shape[:2]).astype(int)
                 block_br_linesamp = (block.diag_ratio[1] * element.img_raw.shape[:2]).astype(int)
                 linesamp_min,linesamp_max = element.local_raw[block_tl_linesamp[0],block_tl_linesamp[1]],element.local_raw[block_br_linesamp[0] - 1,block_br_linesamp[1] - 1]
@@ -371,9 +413,8 @@ class Grid():
                                                     torch.stack([linesamp_max[0] + linesamp_min[0] - sample_linesamps[:,0],sample_linesamps[:,1]],dim=-1),
                                                     torch.stack([sample_linesamps[:,0],linesamp_max[1] + linesamp_min[1] - sample_linesamps[:,1]],dim=-1)],
                                                     dim=0)
-                t2 = time.perf_counter()
+
                 dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
-                t3 = time.perf_counter()
                 # torch.cuda.synchronize()
                 valid_mask = (dists.max(dim=1).values < 256) & (dists.min(dim=1).values < 16)
                 if valid_mask.sum() == 0:
@@ -415,7 +456,7 @@ class Grid():
                 objs_anchor_p3 = objs_anchor_p3[inside_border_mask]
                 locals_anchor_p2 = locals_anchor_p2[inside_border_mask]
 
-                t4 = time.perf_counter()
+
                     
                 # else:
                 #     sample_idxs = torch.randperm(len(element.buffer['features']))[:patches_per_batch]
@@ -429,9 +470,9 @@ class Grid():
                 # 筛出在grid的border范围内的，范围外的不参与学习
                 
 
-                # if vis_flag < 1:
-                #     visualize_subset_points(locals_sample_p2.cpu().numpy(),locals_anchor_p2.cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
-                #     vis_flag += 1
+                if vis_flag < 1:
+                    visualize_subset_points(locals_sample_p2.cpu().numpy(),locals_anchor_p2.cpu().numpy(),os.path.join(self.output_path,f'knn_vis_{block_idx}_{vis_flag}.png'),point_radius=2)
+                    vis_flag += 1
 
                 patch_num = inside_border_mask.sum()
                 features_sample_1Dp1 = features_sample_pD.permute(1,0)[None,:,:,None]
@@ -444,27 +485,14 @@ class Grid():
                 #for-dino
                 features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
                 features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
-
-                t5 = time.perf_counter()
                 #===================生成负样本特征=====================
 
-                negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
-                negative_features = element.buffer['features'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,D
-                negative_locals = element.buffer['locals'][negative_sample_idxs].reshape(patch_num,3,-1) # p,3,2
-                negative_avg_feature = torch.mean(negative_features,dim=1) # p,D
-                negative_avg_local = torch.mean(negative_locals,dim=1) # p,2
-                dis = torch.mean(torch.norm(negative_avg_local[:,None] - negative_locals,dim=-1),dim=1) # p
-                negative_noise_amp =  100. / dis
-                negative_noise = patch_noise_buffer[0,:,torch.randperm(max_patch_num * 5)[:patch_num],0].permute(1,0) # p,D
-                #for-swt
-                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
-                #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
-
-                negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
+                negative_sample_linesamps = self.generate_points_one_shot(patch_num,element.local_raw[0,0][0],element.local_raw[0,0][1],element.local_raw[-1,-1][0],element.local_raw[-1,-1][1],
+                                                                          linesamp_min[0],linesamp_min[1],linesamp_max[0],linesamp_max[1]) #N, min_x, min_y, max_x, max_y, x1, y1, x2, y2
+                _,negative_idxs = element.query_point_base(negative_sample_linesamps,k=1)
+                negative_feature_1Dp1 = element.buffer['features'][negative_idxs].permute(1,0)[None,:,:,None]
 
                 #=====================================================
-                t6 = time.perf_counter()
                 feature_dis = torch.norm(features_sample_1Dp1 - features_anchor_1Dp1,dim=1).squeeze()
                 output_sample_16p1,valid_score_sample = mapper(features_sample_1Dp1)
                 output_anchor_16p1,valid_score_anchor = mapper(features_anchor_1Dp1)
@@ -478,8 +506,6 @@ class Grid():
                 log_sigma_xyh_sample_p3 = output_sample_p6[:,3:]
                 log_sigma_xyh_anchor_p3 = output_anchor_p6[:,3:]
 
-                t7 = time.perf_counter()
-
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
                                                                                             feature_dis,
@@ -489,18 +515,13 @@ class Grid():
                                                                                             [locals_sample_p2,locals_anchor_p2],
                                                                                             [objs_sample_p3,objs_anchor_p3],
                                                                                             element.rpc) #,loss_bias,
-                t8 = time.perf_counter()
-
+                
                 valid_pred = torch.concatenate([valid_score_positive.reshape(-1),valid_score_nagetive.reshape(-1)],dim=0)
                 valid_label = torch.concatenate([torch.full((patch_num,),1.),torch.full((patch_num,),0.)],dim=0).to(valid_pred.device) # positive,negative
                 loss_valid = bce(valid_pred,valid_label) * 100.
 
-                t9 = time.perf_counter()
                 loss = loss + loss_valid
                 loss.backward()
-
-                t10 = time.perf_counter()
-                print(f"{t2-t1}\n{t3-t2}\n{t4-t3}\n{t5-t4}\n{t6-t5}\n{t7-t6}\n{t8-t7}\n{t9-t8}\n{t10-t9}\n\n")
 
                 total_loss += loss.item()
                 total_loss_dist += loss_distribution.item()
