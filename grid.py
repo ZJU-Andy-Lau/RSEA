@@ -438,11 +438,11 @@ class Grid():
                 feature_sample_noise = patch_noise_buffer[:,:,noise_idx[:patches_per_batch],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 feature_anchor_noise = patch_noise_buffer[:,:,noise_idx[patches_per_batch:],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
-                features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
+                # features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
+                # features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
                 #for-dino
-                # features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
-                # features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
+                features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
+                features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
                 #===================生成负样本特征=====================
 
                 negative_sample_idxs = torch.randperm(len(element.buffer['features']))[:3 * patch_num] # 3p,D
@@ -454,9 +454,9 @@ class Grid():
                 negative_noise_amp =  100. / dis
                 negative_noise = patch_noise_buffer[0,:,torch.randperm(max_patch_num * 5)[:patch_num],0].permute(1,0) # p,D
                 #for-swt
-                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                # negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
 
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
