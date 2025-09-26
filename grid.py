@@ -490,8 +490,8 @@ class Grid():
 
                 negative_sample_linesamps = self.generate_points_one_shot(patch_num,element.local_raw[0,0][0],element.local_raw[0,0][1],element.local_raw[-1,-1][0],element.local_raw[-1,-1][1],
                                                                           linesamp_min[0],linesamp_min[1],linesamp_max[0],linesamp_max[1]) #N, min_x, min_y, max_x, max_y, x1, y1, x2, y2
-                _,negative_idxs = element.query_point_base(negative_sample_linesamps,k=1)
-                negative_feature_1Dp1 = element.buffer['features'][negative_idxs].permute(1,0)[None,:,:,None]
+                _,negative_idxs = element.query_point_base(negative_sample_linesamps.to(element.buffer['features'].device),k=1)
+                negative_feature_1Dp1 = element.buffer['features'][negative_idxs.squeeze()].permute(1,0)[None,:,:,None]
 
                 #=====================================================
                 t2 = time.perf_counter()
