@@ -65,7 +65,7 @@ def run_clarity_and_bijectivity_diagnostics(encoder, image, output_dir, device='
     coords_normalized = coords_normalized.unsqueeze(0).unsqueeze(2).to(device)
     
     with torch.no_grad():
-        feature_map = encoder(image)
+        feature_map,_ = encoder(image)
         # 检查encoder是否有downsample_factor属性
         if not hasattr(encoder, 'SAMPLE_FACTOR'):
             raise AttributeError("Encoder模型必须包含 'SAMPLE_FACTOR' 属性。")
@@ -158,7 +158,7 @@ def run_smoothness_diagnostics(encoder, image, output_dir, device='cpu'):
     path_coords_normalized = path_coords_normalized.unsqueeze(0).unsqueeze(2).to(device)
 
     with torch.no_grad():
-        feature_map = encoder(image)
+        feature_map,_ = encoder(image)
         trajectory_features = extract_features_at_coords(feature_map, path_coords_normalized, device)
         trajectory_features_np = trajectory_features.cpu().numpy()
     
