@@ -287,7 +287,7 @@ class Grid():
             new_trans = np.hstack([new_A,new_t.reshape(2,1)])
             element.af_trans = new_trans   
 
-    def generate_points_one_shot(N, min_x, min_y, max_x, max_y, x1, y1, x2, y2):
+    def generate_points_one_shot(self, N, min_x, min_y, max_x, max_y, x1, y1, x2, y2):
         # 1. 一次性生成 2*N 个候选点
         num_candidates = 2 * N
         candidates = torch.rand(num_candidates, 2)
