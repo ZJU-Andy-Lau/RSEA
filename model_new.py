@@ -233,7 +233,7 @@ class Adapter(nn.Module):
             nn.ReLU(),
             nn.Conv2d(self.input_channels // 4,self.output_channels,1,1,0),
             nn.ReLU(),
-            nn.Conv2d(self.output_channels,self.output_channels,1,1,1),
+            nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
         )
 
         self.pos_encoder = PositionalEncoding(dim=output_channels)
@@ -253,14 +253,11 @@ class Adapter(nn.Module):
     def forward(self,x):
         raw_feat = self.cnn(x)
         B,D,H,W = raw_feat.shape
-        print("raw:",raw_feat.shape)
         feat_with_pos = self.pos_encoder(raw_feat)
         feat_seq = feat_with_pos.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
-        print("attn_seq",attended_sequence.shape)
         feat = attended_sequence.transpose(1, 2).view(B, D, H, W)
-        print("attn_feat",feat.shape)
         conf = self.conf_head(x)
         # feat = F.normalize(feat,dim=1)
         return feat,conf
