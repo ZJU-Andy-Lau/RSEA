@@ -247,7 +247,7 @@ class Adapter(nn.Module):
             nn.ReLU(),
             nn.Conv2d(self.input_channels // 4, self.input_channels // 16,1,1,0),
             nn.ReLU(),
-            nn.Conv2d(self.input_channels // 16, 1 ,1,1,1),
+            nn.Conv2d(self.input_channels // 16, 1 ,1,1,0),
             nn.Sigmoid()
         )
     def forward(self,x):
