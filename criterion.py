@@ -216,6 +216,8 @@ class CriterionFinetune(nn.Module):
         weights1_P = conf_norm(conf1_gt_P)
         weights2_P = conf_norm(conf2_gt_P)
 
+        print(pred1_P3.shape,obj1_P3.shape,weights1_P.shape)
+
         loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1) * weights1_P).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1) * weights2_P).mean()
         loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2]) * weights1_P).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2]) * weights2_P).mean()
 
