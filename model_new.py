@@ -257,7 +257,7 @@ class Adapter(nn.Module):
         feat_seq = feat_with_pos.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
-        feat = attended_sequence.transpose(1, 2).view(B, D, H, W)
+        feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W))
         conf = self.conf_head(x)
         # feat = F.normalize(feat,dim=1)
         return feat,conf
