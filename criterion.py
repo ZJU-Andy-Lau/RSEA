@@ -201,7 +201,7 @@ class CriterionFinetune(nn.Module):
                 H,W
                 ):
         
-
+        residual1_P,residual2_P = residual1_P.to(torch.float32),residual2_P.to(torch.float32)
         # feat1_PD,feat2_PD,pred1_P3,pred2_P3,conf1_P,conf2_P,obj1_P3,obj2_P3,residual1_P,residual2_P = \
         #     feat1_PD.to(torch.float32),feat2_PD.to(torch.float32),pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),conf1_P.to(torch.float32),conf2_P.to(torch.float32),obj1_P3.to(torch.float32),obj2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
 
@@ -216,7 +216,7 @@ class CriterionFinetune(nn.Module):
         weights1_P = conf_norm(conf1_gt_P)
         weights2_P = conf_norm(conf2_gt_P)
 
-        print(pred1_P3.shape,obj1_P3.shape,weights1_P.shape)
+        # print(pred1_P3.shape,obj1_P3.shape,weights1_P.shape)
 
         loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1) * weights1_P).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1) * weights2_P).mean()
         loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2]) * weights1_P).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2]) * weights2_P).mean()
