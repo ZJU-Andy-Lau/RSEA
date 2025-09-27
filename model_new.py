@@ -137,7 +137,7 @@ class FeatureInteractionModule(nn.Module):
         out_a = seq_a.transpose(1, 2).view(B, D, H, W)
         out_b = seq_b.transpose(1, 2).view(B, D, H, W)
 
-        return out_a, out_b
+        return F.normalize(out_a,dim=1), F.normalize(out_b,dim=1)
 
 class Encoder(nn.Module):
 
@@ -257,7 +257,7 @@ class Adapter(nn.Module):
         feat_seq = feat_with_pos.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
-        feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W))
+        feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W),dim=1)
         conf = self.conf_head(x)
         # feat = F.normalize(feat,dim=1)
         return feat,conf
