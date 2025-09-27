@@ -315,6 +315,7 @@ def pretrain(args):
         pprint('Encoder Loaded')
 
     encoder = encoder.to(args.device)
+    fim = fim.to(args.device)
     # projector = projector.to(args.device)
     for state in adapter_optimizer.state.values():
         for k, v in state.items():
