@@ -159,8 +159,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
 
-    feat_vis = [feat1[0].permute(1,2,0).cpu().numpy(),feat2[0].permute(1,2,0).cpu().numpy(),
-                feat1_it[0].permute(1,2,0).cpu().numpy(),feat2_it[0].permute(1,2,0).cpu().numpy()]
+    feat_vis = [feat1[0].permute(1,2,0).detach().cpu().numpy(),feat2[0].permute(1,2,0).detach().cpu().numpy(),
+                feat1_it[0].permute(1,2,0).detach().cpu().numpy(),feat2_it[0].permute(1,2,0).detach().cpu().numpy()]
 
     feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
     feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
@@ -589,7 +589,7 @@ def pretrain(args):
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
                 feat,conf_cont,conf_div = vis(encoder,vis_img)
                 vis_cor_idx = torch.randperm(len(overlap1[0]))[:10]
-                cor_idx1, cor_idx2 = overlap1[0][vis_cor_idx].cpu().numpy(),overlap2[0][vis_cor_idx].cpu().numpy()
+                cor_idx1, cor_idx2 = overlap1[0][vis_cor_idx].detach().cpu().numpy(),overlap2[0][vis_cor_idx].detach().cpu().numpy()
                 feat_cor = visualize_feature_correspondences(feat_vis[0],feat_vis[1],cor_idx1,cor_idx2)
                 feat_it_cor = visualize_feature_correspondences(feat_vis[2],feat_vis[3],cor_idx1,cor_idx2)
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
