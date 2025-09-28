@@ -870,15 +870,16 @@ def visualize_feature_correspondences(
     # 为了公平比较，我们将两个特征图的数据合并在一起进行PCA和缩放
     fm1_reshaped = feature_map1.reshape((H * W, D))
     fm2_reshaped = feature_map2.reshape((H * W, D))
-    all_features = np.vstack((fm1_reshaped, fm2_reshaped))
+    all_features = np.concatenate([fm1_reshaped, fm2_reshaped], axis=0)
 
     # 应用PCA将特征降到3维
     pca = PCA(n_components=3)
     features_pca = pca.fit_transform(all_features)
 
-    # 使用MinMaxScaler将PCA结果归一化到[0, 1]范围，以便显示为RGB颜色
-    scaler = MinMaxScaler(feature_range=(1e-6, 1. - 1e-6))
-    features_normalized = scaler.fit_transform(features_pca)
+    # # 使用MinMaxScaler将PCA结果归一化到[0, 1]范围，以便显示为RGB颜色
+    # scaler = MinMaxScaler(feature_range=(1e-6, 1. - 1e-6))
+    # features_normalized = scaler.fit_transform(features_pca)
+    features_normalized = (features_pca - features_pca.min()) / (features_pca.max() - features_pca.min() + 1e-9)
 
     # 将处理后的数据分离并重塑为两个RGB图像
     img1_rgb = features_normalized[:H * W, :].reshape((H, W, 3))
