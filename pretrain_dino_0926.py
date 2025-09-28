@@ -13,8 +13,9 @@ from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 import numpy as np
 from torch.utils.data import Dataset,DataLoader,DistributedSampler
-from criterion import CriterionFinetune
-from model_new import EncoderDino,ProjectHead,DecoderFinetune,FeatureInteractionModule
+from criterion_0926 import CriterionFinetune
+from model.encoder_dino_0926 import EncoderDino
+from model.decoders import DecoderFinetune
 import h5py
 import datetime
 import time
@@ -105,7 +106,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
     return feat,conf_cont,conf_div
 
 
-def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModule,decoder:DecoderFinetune,criterion:nn.Module,only_decoder:bool = False):
+def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,criterion:nn.Module,only_decoder:bool = False):
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -119,12 +120,9 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
 
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
-    feat1_it,feat2_it = fim(feat1,feat2)
 
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
-    feat1_it_sample = sample_features(feat1_it,overlap1).unsqueeze(-1)
-    feat2_it_sample = sample_features(feat2_it,overlap2).unsqueeze(-1)
 
     # project_feat1 = projector(feat1_sample)
     # project_feat2 = projector(feat2_sample)
@@ -158,10 +156,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
 
-    feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
-    feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
-    feat1_it_PD = feat1_it_sample.permute(0,2,3,1).flatten(0,2)
-    feat2_it_PD = feat2_it_sample.permute(0,2,3,1).flatten(0,2)
+    project_feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
+    project_feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
     conf2_P = conf2.permute(0,2,3,1).reshape(-1)
     obj1_P3 = obj1.flatten(0,2)
@@ -171,8 +167,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
 
     loss,loss_obj,loss_height,loss_conf,loss_feat,k,sp,sn = criterion(epoch,args.max_epoch,
-                                                                feat1_PD,feat2_PD,
-                                                                feat1_it_PD,feat2_it_PD,
+                                                                project_feat1_PD,project_feat2_PD,
                                                                 pred1_P3,pred2_P3,
                                                                 conf1_P,conf2_P,
                                                                 obj1_P3,obj2_P3,
@@ -182,7 +177,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
     if not only_decoder:
-        loss = loss + loss_dis * (min(1.,epoch / (args.max_epoch * .7)) + 1.)
+        loss = loss + loss_dis * min(1.,epoch / (args.max_epoch * .7))
     else:
         loss = loss + loss_dis * 0.
 
@@ -272,29 +267,28 @@ def pretrain(args):
 
     pprint("Building Encoder")
 
-    # args.unfreeze_backbone_layers = [int(i) for i in args.unfreeze_backbone_layers.split(',') if i.isdigit() and 0 <= int(i) <= 23]
+    args.unfreeze_backbone_layers = [int(i) for i in args.unfreeze_backbone_layers.split(',') if i.isdigit() and 0 <= int(i) <= 23]
     
     only_decoder_epoch = int(args.max_epoch * args.only_decoder_ratio)
     
 
-    # if args.resume_training:
-    #     encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
-    # else:
-    encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
-    fim = FeatureInteractionModule(feature_dim = encoder.output_channels)
+    if args.resume_training:
+        encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+    else:
+        encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
     # projector = ProjectHead(encoder.output_channels,128)
-    adapter_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(fim.parameters()),lr = args.lr_encoder_max)
-    # backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)
+    adapter_optimizer = optim.AdamW(params=encoder.adapter.parameters(),lr = args.lr_encoder_max)
+    backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)
 
     adapter_scheduler = MultiStageOneCycleLR(optimizer=adapter_optimizer,
                                              total_steps=args.max_epoch - only_decoder_epoch,
                                              warmup_ratio=min(100. / args.max_epoch,.1),
                                              cooldown_ratio=.7)
     
-    # backbone_scheduler = MultiStageOneCycleLR(optimizer=backbone_optimizer,
-    #                                           total_steps=args.max_epoch - only_decoder_epoch,
-    #                                           warmup_ratio=min(100. / args.max_epoch,.1),
-    #                                           cooldown_ratio=.7)
+    backbone_scheduler = MultiStageOneCycleLR(optimizer=backbone_optimizer,
+                                              total_steps=args.max_epoch - only_decoder_epoch,
+                                              warmup_ratio=min(100. / args.max_epoch,.1),
+                                              cooldown_ratio=.7)
 
 
     args.output_channels = encoder.output_channels
@@ -302,37 +296,32 @@ def pretrain(args):
     
     if args.resume_training:
         encoder.load_adapter(os.path.join(args.checkpoints_path,'adapter.pth'))
-        fim.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'fim.pth'),map_location='cpu').items()})
         # projector.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'projector.pth'),map_location='cpu').items()})
         adapter_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'adapter_optimizer.pth'),map_location='cpu'))
         adapter_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'adapter_scheduler.pth'),map_location='cpu'))
-        # backbone_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'backbone_optimizer.pth'),map_location='cpu'))
-        # backbone_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'backbone_scheduler.pth'),map_location='cpu'))
+        backbone_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'backbone_optimizer.pth'),map_location='cpu'))
+        backbone_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'backbone_scheduler.pth'),map_location='cpu'))
         
     elif not args.encoder_path is None:
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-        fim.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'fim.pth'),map_location='cpu').items()})
         pprint('Encoder Loaded')
 
     encoder = encoder.to(args.device)
-    fim = fim.to(args.device)
     # projector = projector.to(args.device)
     for state in adapter_optimizer.state.values():
         for k, v in state.items():
             if isinstance(v, torch.Tensor):
                 state[k] = v.to(args.device)
-    # for state in backbone_optimizer.state.values():
-    #     for k, v in state.items():
-    #         if isinstance(v, torch.Tensor):
-    #             state[k] = v.to(args.device)
+    for state in backbone_optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(args.device)
 
     encoder_op = encoder
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
-        fim = distibute_model(fim,args.local_rank)
         # projector = distibute_model(projector,args.local_rank)
         encoder_op = encoder.module
-        fim_op = fim.module
     
 
     pprint("Building Decoders")     
@@ -400,7 +389,7 @@ def pretrain(args):
             decoder_optimizer = optimizers[dataset_idx]
             decoder.train()
             adapter_optimizer.zero_grad()
-            # backbone_optimizer.zero_grad()
+            backbone_optimizer.zero_grad()
             decoder_optimizer.zero_grad()
             
             compose_data = {
@@ -415,7 +404,7 @@ def pretrain(args):
                 "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn = compute_loss(args,epoch,compose_data,encoder,decoder,criterion,epoch < only_decoder_epoch)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -431,7 +420,7 @@ def pretrain(args):
                 pprint(f"--- 检测到 NaN！Epoch {epoch}, iter {iter_idx+1}, dataset {dataset_idx}. 所有进程将一起跳过此次更新。---")
                 del loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,conf_mean
                 adapter_scheduler.step()
-                # backbone_scheduler.step()
+                backbone_scheduler.step()
                 continue 
             
             loss.backward()
@@ -490,10 +479,10 @@ def pretrain(args):
 
         if epoch >= only_decoder_epoch:
             adapter_scheduler.step()
-            # backbone_scheduler.step()
+            backbone_scheduler.step()
 
         adapter_optimizer.step()
-        # backbone_optimizer.step()
+        backbone_optimizer.step()
         
         for scheduler in schedulers:
             scheduler.step()            
@@ -539,28 +528,26 @@ def pretrain(args):
             
             if total_loss_obj < min_loss and epoch >= only_decoder_epoch + 50:
                 min_loss = total_loss_obj
-                # backbone_state_dict = {k:v.detach().cpu() for k,v in encoder_op.backbone.state_dict().items()}
-                # torch.save(backbone_state_dict,os.path.join(args.encoder_output_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+                backbone_state_dict = {k:v.detach().cpu() for k,v in encoder_op.backbone.state_dict().items()}
+                torch.save(backbone_state_dict,os.path.join(args.encoder_output_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
                 encoder_op.save_adapter(os.path.join(args.encoder_output_path,'adapter.pth'))
-                torch.save(fim_op.state_dict(),os.path.join(args.encoder_output_path,'fim.pth'))
                 print('best updated')
             
             if epoch % 5 == 0:
                 path = args.checkpoints_path
                 # encoder_state_dict = {k:v.detach().cpu() for k,v in encoder.state_dict().items()}
                 adapter_optimizer_state_dict = adapter_optimizer.state_dict()
-                # backbone_optimizer_state_dict = backbone_optimizer.state_dict()
+                backbone_optimizer_state_dict = backbone_optimizer.state_dict()
                 adapter_scheduler_state_dict = adapter_scheduler.state_dict()
-                # backbone_scheduler_state_dict = backbone_scheduler.state_dict()
+                backbone_scheduler_state_dict = backbone_scheduler.state_dict()
                 # projector_state_dict = projector.state_dict()
                 encoder_op.save_adapter(os.path.join(path,'adapter.pth'))
-                # encoder_op.save_backbone(os.path.join(path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+                encoder_op.save_backbone(os.path.join(path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
                 torch.save(adapter_optimizer_state_dict,os.path.join(path,'adapter_optimizer.pth'))
-                # torch.save(backbone_optimizer_state_dict,os.path.join(path,'backbone_optimizer.pth'))
+                torch.save(backbone_optimizer_state_dict,os.path.join(path,'backbone_optimizer.pth'))
                 torch.save(adapter_scheduler_state_dict,os.path.join(path,'adapter_scheduler.pth'))
-                # torch.save(backbone_scheduler_state_dict,os.path.join(path,'backbone_scheduler.pth'))
+                torch.save(backbone_scheduler_state_dict,os.path.join(path,'backbone_scheduler.pth'))
                 # torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
-                torch.save(fim_op.state_dict(),os.path.join(path,'fim.pth'))
                 for i in range(dataset_num):
                     decoder_state_dict = {k:v.detach().cpu() for k,v in decoders[i].state_dict().items()}
                     decoder_optimizer_state_dict = optimizers[i].state_dict()
@@ -638,7 +625,7 @@ if __name__ == '__main__':
     parser.add_argument('--log_prefix',type=str,default='')
     parser.add_argument('--dataset_select',type=str,default=None)
     parser.add_argument('--only_decoder_ratio',type=float,default=0.)
-    # parser.add_argument('--unfreeze_backbone_layers',type=str,default='23')
+    parser.add_argument('--unfreeze_backbone_layers',type=str,default='23')
     parser.add_argument("--local_rank", default=os.getenv('LOCAL_RANK', -1), type=int)
 
     args = parser.parse_args()

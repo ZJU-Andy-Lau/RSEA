@@ -14,7 +14,8 @@ import torch.nn as nn
 import torch.multiprocessing as mp
 import numpy as np
 import pandas as pd
-from model_new import EncoderDino,AffineFitter
+from model.encoder_dino_0927 import EncoderDino
+from model.solver import AffineFitter
 import cv2
 from utils import mercator2lonlat
 import queue

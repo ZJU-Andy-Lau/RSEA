@@ -18,6 +18,9 @@ from rpc import RPCModelParameterTorch
 from typing import Tuple
 from sklearn.decomposition import PCA
 from enum import Enum
+from sklearn.preprocessing import MinMaxScaler
+from matplotlib.patches import ConnectionPatch
+from matplotlib import pyplot as plt
 
 def get_current_time():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -822,6 +825,130 @@ def visualize_subset_points(points1, points2, output_path, padding=50, point_rad
 
     # 保存图像到指定路径
     cv2.imwrite(output_path, canvas)
+
+def visualize_feature_correspondences(
+    feature_map1: np.ndarray,
+    feature_map2: np.ndarray,
+    points1: np.ndarray,
+    points2: np.ndarray,
+    draw_lines: bool = True
+) -> np.ndarray:
+    """
+    将两个特征图及其对应点进行可视化。
+
+    该函数通过联合PCA将特征图降维并归一化到RGB空间，然后并排绘制它们。
+    对应点会用相同的颜色在两张图上标记出来，以便于比较特征的相似性。
+
+    Args:
+        feature_map1 (np.ndarray): 第一个特征图，形状为 (H, W, D)。
+        feature_map2 (np.ndarray): 第二个特征图，形状为 (H, W, D)。
+        points1 (np.ndarray): 第一个特征图上的对应点坐标，形状为 (N, 2)，格式为 (x, y)。
+        points2 (np.ndarray): 第二个特征图上的对应点坐标，形状为 (N, 2)，格式为 (x, y)。
+        draw_lines (bool): 是否在对应点之间绘制连接线，默认为 True。
+
+    Returns:
+        np.ndarray: 一个包含最终可视化结果的RGB图像的NumPy数组。
+    """
+    # --- 1. 输入验证 ---
+    if not (isinstance(feature_map1, np.ndarray) and isinstance(feature_map2, np.ndarray) and
+            isinstance(points1, np.ndarray) and isinstance(points2, np.ndarray)):
+        raise TypeError("所有输入都必须是NumPy数组。")
+        
+    if feature_map1.shape[:2] != feature_map2.shape[:2]:
+        raise ValueError("两个特征图的高度（H）和宽度（W）必须相同。")
+    if feature_map1.shape[2] != feature_map2.shape[2]:
+        raise ValueError("两个特征图的特征维度（D）必须相同。")
+    if points1.shape != points2.shape:
+        raise ValueError("两组对应点的数量和维度必须相同。")
+    if points1.ndim != 2 or points1.shape[1] != 2:
+        raise ValueError("坐标点数组的形状必须是 (N, 2)。")
+
+    H, W, D = feature_map1.shape
+    N = points1.shape[0]
+
+    # --- 2. 联合PCA降维与归一化 ---
+    # 为了公平比较，我们将两个特征图的数据合并在一起进行PCA和缩放
+    fm1_reshaped = feature_map1.reshape((H * W, D))
+    fm2_reshaped = feature_map2.reshape((H * W, D))
+    all_features = np.vstack((fm1_reshaped, fm2_reshaped))
+
+    # 应用PCA将特征降到3维
+    pca = PCA(n_components=3)
+    features_pca = pca.fit_transform(all_features)
+
+    # 使用MinMaxScaler将PCA结果归一化到[0, 1]范围，以便显示为RGB颜色
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    features_normalized = scaler.fit_transform(features_pca)
+
+    # 将处理后的数据分离并重塑为两个RGB图像
+    img1_rgb = features_normalized[:H * W, :].reshape((H, W, 3))
+    img2_rgb = features_normalized[H * W:, :].reshape((H, W, 3))
+
+    # --- 3. 使用Matplotlib进行绘图 ---
+    # 根据图像的宽高比动态计算画布大小
+    fig_w = 12
+    fig_h = fig_w * H / (W * 2) if W > 0 else 6
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(fig_w, fig_h), dpi=150)
+    fig.tight_layout(pad=3.0)
+
+    # 显示两个降维后的特征图
+    ax1.imshow(img1_rgb)
+    ax1.axis('off')
+
+    ax2.imshow(img2_rgb)
+    ax2.axis('off')
+
+    # --- 4. 绘制对应点和连接线 ---
+    if N > 0:
+        # **修改后的逻辑**:
+        # 1. 从降维后的RGB图像中直接采样，作为点的颜色
+        # 2. 保留独立的颜色映射(jet)，仅用于绘制连接线，以唯一标识匹配对
+
+        # 将浮点坐标转换为整数索引用于颜色采样
+        # 注意：numpy索引是(行, 列)，对应于(y, x)
+        points1_idx = np.round(points1).astype(int)
+        points2_idx = np.round(points2).astype(int)
+        
+        # 裁剪索引以确保它们在图像边界内
+        points1_idx[:, 0] = np.clip(points1_idx[:, 0], 0, W - 1)
+        points1_idx[:, 1] = np.clip(points1_idx[:, 1], 0, H - 1)
+        points2_idx[:, 0] = np.clip(points2_idx[:, 0], 0, W - 1)
+        points2_idx[:, 1] = np.clip(points2_idx[:, 1], 0, H - 1)
+
+        # 在对应点位置采样RGB颜色
+        point_colors1 = img1_rgb[points1_idx[:, 1], points1_idx[:, 0]]
+        point_colors2 = img2_rgb[points2_idx[:, 1], points2_idx[:, 0]]
+        
+        # 在两张图上分别绘制点，点的颜色是其背景特征的颜色
+        # s是点的大小, edgecolor使其在各种背景下都可见
+        ax1.scatter(points1[:, 0], points1[:, 1], c=point_colors1, s=25, edgecolor='white', linewidth=1.0, zorder=3)
+        ax2.scatter(points2[:, 0], points2[:, 1], c=point_colors2, s=25, edgecolor='white', linewidth=1.0, zorder=3)
+
+        # (可选) 在对应点之间绘制连接线
+        if draw_lines:
+            # 生成 N 个独特的颜色，专门用于连接线，以便唯一标识匹配对
+            line_cmap = plt.get_cmap('jet')
+            line_colors = line_cmap(np.linspace(0, 1, N))
+            for i in range(N):
+                con = ConnectionPatch(
+                    xyA=points2[i], xyB=points1[i],
+                    coordsA=ax2.transData, coordsB=ax1.transData,
+                    axesA=ax2, axesB=ax1,
+                    color=line_colors[i], linewidth=1.2,
+                    linestyle='dashed', zorder=2
+                )
+                fig.add_artist(con)
+
+    # --- 5. 将画布转换为NumPy数组 ---
+    fig.canvas.draw()
+    # 从buffer中获取RGB数据
+    width, height = fig.canvas.get_width_height()
+    img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape((height, width, 3))
+
+    # 关闭图形，防止在Jupyter等环境中自动显示
+    plt.close(fig)
+
+    return img_array
 
 class Status(Enum):
     NOT_INIT = 0

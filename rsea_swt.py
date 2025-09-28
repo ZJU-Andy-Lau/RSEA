@@ -16,7 +16,8 @@ import torch.nn as nn
 import torch.multiprocessing as mp
 import numpy as np
 import pandas as pd
-from model_new import Encoder,AffineFitter
+from model.encoder_swt import Encoder
+from model.solver import AffineFitter
 import cv2
 from utils import mercator2lonlat,visualize_subset_points
 import queue

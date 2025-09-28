@@ -9,7 +9,7 @@ warnings.filterwarnings("ignore")
 import argparse
 from distutils.util import strtobool
 from copy import deepcopy
-from rsea import RSEA
+from rsea_swt import RSEA
 
 
 def _strtobool(x):

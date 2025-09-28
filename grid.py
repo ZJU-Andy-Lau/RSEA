@@ -22,7 +22,7 @@ from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
 from scheduler import MultiStageOneCycleLR
 from torch.optim import AdamW,lr_scheduler
-from criterion import CriterionTrainOneImg,CriterionTrainElement,CriterionTrainGrid
+from criterion_0927 import CriterionTrainOneImg,CriterionTrainElement,CriterionTrainGrid
 import torch.nn.functional as F
 from orthorectify import orthorectify_image
 import rasterio
