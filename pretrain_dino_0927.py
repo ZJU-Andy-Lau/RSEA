@@ -588,15 +588,23 @@ def pretrain(args):
                 vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
                 feat,conf_cont,conf_div = vis(encoder,vis_img)
+
                 vis_cor_idx = torch.randperm(len(overlap1[0][0]))[:10]
                 cor_idx1, cor_idx2 = overlap1[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]],overlap2[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]]
                 feat_cor = visualize_feature_correspondences(feat_vis[0],feat_vis[1],cor_idx1,cor_idx2)
                 feat_it_cor = visualize_feature_correspondences(feat_vis[2],feat_vis[3],cor_idx1,cor_idx2)
+
+                train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
+                train_img_1 = (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
+                train_img_2 = (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
+
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
                 logger.add_image('vis/feat_cor',feat_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
 
         
             # logger.update({
