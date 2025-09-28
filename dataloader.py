@@ -408,7 +408,7 @@ class PretrainDataset(Dataset):
         return self.dataset_num
     
     def __getitem__(self, index):
-        seed = index * self.world_size + self.rank
+        seed = (index * self.world_size + self.rank) * 100 + int(time.time())
         torch.manual_seed(seed)
         np.random.seed(seed)
         random.seed(seed)
