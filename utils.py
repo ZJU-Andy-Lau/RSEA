@@ -943,7 +943,7 @@ def visualize_feature_correspondences(
     fig.canvas.draw()
     # 从buffer中获取RGB数据
     width, height = fig.canvas.get_width_height()
-    img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape((height, width, 3))
+    img_array = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).reshape((height, width, 4))[:,:,1:]
 
     # 关闭图形，防止在Jupyter等环境中自动显示
     plt.close(fig)
