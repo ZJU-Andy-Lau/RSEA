@@ -877,7 +877,7 @@ def visualize_feature_correspondences(
     features_pca = pca.fit_transform(all_features)
 
     # 使用MinMaxScaler将PCA结果归一化到[0, 1]范围，以便显示为RGB颜色
-    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaler = MinMaxScaler(feature_range=(1e-6, 1. - 1e-6))
     features_normalized = scaler.fit_transform(features_pca)
 
     # 将处理后的数据分离并重塑为两个RGB图像
