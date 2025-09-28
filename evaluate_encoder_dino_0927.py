@@ -9,7 +9,7 @@ from tqdm import tqdm
 import os
 
 # 导入你的模型
-from model_new import EncoderDino
+from model.encoder_dino_0927 import EncoderDino
 from utils import get_current_time
 import argparse
 import cv2
@@ -251,7 +251,7 @@ if __name__ == '__main__':
 
     # 实例化你的Encoder
     try:
-        encoder = EncoderDino(dino_weight_path = os.path.join(args.encoder_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth')).to(DEVICE)
+        encoder = EncoderDino(dino_weight_path = './weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth').to(DEVICE)
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
         encoder.eval() # 设置为评估模式
     except Exception as e:
