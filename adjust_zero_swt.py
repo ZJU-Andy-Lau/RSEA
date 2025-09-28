@@ -53,6 +53,10 @@ if __name__ == '__main__':
     parser.add_argument('--grid_num',type=int,default=-1)
 
     parser.add_argument('--digit_num',type=int,default=3)
+
+    parser.add_argument('--grid_offset_x',type=float,default=0)
+
+    parser.add_argument('--grid_offset_y',type=float,default=0)
     
 
     #=============================Element Training Params=============================

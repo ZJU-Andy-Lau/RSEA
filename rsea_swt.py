@@ -176,8 +176,8 @@ class RSEA():
             y1 = y0 - grid_size
             
             diags = np.stack([
-                np.stack([x0, y0], axis=1),
-                np.stack([x1, y1], axis=1)
+                np.stack([x0 + self.options.grid_offset_x, y0 + self.options.grid_offset_y], axis=1),
+                np.stack([x1 + self.options.grid_offset_x, y1 + self.options.grid_offset_y], axis=1)
             ], axis=1)
             
             return diags
