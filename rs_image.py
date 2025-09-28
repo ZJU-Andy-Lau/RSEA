@@ -177,7 +177,7 @@ class RSImage():
                        self.xy_to_sampline(np.array([min_x,max_y])),
                        self.xy_to_sampline(np.array([min_x,min_y]))]
             for i in range(len(corners) - 1):
-                cv2.line(vis_img,(int(corners[i][0]),int(corners[i][1])),(int(corners[i+1][0]),int(corners[i+1][1])),(255,0,0),2)
+                cv2.line(vis_img,(int(corners[i][0]),int(corners[i][1])),(int(corners[i+1][0]),int(corners[i+1][1])),(0,0,255),2)
         
         if not output_path is None:
             cv2.imwrite(output_path,vis_img)
