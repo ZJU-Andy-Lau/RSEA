@@ -480,11 +480,11 @@ class Grid():
                 feature_sample_noise = patch_noise_buffer[:,:,noise_idx[:patches_per_batch],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 feature_anchor_noise = patch_noise_buffer[:,:,noise_idx[patches_per_batch:],:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                # features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
-                # features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
+                features_sample_1Dp1 = F.normalize(features_sample_1Dp1 + feature_sample_noise,dim=1)
+                features_anchor_1Dp1 = F.normalize(features_anchor_1Dp1 + feature_anchor_noise,dim=1)
                 #for-dino
-                features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
-                features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
+                # features_sample_1Dp1 = features_sample_1Dp1 + feature_sample_noise
+                # features_anchor_1Dp1 = features_anchor_1Dp1 + feature_anchor_noise
                 #===================生成负样本特征=====================
 
                 negative_sample_linesamps = self.generate_points_one_shot(patch_num,element.local_raw[0,0][0],element.local_raw[0,0][1],element.local_raw[-1,-1][0],element.local_raw[-1,-1][1],
@@ -719,9 +719,9 @@ class Grid():
                 features_1Dp1 = features_pD.permute(1,0)[None,:,:,None]
                 patch_feature_noise = patch_noise_buffer[:,:,noise_idx,:][:,:,valid_mask,:][:,:,inside_border_mask,:].contiguous()
                 #for-swt
-                # features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
+                features_1Dp1 = F.normalize(features_1Dp1 + patch_feature_noise,dim=1)
                 #for-dino
-                features_1Dp1 = features_1Dp1 + patch_feature_noise
+                # features_1Dp1 = features_1Dp1 + patch_feature_noise
                 
                 #===================生成负样本特征=====================
 
@@ -734,9 +734,9 @@ class Grid():
                 negative_noise_amp =  100. / dis
                 negative_noise = F.normalize(torch.normal(mean=0.,std=1.,size=negative_avg_feature.shape,dtype=negative_avg_feature.dtype),dim=1).to(negative_avg_feature.device) # p,D
                 #for-swt
-                # negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
+                negative_avg_feature = F.normalize(negative_avg_feature + negative_noise * negative_noise_amp[:,None],dim=1)
                 #for-dino
-                negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
+                # negative_avg_feature = negative_avg_feature + negative_noise * negative_noise_amp[:,None]
 
                 negative_feature_1Dp1 = negative_avg_feature.permute(1,0)[None,:,:,None]
 
