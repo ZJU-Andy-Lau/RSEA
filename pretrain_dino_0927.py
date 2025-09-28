@@ -595,8 +595,8 @@ def pretrain(args):
                 feat_it_cor = visualize_feature_correspondences(feat_vis[2],feat_vis[3],cor_idx1,cor_idx2)
 
                 train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
-                train_img_1 = (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
-                train_img_2 = (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
+                train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
+                train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
 
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
