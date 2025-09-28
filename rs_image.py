@@ -166,3 +166,20 @@ class RSImage():
             return dem_resampled,local_hw2
         else:
             return dem_resampled
+        
+    def vis_grid(self,diags:list[np.ndarray],output_path:str = None):
+        vis_img = self.image.copy()
+        for diag in diags:
+            min_x,min_y,max_x,max_y = diag[:,0].min(),diag[:,1].min(),diag[:,0].max(),diag[:,1].max()
+            corners = [self.xy_to_sampline(np.array([min_x,min_y])),
+                       self.xy_to_sampline(np.array([max_x,min_y])),
+                       self.xy_to_sampline(np.array([max_x,max_y])),
+                       self.xy_to_sampline(np.array([min_x,max_y])),
+                       self.xy_to_sampline(np.array([min_x,min_y]))]
+            for i in range(len(corners) - 1):
+                cv2.line(vis_img,(int(corners[i][0]),int(corners[i][1])),(int(corners[i+1][0]),int(corners[i+1][1])),(0,255,0),1)
+        
+        if not output_path is None:
+            cv2.imwrite(output_path,vis_img)
+        
+        return vis_img

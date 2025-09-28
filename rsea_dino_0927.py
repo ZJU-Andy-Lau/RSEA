@@ -170,6 +170,7 @@ class RSEA():
             if max_grid_num > 0:
                 grid_diags = grid_diags[:max_grid_num]
             grid_num = len(grid_diags)
+            self.imgs[0].vis_grid(grid_diags,os.path.join(self.root,'all_grids.png'))
             print(f"{len(grid_diags)} grids is going to be created")
 
         try:
