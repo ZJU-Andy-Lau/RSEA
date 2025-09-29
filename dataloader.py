@@ -30,6 +30,7 @@ def residual_average(arr:np.ndarray, a:int) -> np.ndarray:
     output = np.nanmedian(reshaped,axis=(1,3))
     if is_2d:
         output = output.squeeze(axis=-1)
+    output[np.isnan(output)] = -1.
     return output
 
 def downsample(arr,ds):

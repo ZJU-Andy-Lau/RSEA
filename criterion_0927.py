@@ -222,8 +222,8 @@ class CriterionFinetune(nn.Module):
         invalid_pair_mask = pairs[:, 0] == pairs[:, 1]
         pairs[invalid_pair_mask,1] = (pairs[invalid_pair_mask, 1] + 1) % len(pred1_P3)
 
-        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1)).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1)).mean()
-        loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2])).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2])).mean()
+        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1) * weights1_P).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1) * weights2_P).mean()
+        loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2]) * weights1_P).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2]) * weights2_P).mean()
 
         offset_gt_pair_1 = obj1_P3[pairs[:,0]] - obj1_P3[pairs[:,1]]
         offset_gt_pair_2 = obj2_P3[pairs[:,0]] - obj2_P3[pairs[:,1]]
@@ -269,7 +269,7 @@ class CriterionFinetune(nn.Module):
                     + torch.clip(simi_it_negative - simi_it_positive + .5,min=0.).mean() * 1000 + (1. - simi_it_positive.mean()) * 2000
         # loss_feat = torch.clip(simi_positive - simi_negative + 2.,min=0.).mean() * 100 + simi_positive.mean() * 200 + feat_length * 100 \
         #             + torch.clip(simi_it_positive - simi_it_negative + 2.,min=0.).mean() * 100 + simi_it_positive.mean() * 200
-        loss_feat_weight = .05 #min(1.,epoch / max_epoch)
+        loss_feat_weight = .1 + .9 * epoch / max_epoch
         # print(f"feat dis mean:{(simi_negative - simi_positive).mean().item()}  feat_mod:{torch.norm(feat1_PD,dim=1).mean().item()}")
 
 
