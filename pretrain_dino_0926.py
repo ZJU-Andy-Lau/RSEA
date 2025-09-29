@@ -179,7 +179,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     
     loss_dis = torch.norm(pred1_freeze_P3 - pred2_freeze_P3,dim=-1).mean()
     if not only_decoder:
-        loss = loss + loss_dis * min(1.,epoch / (args.max_epoch * .7))
+        loss = loss + loss_dis * .1 #min(1.,epoch / (args.max_epoch * .7))
     else:
         loss = loss + loss_dis * 0.
 
