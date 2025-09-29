@@ -24,7 +24,7 @@ from skimage.transform import AffineTransform
 from skimage.measure import ransac
 from torch.cuda.amp import autocast, GradScaler
 from dataloader import PretrainDataset,ImageSampler
-from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend,vis_conf,vis_feat_pca,visualize_feature_correspondences
+from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend,vis_conf,vis_feat_pca,visualize_feature_correspondences,visualize_obj_error
 import random
 import warnings
 warnings.filterwarnings("ignore")
@@ -127,12 +127,6 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     feat1_it_sample = sample_features(feat1_it,overlap1).unsqueeze(-1)
     feat2_it_sample = sample_features(feat2_it,overlap2).unsqueeze(-1)
 
-    obj1_sample = sample_features(obj1.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
-    obj2_sample = sample_features(obj2.permute(0,3,1,2),overlap2).permute(0,2,1).flatten(0,1)
-
-    obj_dis = torch.norm(obj1_sample - obj2_sample,dim=1).mean()
-    print(obj_dis)
-
     # project_feat1 = projector(feat1_sample)
     # project_feat2 = projector(feat2_sample)
 
@@ -195,8 +189,15 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
         loss = loss + loss_dis * (.5 + .5 * epoch / args.max_epoch) * .1
     else:
         loss = loss + loss_dis * 0.
+    
+    obj_vis = visualize_obj_error(obj1_P3[:,:2],pred1_P3[:,:2])
 
-    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,feat_vis
+    vis_data = {
+        'feat_vis':feat_vis,
+        'obj_vis':obj_vis
+    }
+
+    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data
 
 def pretrain(args):
     os.makedirs('./log',exist_ok=True)
@@ -425,7 +426,7 @@ def pretrain(args):
                 "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,feat_vis = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -589,7 +590,7 @@ def pretrain(args):
                     'log_name':log_name
                 }
                 torch.save(training_configs,os.path.join(path,'training_configs.pth'))
-                
+
                 vis_img_raw = cv2.imread(args.vis_img_path)
                 vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
@@ -597,8 +598,8 @@ def pretrain(args):
 
                 vis_cor_idx = torch.randperm(len(overlap1[0][0]))[:10]
                 cor_idx1, cor_idx2 = overlap1[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]],overlap2[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]]
-                feat_cor = visualize_feature_correspondences(feat_vis[0],feat_vis[1],cor_idx1,cor_idx2)
-                feat_it_cor = visualize_feature_correspondences(feat_vis[2],feat_vis[3],cor_idx1,cor_idx2)
+                feat_cor = visualize_feature_correspondences(vis_data['feat_vis'][0],vis_data['feat_vis'][1],cor_idx1,cor_idx2)
+                feat_it_cor = visualize_feature_correspondences(vis_data['feat_vis'][2],vis_data['feat_vis'][3],cor_idx1,cor_idx2)
 
                 train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
                 train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
@@ -615,6 +616,9 @@ def pretrain(args):
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 

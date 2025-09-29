@@ -21,6 +21,7 @@ from enum import Enum
 from sklearn.preprocessing import MinMaxScaler
 from matplotlib.patches import ConnectionPatch
 from matplotlib import pyplot as plt
+import io
 
 def get_current_time():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -950,6 +951,118 @@ def visualize_feature_correspondences(
     plt.close(fig)
 
     return img_array
+
+def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tuple = (800, 800), sample_k: int = 1000):
+    """
+    可视化坐标回归的误差，生成三种分析图像。
+
+    Args:
+        obj_P2 (np.ndarray): 真实的坐标数组, shape=(N, 2)。
+        pred_P2 (np.ndarray): 预测的坐标数组, shape=(N, 2)。
+        canvas_size (tuple): 输出图像的尺寸。
+        sample_k (int): 为了避免图像过于杂乱，随机采样的点的数量。
+
+    Returns:
+        dict: 一个包含三种可视化图像 (numpy 数组) 的字典。
+              {'quiver': quiver_plot, 'heatmap': error_heatmap, 'histogram': error_histogram}
+    """
+    def fig_to_numpy(fig):
+        """
+        将 matplotlib 的 figure 转换为 numpy 数组。
+        """
+        # 使用 Agg 后端，不显示图形窗口
+        with io.BytesIO() as buf:
+            fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1)
+            buf.seek(0)
+            img = Image.open(buf)
+            return np.array(img)
+        if obj_P2.shape != pred_P2.shape:
+            raise ValueError("输入数组的形状必须相同!")
+
+    # 如果点太多，进行随机采样
+    num_points = obj_P2.shape[0]
+    if num_points > sample_k:
+        indices = np.random.choice(num_points, sample_k, replace=False)
+        obj_P2 = obj_P2[indices]
+        pred_P2 = pred_P2[indices]
+
+    # --- 数据准备 ---
+    # 计算误差向量
+    error_vectors = pred_P2 - obj_P2
+    # 计算每个点的误差大小（欧氏距离）
+    error_magnitudes = np.linalg.norm(error_vectors, axis=1)
+
+    # 找到所有点的范围，用于归一化坐标到画布上
+    all_points = np.vstack([obj_P2, pred_P2])
+    min_coords = all_points.min(axis=0)
+    max_coords = all_points.max(axis=0)
+    range_coords = max_coords - min_coords
+    
+    # 防止范围为0
+    range_coords[range_coords == 0] = 1 
+
+    # 将坐标缩放到画布尺寸
+    obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    
+    visualizations = {}
+
+    # --- 1. 矢量场图 (Quiver Plot) ---
+    fig_quiver, ax_quiver = plt.subplots(figsize=(10, 10))
+    # 绘制箭头，从真实点指向预测点
+    ax_quiver.quiver(obj_scaled[:, 0], obj_scaled[:, 1], 
+                     pred_scaled[:, 0] - obj_scaled[:, 0], 
+                     pred_scaled[:, 1] - obj_scaled[:, 1],
+                     angles='xy', scale_units='xy', scale=1, color='r', width=0.002)
+    # 绘制真实点
+    ax_quiver.scatter(obj_scaled[:, 0], obj_scaled[:, 1], c='blue', s=5, label='Ground Truth')
+    ax_quiver.set_title('Error Vector Field (Quiver Plot)')
+    ax_quiver.set_xlabel('X coordinate')
+    ax_quiver.set_ylabel('Y coordinate')
+    ax_quiver.set_aspect('equal', adjustable='box')
+    ax_quiver.legend()
+    ax_quiver.grid(True)
+    visualizations['quiver'] = fig_to_numpy(fig_quiver)
+    plt.close(fig_quiver)
+
+    # --- 2. 误差热力图 (Error Heatmap) ---
+    # 使用 scipy.stats.binned_statistic_2d 来创建热力图
+    from scipy.stats import binned_statistic_2d
+    
+    # 创建二维网格统计
+    stat, x_edge, y_edge, _ = binned_statistic_2d(
+        x=obj_P2[:, 0], y=obj_P2[:, 1], values=error_magnitudes,
+        statistic='mean', bins=50)
+
+    fig_heatmap, ax_heatmap = plt.subplots(figsize=(10, 8))
+    # 使用 pcolormesh 绘制热力图
+    im = ax_heatmap.pcolormesh(x_edge, y_edge, stat.T, cmap='viridis', shading='auto')
+    ax_heatmap.set_title('Spatial Distribution of Error (Heatmap)')
+    ax_heatmap.set_xlabel('X coordinate')
+    ax_heatmap.set_ylabel('Y coordinate')
+    ax_heatmap.set_aspect('equal', adjustable='box')
+    fig_heatmap.colorbar(im, ax=ax_heatmap, label='Mean Error Magnitude')
+    visualizations['heatmap'] = fig_to_numpy(fig_heatmap)
+    plt.close(fig_heatmap)
+
+    # --- 3. 误差向量直方图 (Error Vector Histogram) ---
+    fig_hist, ax_hist = plt.subplots(figsize=(10, 8))
+    # 使用 LogNorm 可以更好地观察离群点
+    from matplotlib.colors import LogNorm
+    counts, xedges, yedges, im = ax_hist.hist2d(
+        error_vectors[:, 0], error_vectors[:, 1], bins=100, cmap='viridis', norm=LogNorm())
+    ax_hist.set_title('2D Histogram of Error Vectors (dx, dy)')
+    ax_hist.set_xlabel('Error in X (dx)')
+    ax_hist.set_ylabel('Error in Y (dy)')
+    ax_hist.set_aspect('equal', adjustable='box')
+    # 添加一个十字线标记 (0,0)
+    ax_hist.axhline(0, color='r', linestyle='--', linewidth=0.8)
+    ax_hist.axvline(0, color='r', linestyle='--', linewidth=0.8)
+    fig_hist.colorbar(im, ax=ax_hist, label='Number of Points')
+    visualizations['histogram'] = fig_to_numpy(fig_hist)
+    plt.close(fig_hist)
+    
+    return visualizations
 
 class Status(Enum):
     NOT_INIT = 0
