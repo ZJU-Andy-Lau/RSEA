@@ -276,6 +276,8 @@ def pretrain(args):
 
     if args.resume_training:
         encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+    elif not args.encoder_path is None:
+        encoder = EncoderDino(dino_weight_path=os.path.join(args.encoder_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     else:
         encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
     # projector = ProjectHead(encoder.output_channels,128)
