@@ -176,7 +176,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     residual2_P = residual2.reshape(-1).detach()
     conf_mean = .5 * conf1_P.clone().detach().mean() + .5 * conf2_P.clone().detach().mean()
 
-    loss,loss_obj,loss_height,loss_conf,loss_feat,k,sp,sn = criterion(epoch,args.max_epoch,
+    loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,k,sp,sn = criterion(epoch,args.max_epoch,
                                                                 feat1_PD,feat2_PD,
                                                                 feat1_it_PD,feat2_it_PD,
                                                                 pred1_P3,pred2_P3,
@@ -199,7 +199,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
         'obj_vis':obj_vis
     }
 
-    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data
+    return loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data
 
 def pretrain(args):
     os.makedirs('./log',exist_ok=True)
