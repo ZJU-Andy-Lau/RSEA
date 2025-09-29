@@ -966,18 +966,24 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
         dict: 一个包含三种可视化图像 (numpy 数组) 的字典。
               {'quiver': quiver_plot, 'heatmap': error_heatmap, 'histogram': error_histogram}
     """
-    def fig_to_numpy(fig):
+    def fig_to_numpy(fig: plt.Figure) -> np.ndarray:
         """
-        将 matplotlib 的 figure 转换为 numpy 数组。
+        一个更稳定和高效的 Matplotlib Figure 转 NumPy 数组的函数。
+        它直接从 canvas 缓冲区读取数据，避免了文件I/O和额外的库依赖。
         """
-        # 使用 Agg 后端，不显示图形窗口
-        with io.BytesIO() as buf:
-            fig.savefig(buf, format='png', bbox_inches='tight', pad_inches=0.1)
-            buf.seek(0)
-            img = Image.open(buf)
-            return np.array(img)
-        if obj_P2.shape != pred_P2.shape:
-            raise ValueError("输入数组的形状必须相同!")
+        # 1. 触发画布的绘制（render）
+        fig.canvas.draw()
+
+        # 2. 从画布的渲染器中获取 RGBA 格式的原始缓冲区
+        # to_string_rgb() 也可以，但 buffer_rgba() 更常见
+        rgba_buffer = fig.canvas.buffer_rgba()
+
+        # 3. 将缓冲区转换为 NumPy 数组
+        # buffer_rgba() 返回的是一个扁平的字节数组，需要 reshape
+        img_array = np.array(rgba_buffer)
+
+        # 4. 返回数组，现在它的 shape 是 (height, width, 4)，格式是 RGBA
+        return img_array
 
     # 如果点太多，进行随机采样
     num_points = obj_P2.shape[0]

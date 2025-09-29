@@ -192,11 +192,11 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     else:
         loss = loss + loss_dis * 0.
     
-    # obj_vis = visualize_obj_error(obj1_P3[:,:2].detach().cpu().numpy(),pred1_P3[:,:2].detach().cpu().numpy())
+    obj_vis = visualize_obj_error(obj1_P3[:,:2].detach().cpu().numpy(),pred1_P3[:,:2].detach().cpu().numpy())
 
     vis_data = {
         'feat_vis':feat_vis,
-        # 'obj_vis':obj_vis
+        'obj_vis':obj_vis
     }
 
     return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data
@@ -618,10 +618,10 @@ def pretrain(args):
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
-                # logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
-                # logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
-                # logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
-                # logger.add_image('vis/obj_vis_scatter',vis_data['obj_vis']['scatter'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_scatter',vis_data['obj_vis']['scatter'],epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 
