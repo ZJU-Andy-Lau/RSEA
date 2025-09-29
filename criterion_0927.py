@@ -218,8 +218,20 @@ class CriterionFinetune(nn.Module):
 
         # print(pred1_P3.shape,obj1_P3.shape,weights1_P.shape)
 
-        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1) * weights1_P).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1) * weights2_P).mean()
-        loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2]) * weights1_P).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2]) * weights2_P).mean()
+        pairs = np.random.randint(0,len(pred1_P3)-1,size=(1000,2))
+        invalid_pair_mask = pairs[:, 0] == pairs[:, 1]
+        pairs[invalid_pair_mask,1] = (pairs[invalid_pair_mask, 1] + 1) % len(pred1_P3)
+
+        loss_obj = .5 * (torch.norm(pred1_P3[:,:2] - obj1_P3[:,:2],dim=-1)).mean() + .5 * (torch.norm(pred2_P3[:,:2] - obj2_P3[:,:2],dim=-1)).mean()
+        loss_height = .5 * (torch.abs(pred1_P3[:,2] - obj1_P3[:,2])).mean() + .5 * (torch.abs(pred2_P3[:,2] - obj2_P3[:,2])).mean()
+
+        offset_gt_pair_1 = obj1_P3[pairs[:,0]] - obj1_P3[pairs[:,1]]
+        offset_gt_pair_2 = obj2_P3[pairs[:,0]] - obj2_P3[pairs[:,1]]
+        offset_pred_pair_1 = pred1_P3[pairs[:,0]] - pred1_P3[pairs[:,1]]
+        offset_pred_pair_2 = pred2_P3[pairs[:,0]] - pred2_P3[pairs[:,1]]
+        offset_dis_1 = torch.norm(torch.abs(offset_pred_pair_1 - offset_gt_pair_1),dim=-1)
+        offset_dis_2 = torch.norm(torch.abs(offset_pred_pair_2 - offset_gt_pair_2),dim=-1)
+        loss_relative = .5 * offset_dis_1.mean() + .5 * offset_dis_2.mean()
 
         loss_conf = .5 * self.bce(conf1_P[conf_valid1],conf1_gt_P[conf_valid1]).mean() + .5 * self.bce(conf2_P[conf_valid2],conf2_gt_P[conf_valid2]).mean()
         loss_conf = loss_conf * 1000 * min(1.,epoch / 3.)
@@ -262,11 +274,11 @@ class CriterionFinetune(nn.Module):
 
 
         if only_decoder:
-            loss = loss_obj + loss_height + loss_conf * 0. + loss_feat * 0.
+            loss = loss_obj + loss_height + loss_relative + loss_conf * 0. + loss_feat * 0.
         else:
-            loss = loss_obj + loss_height + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
+            loss = loss_obj + loss_height + loss_relative + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
 
-        return loss,loss_obj,loss_height,loss_conf,loss_feat,residual_threshold,simi_positive.mean(),simi_negative.mean()
+        return loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,residual_threshold,simi_positive.mean(),simi_negative.mean()
         
 class CriterionFinetuneDis(nn.Module):
     def __init__(self):

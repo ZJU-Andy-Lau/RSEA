@@ -395,6 +395,7 @@ def pretrain(args):
         total_loss = 0
         total_loss_obj = 0
         total_loss_dis = 0
+        total_loss_relative = 0
         total_loss_height = 0
         total_loss_conf = 0
         total_loss_feat = 0
@@ -428,7 +429,7 @@ def pretrain(args):
                 "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
+            loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -465,12 +466,14 @@ def pretrain(args):
             loss_height_rec = loss_height.clone().detach()
             loss_conf_rec = loss_conf.clone().detach()
             loss_feat_rec = loss_feat.clone().detach()
+            loss_relative_rec = loss_relative.clone().detach()
             sp_rec = sp.clone().detach()
             sn_rec = sn.clone().detach()
 
             total_loss += loss_rec
             total_loss_obj += loss_obj_rec
             total_loss_dis += loss_dis_rec
+            total_loss_relative += loss_relative_rec
             total_loss_height += loss_height_rec
             total_loss_conf += loss_conf_rec
             total_loss_feat += loss_feat_rec
@@ -485,6 +488,7 @@ def pretrain(args):
             dist.all_reduce(loss_obj_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_dis_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_height_rec,dist.ReduceOp.AVG)
+            dist.all_reduce(loss_relative_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_conf_rec,dist.ReduceOp.AVG)
             dist.all_reduce(loss_feat_rec,dist.ReduceOp.AVG)
             dist.all_reduce(conf_mean,dist.ReduceOp.AVG)
@@ -499,7 +503,7 @@ def pretrain(args):
                 cost_time = curtime - start_time
                 remain_time = remain_step * cost_time / curstep
 
-                print(f"epoch:{epoch} iter:{iter_idx+1}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t sp:{sp_rec.item():.2f} \t sn:{sn_rec.item():.2f} \t en_lr:{adapter_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
+                print(f"epoch:{epoch} iter:{iter_idx+1}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_r:{loss_relative_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t sp:{sp_rec.item():.2f} \t sn:{sn_rec.item():.2f} \t en_lr:{adapter_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
         if epoch >= only_decoder_epoch:
             adapter_scheduler.step()
@@ -515,6 +519,7 @@ def pretrain(args):
         total_loss /= count
         total_loss_obj /= count
         total_loss_dis /= count
+        total_loss_relative /= count
         total_loss_height /= count
         total_loss_conf /= count
         total_loss_feat /= count
@@ -524,6 +529,7 @@ def pretrain(args):
         dist.all_reduce(total_loss,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_obj,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_dis,dist.ReduceOp.AVG)
+        dist.all_reduce(total_loss_relative,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_height,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_conf,dist.ReduceOp.AVG)
         dist.all_reduce(total_loss_feat,dist.ReduceOp.AVG)
@@ -533,6 +539,7 @@ def pretrain(args):
         total_loss = total_loss.item()
         total_loss_obj = total_loss_obj.item()
         total_loss_dis = total_loss_dis.item()
+        total_loss_relative = total_loss_relative.item()
         total_loss_height = total_loss_height.item()
         total_loss_conf = total_loss_conf.item()
         total_loss_feat = total_loss_feat.item()
@@ -543,9 +550,9 @@ def pretrain(args):
 
         if dist.get_rank() == 0:
             if last_loss is None:
-                print(f'total_loss:{total_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f} \t sp:{total_sp:.2f} \t sn:{total_sn:.2f}')
+                print(f'total_loss:{total_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t rela:{total_loss_relative:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f} \t sp:{total_sp:.2f} \t sn:{total_sn:.2f}')
             else:
-                print(f"total_loss:{total_loss} \t diff:{'+' if total_loss - last_loss > 0 else ''}{total_loss - last_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f} \t sp:{total_sp:.2f} \t sn:{total_sn:.2f}")
+                print(f"total_loss:{total_loss} \t diff:{'+' if total_loss - last_loss > 0 else ''}{total_loss - last_loss} \t min_loss:{min_loss} \t obj:{total_loss_obj:.2f} \t dis:{total_loss_dis:.2f} \t rela:{total_loss_relative:.2f} \t height:{total_loss_height:.2f} \t conf:{total_loss_conf:.4f} \t feat:{total_loss_feat:.4f} \t sp:{total_sp:.2f} \t sn:{total_sn:.2f}")
             last_loss = total_loss
 
             # torch.save(encoder.state_dict(),os.path.join(os.path.join(args.encoder_output_path,f'adapter_{epoch}.pth')))
@@ -618,9 +625,9 @@ def pretrain(args):
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
-                logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
-                logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
-                logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
+                # logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
+                # logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
+                # logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
                 logger.add_image('vis/obj_vis_scatter',vis_data['obj_vis']['scatter'],epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
@@ -645,6 +652,7 @@ def pretrain(args):
             logger.add_scalar('loss/total_loss', total_loss, epoch)
             logger.add_scalar('loss/loss_obj', total_loss_obj, epoch)
             logger.add_scalar('loss/loss_dis', total_loss_dis, epoch)
+            logger.add_scalar('loss/loss_relative',total_loss_relative,epoch)
             logger.add_scalar('loss/loss_height', total_loss_height, epoch)
             logger.add_scalar('loss/loss_conf', total_loss_conf, epoch)
             logger.add_scalar('loss/loss_feat', total_loss_feat, epoch)

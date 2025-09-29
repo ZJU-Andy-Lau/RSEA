@@ -974,15 +974,8 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
         # 1. 触发画布的绘制（render）
         fig.canvas.draw()
 
-        # 2. 从画布的渲染器中获取 RGBA 格式的原始缓冲区
-        # to_string_rgb() 也可以，但 buffer_rgba() 更常见
-        rgba_buffer = fig.canvas.buffer_rgba()
-
-        # 3. 将缓冲区转换为 NumPy 数组
-        # buffer_rgba() 返回的是一个扁平的字节数组，需要 reshape
-        img_array = np.array(rgba_buffer)
-
-        # 4. 返回数组，现在它的 shape 是 (height, width, 4)，格式是 RGBA
+        width, height = fig.canvas.get_width_height()
+        img_array = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8).reshape((height, width, 4))[:,:,1:]
         return img_array
 
     # 如果点太多，进行随机采样
@@ -1025,60 +1018,60 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     visualizations['scatter'] = fig_to_numpy(fig_scatter)
     plt.close(fig_scatter)
 
-    # --- 1. 矢量场图 (Quiver Plot) ---
-    fig_quiver, ax_quiver = plt.subplots(figsize=(10, 10))
-    # 绘制箭头，从真实点指向预测点
-    ax_quiver.quiver(obj_scaled[:, 0], obj_scaled[:, 1], 
-                     pred_scaled[:, 0] - obj_scaled[:, 0], 
-                     pred_scaled[:, 1] - obj_scaled[:, 1],
-                     angles='xy', scale_units='xy', scale=1, color='r', width=0.002)
-    # 绘制真实点
-    ax_quiver.scatter(obj_scaled[:, 0], obj_scaled[:, 1], c='blue', s=5, label='Ground Truth')
-    ax_quiver.set_title('Error Vector Field (Quiver Plot)')
-    ax_quiver.set_xlabel('X coordinate')
-    ax_quiver.set_ylabel('Y coordinate')
-    ax_quiver.set_aspect('equal', adjustable='box')
-    ax_quiver.legend()
-    ax_quiver.grid(True)
-    visualizations['quiver'] = fig_to_numpy(fig_quiver)
-    plt.close(fig_quiver)
+    # # --- 1. 矢量场图 (Quiver Plot) ---
+    # fig_quiver, ax_quiver = plt.subplots(figsize=(10, 10))
+    # # 绘制箭头，从真实点指向预测点
+    # ax_quiver.quiver(obj_scaled[:, 0], obj_scaled[:, 1], 
+    #                  pred_scaled[:, 0] - obj_scaled[:, 0], 
+    #                  pred_scaled[:, 1] - obj_scaled[:, 1],
+    #                  angles='xy', scale_units='xy', scale=1, color='r', width=0.002)
+    # # 绘制真实点
+    # ax_quiver.scatter(obj_scaled[:, 0], obj_scaled[:, 1], c='blue', s=5, label='Ground Truth')
+    # ax_quiver.set_title('Error Vector Field (Quiver Plot)')
+    # ax_quiver.set_xlabel('X coordinate')
+    # ax_quiver.set_ylabel('Y coordinate')
+    # ax_quiver.set_aspect('equal', adjustable='box')
+    # ax_quiver.legend()
+    # ax_quiver.grid(True)
+    # visualizations['quiver'] = fig_to_numpy(fig_quiver)
+    # plt.close(fig_quiver)
 
-    # --- 2. 误差热力图 (Error Heatmap) ---
-    # 使用 scipy.stats.binned_statistic_2d 来创建热力图
-    from scipy.stats import binned_statistic_2d
+    # # --- 2. 误差热力图 (Error Heatmap) ---
+    # # 使用 scipy.stats.binned_statistic_2d 来创建热力图
+    # from scipy.stats import binned_statistic_2d
     
-    # 创建二维网格统计
-    stat, x_edge, y_edge, _ = binned_statistic_2d(
-        x=obj_P2[:, 0], y=obj_P2[:, 1], values=error_magnitudes,
-        statistic='mean', bins=50)
+    # # 创建二维网格统计
+    # stat, x_edge, y_edge, _ = binned_statistic_2d(
+    #     x=obj_P2[:, 0], y=obj_P2[:, 1], values=error_magnitudes,
+    #     statistic='mean', bins=50)
 
-    fig_heatmap, ax_heatmap = plt.subplots(figsize=(10, 8))
-    # 使用 pcolormesh 绘制热力图
-    im = ax_heatmap.pcolormesh(x_edge, y_edge, stat.T, cmap='viridis', shading='auto')
-    ax_heatmap.set_title('Spatial Distribution of Error (Heatmap)')
-    ax_heatmap.set_xlabel('X coordinate')
-    ax_heatmap.set_ylabel('Y coordinate')
-    ax_heatmap.set_aspect('equal', adjustable='box')
-    fig_heatmap.colorbar(im, ax=ax_heatmap, label='Mean Error Magnitude')
-    visualizations['heatmap'] = fig_to_numpy(fig_heatmap)
-    plt.close(fig_heatmap)
+    # fig_heatmap, ax_heatmap = plt.subplots(figsize=(10, 8))
+    # # 使用 pcolormesh 绘制热力图
+    # im = ax_heatmap.pcolormesh(x_edge, y_edge, stat.T, cmap='viridis', shading='auto')
+    # ax_heatmap.set_title('Spatial Distribution of Error (Heatmap)')
+    # ax_heatmap.set_xlabel('X coordinate')
+    # ax_heatmap.set_ylabel('Y coordinate')
+    # ax_heatmap.set_aspect('equal', adjustable='box')
+    # fig_heatmap.colorbar(im, ax=ax_heatmap, label='Mean Error Magnitude')
+    # visualizations['heatmap'] = fig_to_numpy(fig_heatmap)
+    # plt.close(fig_heatmap)
 
-    # --- 3. 误差向量直方图 (Error Vector Histogram) ---
-    fig_hist, ax_hist = plt.subplots(figsize=(10, 8))
-    # 使用 LogNorm 可以更好地观察离群点
-    from matplotlib.colors import LogNorm
-    counts, xedges, yedges, im = ax_hist.hist2d(
-        error_vectors[:, 0], error_vectors[:, 1], bins=100, cmap='viridis', norm=LogNorm())
-    ax_hist.set_title('2D Histogram of Error Vectors (dx, dy)')
-    ax_hist.set_xlabel('Error in X (dx)')
-    ax_hist.set_ylabel('Error in Y (dy)')
-    ax_hist.set_aspect('equal', adjustable='box')
-    # 添加一个十字线标记 (0,0)
-    ax_hist.axhline(0, color='r', linestyle='--', linewidth=0.8)
-    ax_hist.axvline(0, color='r', linestyle='--', linewidth=0.8)
-    fig_hist.colorbar(im, ax=ax_hist, label='Number of Points')
-    visualizations['histogram'] = fig_to_numpy(fig_hist)
-    plt.close(fig_hist)
+    # # --- 3. 误差向量直方图 (Error Vector Histogram) ---
+    # fig_hist, ax_hist = plt.subplots(figsize=(10, 8))
+    # # 使用 LogNorm 可以更好地观察离群点
+    # from matplotlib.colors import LogNorm
+    # counts, xedges, yedges, im = ax_hist.hist2d(
+    #     error_vectors[:, 0], error_vectors[:, 1], bins=100, cmap='viridis', norm=LogNorm())
+    # ax_hist.set_title('2D Histogram of Error Vectors (dx, dy)')
+    # ax_hist.set_xlabel('Error in X (dx)')
+    # ax_hist.set_ylabel('Error in Y (dy)')
+    # ax_hist.set_aspect('equal', adjustable='box')
+    # # 添加一个十字线标记 (0,0)
+    # ax_hist.axhline(0, color='r', linestyle='--', linewidth=0.8)
+    # ax_hist.axvline(0, color='r', linestyle='--', linewidth=0.8)
+    # fig_hist.colorbar(im, ax=ax_hist, label='Number of Points')
+    # visualizations['histogram'] = fig_to_numpy(fig_hist)
+    # plt.close(fig_hist)
 
     
     
