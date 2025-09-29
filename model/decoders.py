@@ -21,10 +21,16 @@ class DecoderFinetune(nn.Module):
         block_num = max(block_num,1)
         self.use_bn = use_bn
         self.blocks = nn.ModuleList([self.get_block(in_channels) for _ in range(block_num)])
-        self.output_xy = nn.Sequential(
+        self.output_x = nn.Sequential(
             nn.Conv2d(in_channels,in_channels // 16,1,1,0),
             nn.ReLU(),
-            nn.Conv2d(in_channels // 16,2,1,1,0),
+            nn.Conv2d(in_channels // 16,1,1,1,0),
+            nn.Tanh()
+        )
+        self.output_y = nn.Sequential(
+            nn.Conv2d(in_channels,in_channels // 16,1,1,0),
+            nn.ReLU(),
+            nn.Conv2d(in_channels // 16,1,1,1,0),
             nn.Tanh()
         )
         self.output_height = nn.Sequential(
@@ -43,9 +49,10 @@ class DecoderFinetune(nn.Module):
         for block in self.blocks:
             x = block(res)
             res = res + x
-        xy_res = self.output_xy(res)
+        x_res = self.output_x(res)
+        y_res = self.output_y(res)
         height_res = self.output_height(res)
-        return torch.cat([xy_res,height_res],dim=1)
+        return torch.cat([x_res,y_res,height_res],dim=1)
     
 class Decoder(nn.Module):
     def get_block(self,channels):
