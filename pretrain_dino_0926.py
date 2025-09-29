@@ -24,7 +24,7 @@ from skimage.transform import AffineTransform
 from skimage.measure import ransac
 from torch.cuda.amp import autocast, GradScaler
 from dataloader import PretrainDataset,ImageSampler
-from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend,vis_conf,vis_feat_pca
+from utils import TableLogger,kaiming_init_weights,str2bool,warp_by_extend,vis_conf,vis_feat_pca,visualize_feature_correspondences
 import random
 import warnings
 warnings.filterwarnings("ignore")
@@ -156,6 +156,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     pred1_freeze_P3 = warp_by_poly(output1_freeze_P3,obj_map_coef)
     pred2_freeze_P3 = warp_by_poly(output2_freeze_P3,obj_map_coef)
 
+    feat_vis = [feat1[0].permute(1,2,0).detach().cpu().numpy(),feat2[0].permute(1,2,0).detach().cpu().numpy()]
+
     project_feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
     project_feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
@@ -181,7 +183,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     else:
         loss = loss + loss_dis * 0.
 
-    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn
+    return loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,feat_vis
 
 def pretrain(args):
     os.makedirs('./log',exist_ok=True)
@@ -404,7 +406,7 @@ def pretrain(args):
                 "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn = compute_loss(args,epoch,compose_data,encoder,decoder,criterion,epoch < only_decoder_epoch)
+            loss,loss_obj,loss_height,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,feat_vis = compute_loss(args,epoch,compose_data,encoder,decoder,criterion,epoch < only_decoder_epoch)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -571,9 +573,21 @@ def pretrain(args):
                 vis_img = np.zeros(vis_img_raw.shape,dtype=np.uint8)
                 cv2.normalize(vis_img_raw,vis_img,0,255,cv2.NORM_MINMAX)
                 feat,conf_cont,conf_div = vis(encoder,vis_img)
+
+                vis_cor_idx = torch.randperm(len(overlap1[0][0]))[:10]
+                cor_idx1, cor_idx2 = overlap1[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]],overlap2[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]]
+                feat_cor = visualize_feature_correspondences(feat_vis[0],feat_vis[1],cor_idx1,cor_idx2)
+
+                train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
+                train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
+                train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
+
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
+                logger.add_image('vis/feat_cor',feat_cor,epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
 
         
             # logger.update({
