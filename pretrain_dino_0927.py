@@ -598,9 +598,9 @@ def pretrain(args):
                 train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
                 train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
 
-                train_img_12,train_img_22 = img1[0][1].permute(1,2,0).detach().cpu().numpy(),img2[0][1].permute(1,2,0).detach().cpu().numpy()
-                train_img_12 = 255. * (train_img_12 - train_img_12.min()) / (train_img_12.max() - train_img_12.min())
-                train_img_22 = 255. * (train_img_22 - train_img_22.min()) / (train_img_22.max() - train_img_22.min())
+                # train_img_12,train_img_22 = img1[0][1].permute(1,2,0).detach().cpu().numpy(),img2[0][1].permute(1,2,0).detach().cpu().numpy()
+                # train_img_12 = 255. * (train_img_12 - train_img_12.min()) / (train_img_12.max() - train_img_12.min())
+                # train_img_22 = 255. * (train_img_22 - train_img_22.min()) / (train_img_22.max() - train_img_22.min())
 
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
@@ -609,11 +609,11 @@ def pretrain(args):
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
-                logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
-                logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
+                # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
+                # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 
-                cv2.imwrite('./vis/rank_1_img_1.png',train_img_1.astype(np.uint8))
-                cv2.imwrite('./vis/rank_1_img_2.png',train_img_2.astype(np.uint8))
+                # cv2.imwrite('./vis/rank_1_img_1.png',train_img_1.astype(np.uint8))
+                # cv2.imwrite('./vis/rank_1_img_2.png',train_img_2.astype(np.uint8))
             
         
         
@@ -639,20 +639,20 @@ def pretrain(args):
             logger.add_scalar('train/lr_decoder',optimizers[0].param_groups[0]['lr'], epoch)
             logger.add_scalar('metrics/sp', total_sp, epoch)
             logger.add_scalar('metrics/sn', total_sn, epoch)
-            
-        if dist.get_rank() == 1:
-            train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
-            train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
-            train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
-            cv2.imwrite('./vis/rank_2_img_1.png',train_img_1.astype(np.uint8))
-            cv2.imwrite('./vis/rank_2_img_2.png',train_img_2.astype(np.uint8))
+
+        # if dist.get_rank() == 1:
+        #     train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
+        #     train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
+        #     train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
+        #     cv2.imwrite('./vis/rank_2_img_1.png',train_img_1.astype(np.uint8))
+        #     cv2.imwrite('./vis/rank_2_img_2.png',train_img_2.astype(np.uint8))
         
-        if dist.get_rank() == 2:
-            train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
-            train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
-            train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
-            cv2.imwrite('./vis/rank_3_img_1.png',train_img_1.astype(np.uint8))
-            cv2.imwrite('./vis/rank_3_img_2.png',train_img_2.astype(np.uint8))
+        # if dist.get_rank() == 2:
+        #     train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
+        #     train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
+        #     train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
+        #     cv2.imwrite('./vis/rank_3_img_1.png',train_img_1.astype(np.uint8))
+        #     cv2.imwrite('./vis/rank_3_img_2.png',train_img_2.astype(np.uint8))
 
         # print(f"\n9---------debug:{dist.get_rank()}\n")
         dist.barrier()
