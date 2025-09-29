@@ -619,6 +619,7 @@ def pretrain(args):
                 logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
                 logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
                 logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj_vis_scatter',vis_data['obj_vis']['scatter'],epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 

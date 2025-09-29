@@ -1061,6 +1061,18 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     fig_hist.colorbar(im, ax=ax_hist, label='Number of Points')
     visualizations['histogram'] = fig_to_numpy(fig_hist)
     plt.close(fig_hist)
+
+    fig_scatter, ax_scatter = plt.subplots(figsize=(10, 10))
+    ax_scatter.scatter(obj_scaled[:, 0], obj_scaled[:, 1], c='blue', s=10, alpha=0.7, label='Ground Truth')
+    ax_scatter.scatter(pred_scaled[:, 0], pred_scaled[:, 1], c='red', s=10, alpha=0.7, label='Prediction')
+    ax_scatter.set_title('Ground Truth vs. Prediction Scatter Plot')
+    ax_scatter.set_xlabel('X coordinate')
+    ax_scatter.set_ylabel('Y coordinate')
+    ax_scatter.set_aspect('equal', adjustable='box')
+    ax_scatter.legend()
+    ax_scatter.grid(True)
+    visualizations['scatter'] = fig_to_numpy(fig_scatter)
+    plt.close(fig_scatter)
     
     return visualizations
 
