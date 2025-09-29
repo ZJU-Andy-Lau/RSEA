@@ -377,9 +377,14 @@ class PretrainDataset(Dataset):
         if obj_map_coefs is None:
             for key in tqdm(self.database_keys):
                 obj = centerize_obj(self.database[key]['obj'][:])
+                # self.obj_map_coefs.append({
+                #     'x':get_map_coef(obj[:,:,0].reshape(-1)),
+                #     'y':get_map_coef(obj[:,:,1].reshape(-1)),
+                #     'h':get_map_coef(obj[:,:,2].reshape(-1))
+                # })
                 self.obj_map_coefs.append({
-                    'x':get_map_coef(obj[:,:,0].reshape(-1)),
-                    'y':get_map_coef(obj[:,:,1].reshape(-1)),
+                    'x':{'min':obj[:,:,0].min() * .9,'max':obj[:,:,0].max() * 1.1},
+                    'y':{'min':obj[:,:,1].min() * .9,'max':obj[:,:,1].max() * 1.1},
                     'h':get_map_coef(obj[:,:,2].reshape(-1))
                 })
         else:
