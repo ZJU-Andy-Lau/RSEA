@@ -127,6 +127,12 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     feat1_it_sample = sample_features(feat1_it,overlap1).unsqueeze(-1)
     feat2_it_sample = sample_features(feat2_it,overlap2).unsqueeze(-1)
 
+    obj1_sample = sample_features(obj1.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
+    obj2_sample = sample_features(obj2.permute(0,3,1,2),overlap2).permute(0,2,1).flatten(0,1)
+
+    obj_dis = torch.norm(obj1_sample - obj2_sample,dim=1).mean()
+    print(obj_dis)
+
     # project_feat1 = projector(feat1_sample)
     # project_feat2 = projector(feat2_sample)
 
