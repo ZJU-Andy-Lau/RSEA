@@ -598,6 +598,10 @@ def pretrain(args):
                 train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
                 train_img_2 = 255. * (train_img_2 - train_img_2.min()) / (train_img_2.max() - train_img_2.min())
 
+                train_img_12,train_img_22 = img1[0][1].permute(1,2,0).detach().cpu().numpy(),img2[0][1].permute(1,2,0).detach().cpu().numpy()
+                train_img_12 = 255. * (train_img_12 - train_img_12.min()) / (train_img_12.max() - train_img_12.min())
+                train_img_22 = 255. * (train_img_22 - train_img_22.min()) / (train_img_22.max() - train_img_22.min())
+
                 logger.add_image('vis/feat',feat,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
@@ -605,6 +609,8 @@ def pretrain(args):
                 logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
+                logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 
         
             # logger.update({
