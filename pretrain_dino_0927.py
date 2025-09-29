@@ -190,7 +190,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     else:
         loss = loss + loss_dis * 0.
     
-    obj_vis = visualize_obj_error(obj1_P3[:,:2],pred1_P3[:,:2])
+    obj_vis = visualize_obj_error(obj1_P3[:,:2].detach().cpu().numpy(),pred1_P3[:,:2].detach().cpu().numpy())
 
     vis_data = {
         'feat_vis':feat_vis,
