@@ -272,7 +272,7 @@ def pretrain(args):
                               use_clahe = False,
                               mode='train')
     sampler = ImageSampler(dataset,shuffle=True)
-    dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=4,drop_last=False,pin_memory=True,shuffle=False)
+    dataloader = DataLoader(dataset,sampler=sampler,batch_size=1,num_workers=4,drop_last=False,pin_memory=False,shuffle=False)
     dataset_num = dataset.dataset_num
     train_images = dataset.get_train_images()
     if dist.get_rank() == 0:
