@@ -74,8 +74,8 @@ def warp_by_poly(raw,coefs):
     # raw[:,2] = .5 * (raw[:,2] + 1.) * (bbox['h_max'] - bbox['h_min']) + bbox['h_min']
     # x = apply_polynomial(raw[:,0],coefs['x'])
     # y = apply_polynomial(raw[:,1],coefs['y'])
-    x = (raw[:,0] + 1.) * .5 * (coefs['x']['max'] - coefs['x']['min']) + coefs['x']['min']
-    y = (raw[:,1] + 1.) * .5 * (coefs['y']['max'] - coefs['y']['min']) + coefs['y']['min']
+    x = (raw[:,0] + 1.) * .5 * (coefs['x'][1] - coefs['x'][0]) + coefs['x'][0]
+    y = (raw[:,1] + 1.) * .5 * (coefs['y'][1] - coefs['y'][0]) + coefs['y'][0]
     h = apply_polynomial(raw[:,2],coefs['h'])
     warped = torch.stack([x,y,h],dim=-1)
     return warped
