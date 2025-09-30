@@ -24,6 +24,9 @@ if __name__ == '__main__':
     
     parser.add_argument('--ref_image_num',type=int,default=-1)
 
+    parser.add_argument('--dino_path', type=str, default='weights',
+                        help='file containing pre-trained encoder weights')
+
     parser.add_argument('--encoder_path', type=str, default='weights/pretrain_swt_cnn_r2_0409_large/backbone.pth',
                         help='file containing pre-trained encoder weights')
     
