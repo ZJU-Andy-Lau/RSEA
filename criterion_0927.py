@@ -197,6 +197,7 @@ class CriterionFinetune(nn.Module):
                 conf1_P,conf2_P,
                 obj1_P3,obj2_P3,
                 residual1_P,residual2_P,
+                res_mid,
                 only_decoder:bool,
                 H,W
                 ):
@@ -206,8 +207,7 @@ class CriterionFinetune(nn.Module):
         #     feat1_PD.to(torch.float32),feat2_PD.to(torch.float32),pred1_P3.to(torch.float32),pred2_P3.to(torch.float32),conf1_P.to(torch.float32),conf2_P.to(torch.float32),obj1_P3.to(torch.float32),obj2_P3.to(torch.float32),residual1_P.to(torch.float32),residual2_P.to(torch.float32)
 
         P = H*W
-        res_mid = torch.median(torch.cat([residual1_P,residual2_P])[torch.cat([residual1_P,residual2_P]) >= 0])
-        residual_threshold = res_mid
+        residual_threshold = res_mid * 2.
         conf1_gt_P = residual2conf(residual1_P,residual_threshold)
         conf2_gt_P = residual2conf(residual2_P,residual_threshold)
         

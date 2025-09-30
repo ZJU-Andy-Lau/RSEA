@@ -118,6 +118,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     overlap1 = data['overlap1'].squeeze(0).to(args.device)
     overlap2 = data['overlap2'].squeeze(0).to(args.device)
     obj_map_coef = data['obj_map_coef']
+    res_mid = data['res_mid']
     B,H,W = obj1.shape[:3]
 
     feat1,conf1 = encoder(img1)
@@ -183,6 +184,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
                                                                 conf1_P,conf2_P,
                                                                 obj1_P3,obj2_P3,
                                                                 residual1_P,residual2_P,
+                                                                res_mid,
                                                                 only_decoder,
                                                                 H,W)
     
@@ -192,7 +194,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     else:
         loss = loss + loss_dis * 0.
     
-    obj_vis = visualize_obj_error(obj1_P3[:,:2].detach().cpu().numpy(),pred1_P3[:,:2].detach().cpu().numpy())
+    obj_vis = visualize_obj_error(obj1_P3[:64*64,:2].detach().cpu().numpy(),pred1_P3[:64*64,:2].detach().cpu().numpy(),sample_k=1e9)
 
     vis_data = {
         'feat_vis':feat_vis,
@@ -426,7 +428,8 @@ def pretrain(args):
                 "residual2":residual2,
                 "overlap1":overlap1,
                 "overlap2":overlap2,
-                "obj_map_coef":dataset.obj_map_coefs[dataset_idx]
+                "obj_map_coef":dataset.obj_map_coefs[dataset_idx],
+                "res_mid":dataset.red_mids[dataset_idx]
             }
 
             loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)

@@ -372,6 +372,7 @@ class PretrainDataset(Dataset):
         self.input_size = input_size
         self.batch_size = batch_size
         self.obj_map_coefs = []
+        self.red_mids = []
         self.rank = dist.get_rank()
         self.world_size = dist.get_world_size()
 
@@ -390,6 +391,12 @@ class PretrainDataset(Dataset):
                 })
         else:
             self.obj_map_coefs = obj_map_coefs
+        
+        for key in self.database_keys:
+            img_num = len(self.database[key]['residuals'])
+            res = np.concatenate([self.database[key]['residuals'][f"residual_{i}"][:].reshape(-1) for i in range(img_num)])
+            self.red_mids.append(np.nanmedian(res))
+
 
         if mode == 'train':
             self.transform = transforms.Compose([
@@ -433,7 +440,6 @@ class PretrainDataset(Dataset):
             image_2_full = self.clahe.apply(image_2_full)
         image_1_full = np.stack([image_1_full] * 3,axis=-1)
         image_2_full = np.stack([image_2_full] * 3,axis=-1)
-        
 
         imgs1, imgs2, obj1, obj2, residual1, residual2, overlaps_1, overlaps_2 = \
             process_image(img1_full=image_1_full,
