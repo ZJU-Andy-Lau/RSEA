@@ -385,8 +385,8 @@ class PretrainDataset(Dataset):
                 #     'h':get_map_coef(obj[:,:,2].reshape(-1))
                 # })
                 self.obj_map_coefs.append({
-                    'x':np.array([obj[:,:,0].min() * .9,obj[:,:,0].max() * 1.1]),
-                    'y':np.array([obj[:,:,1].min() * .9,obj[:,:,1].max() * 1.1]),
+                    'x':np.array([obj[:,:,0].min(),obj[:,:,0].max()]),
+                    'y':np.array([obj[:,:,1].min(),obj[:,:,1].max()]),
                     'h':get_map_coef(obj[:,:,2].reshape(-1))
                 })
         else:

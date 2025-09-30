@@ -49,9 +49,9 @@ class DecoderFinetune(nn.Module):
         for block in self.blocks:
             x = block(res)
             res = res + x
-        x_res = self.output_x(res)
-        y_res = self.output_y(res)
-        height_res = self.output_height(res)
+        x_res = self.output_x(res) * 1.1
+        y_res = self.output_y(res) * 1.1
+        height_res = self.output_height(res) * 1.1
         return torch.cat([x_res,y_res,height_res],dim=1)
     
 class Decoder(nn.Module):
