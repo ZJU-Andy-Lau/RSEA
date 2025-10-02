@@ -123,6 +123,8 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
     """
     decoder.to(rank)
     decoder.train()
+    best_state_dict = None
+    min_loss = 1e9
     
     optimizer = optim.Adam(decoder.parameters(), lr=lr)
     scheduler = MultiStageOneCycleLR(optimizer,
@@ -147,8 +149,11 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
         if (epoch + 1) % (epochs // 10) == 0: # 每10轮打印一次日志
             print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f}")
 
+        if loss < min_loss:
+            best_state_dict = decoder.state_dict()
+
     # 保存训练好的Decoder权重
-    torch.save(decoder.state_dict(), save_path)
+    torch.save(best_state_dict, save_path)
     print(f"[GPU {rank}] 训练完成. Decoder已保存至 {save_path}")
 
 
