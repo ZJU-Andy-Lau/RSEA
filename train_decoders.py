@@ -128,7 +128,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
     scheduler = MultiStageOneCycleLR(optimizer,
                                      total_steps=epochs,
                                      warmup_ratio=.1,
-                                     cooldown_ratio=.5)
+                                     cooldown_ratio=.7)
     # 假设是回归任务或类似任务，使用MSE损失。
     # 如果是分割任务，应使用 nn.BCEWithLogitsLoss 或 nn.CrossEntropyLoss
     criterion = nn.MSELoss()
