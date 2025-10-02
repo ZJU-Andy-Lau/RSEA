@@ -167,7 +167,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
     criterion = nn.MSELoss()
 
     print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
-    features = buffer['features'].permute(0,1)[None,:,:,None] #1,D,P,1
+    features = buffer['features'].permute(1,0)[None,:,:,None] #1,D,P,1
     gt_objs = buffer['objs'] # P,3
     for epoch in range(epochs):
         output = decoder(features)
