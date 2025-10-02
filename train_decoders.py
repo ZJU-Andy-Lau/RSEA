@@ -147,7 +147,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
         optimizer.step()
         scheduler.step()
         if (epoch + 1) % (epochs // 10) == 0: # 每10轮打印一次日志
-            print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f}")
+            print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f} | min Loss: {min_loss:.4f}")
 
         if loss < min_loss:
             best_state_dict = decoder.state_dict()
