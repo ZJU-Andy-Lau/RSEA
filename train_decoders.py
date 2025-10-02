@@ -312,7 +312,7 @@ if __name__ == "__main__":
     try:
         print("加载数据")
         database = h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r')
-        all_keys = database.keys()
+        all_keys = list(database.keys())
         dataset_num = args.dataset_num
         if dataset_num is None:
             dataset_num = len(all_keys)
