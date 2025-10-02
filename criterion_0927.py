@@ -475,6 +475,6 @@ class CriterionTrainGrid(nn.Module):
         offset_dis = torch.norm(torch.abs(offset_pred_pair - offset_gt_pair),dim=-1)
         loss_relative = offset_dis.mean()
 
-        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + progress * loss_dis.mean()# + loss_bias + loss_reg
+        loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + progress * loss_dis.mean() + loss_relative.mean()# + loss_bias + loss_reg
 
-        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_dis.mean(),sigma_avg.item() #,loss_bias.item(),loss_reg.item()
+        return loss, loss_distribution.mean(),loss_obj.mean() ,loss_height.mean() ,loss_photo.mean(),loss_dis.mean(),loss_relative.mean(),sigma_avg.item() #,loss_bias.item(),loss_reg.item()
