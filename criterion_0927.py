@@ -472,8 +472,7 @@ class CriterionTrainGrid(nn.Module):
         pairs[invalid_pair_mask,1] = (pairs[invalid_pair_mask, 1] + 1) % len(xy_pred)
         offset_gt_pair = xy_gt[pairs[:,0]] - xy_gt[pairs[:,1]]
         offset_pred_pair = xy_pred[pairs[:,0]] - xy_pred[pairs[:,1]]
-        offset_dis = torch.norm(torch.abs(offset_pred_pair - offset_gt_pair),dim=-1)
-        loss_relative = offset_dis.mean()
+        loss_relative = torch.norm(torch.abs(offset_pred_pair - offset_gt_pair),dim=-1)
 
         loss = loss_distribution.mean() + loss_obj.mean() + loss_height.mean() * self.loss_height_weight + loss_photo.mean() + progress * loss_dis.mean() + loss_relative.mean()# + loss_bias + loss_reg
 

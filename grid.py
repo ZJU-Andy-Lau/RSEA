@@ -506,7 +506,7 @@ class Grid():
                 log_sigma_xyh_sample_p3 = output_sample_p6[:,3:]
                 log_sigma_xyh_anchor_p3 = output_anchor_p6[:,3:]
 
-                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,sigma_avg = criterion(iter_idx,
+                loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,loss_relative,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
                                                                                             feature_dis,
                                                                                             [mu_xyh_sample_p3,mu_xyh_anchor_p3],
@@ -540,6 +540,7 @@ class Grid():
                         'p':f'{loss_photo.item():.2f}',
                         'h':f'{loss_height.item():.2f}',
                         'f':f'{feature_dis.mean().item():.2f}',
+                        'l':f'{loss_relative.item():.2f}',
                         # 'r':f'{loss_reg:.2f}',
                         'v':f'{loss_valid:.2f}',
                         'min':f'{min_photo_loss:.2f}'
