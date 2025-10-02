@@ -144,7 +144,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if (epoch + 1) % 1000 == 0: # 每10轮打印一次日志
+        if (epoch + 1) % (epochs // 10) == 0: # 每10轮打印一次日志
             print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f}")
 
     # 保存训练好的Decoder权重
