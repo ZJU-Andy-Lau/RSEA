@@ -323,7 +323,7 @@ if __name__ == "__main__":
         all_map_coeffs = []
         for key in tqdm(keys):
             img = database[key]['images']['image_0'][:]
-            obj = database[key]['images']['image_1'][:]
+            obj = database[key]['obj'][:]
             obj = centerize_obj(obj)
             map_coef = {
                     'x':np.array([obj[:,:,0].min(),obj[:,:,0].max()]),
