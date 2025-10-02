@@ -151,6 +151,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
 
         if loss < min_loss:
             best_state_dict = decoder.state_dict()
+            min_loss = loss
 
     # 保存训练好的Decoder权重
     torch.save(best_state_dict, save_path)
