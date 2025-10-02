@@ -16,6 +16,7 @@ from model.decoders import DecoderFinetune
 from utils import apply_polynomial,get_map_coef,downsample
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
+import torch.distributed as dist
 
 
 # --- 2. 分布式环境设置与清理 ---
@@ -122,7 +123,7 @@ def train_single_decoder(pbar, decoder, buffer, map_coeffs, epochs, lr, save_pat
         lr (float): 学习率。
         save_path (str): 模型权重保存路径。
     """
-    rank = pbar.pos # 从tqdm进度条的位置获取rank
+    rank = dist.get_rank() # 从tqdm进度条的位置获取rank
     decoder.to(rank)
     decoder.train()
     
