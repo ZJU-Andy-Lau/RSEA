@@ -11,49 +11,9 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
-from utils import apply_polynomial,get_map_coef
+from utils import apply_polynomial,get_map_coef,bilinear_interpolate
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
-
-# --- 1. 模型定义 ---
-# 请在这里替换为您自己的Encoder和Decoder模型结构
-# 注意：为了示例能够运行，这里的模型是简化的。
-# 您的Encoder输出特征图的通道数应与Decoder的输入通道数匹配。
-
-class Encoder(nn.Module):
-    """
-    预训练的编码器模型（示例）。
-    该模型在训练中权重将被冻结。
-    """
-    def __init__(self):
-        super(Encoder, self).__init__()
-        self.conv_stack = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2), # 输出尺寸: 512x512
-        )
-    
-    def forward(self, x):
-        return self.conv_stack(x)
-
-class Decoder(nn.Module):
-    """
-    待训练的解码器模型（示例）。
-    每个数据集都将拥有一个该模型的独立实例。
-    假设label是D通道的特征图。
-    """
-    def __init__(self, label_channels=1):
-        super(Decoder, self).__init__()
-        self.conv_transpose_stack = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2), # 输入尺寸 512x512 -> 输出 1024x1024
-            nn.ReLU(),
-            nn.Conv2d(64, label_channels, kernel_size=3, padding=1) # 输出D通道
-        )
-        
-    def forward(self, x):
-        return self.conv_transpose_stack(x)
 
 
 # --- 2. 分布式环境设置与清理 ---
@@ -121,6 +81,17 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     label_windows = label_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
     
     return image_windows, label_windows
+
+def downsample(arr,ds):
+    if ds <= 0:
+        return arr
+    H,W = arr.shape[:2]
+    lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
+    samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
+    sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
+    arr_ds = bilinear_interpolate(arr,sample_idxs)
+    arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
+    return arr_ds
 
 def centerize_obj(obj:np.ndarray):
     x = obj[...,0]
@@ -214,75 +185,76 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
 
     # 3. 遍历分配到的任务，逐一训练Decoder
     for data_idx in indices_for_this_gpu:
-        try:
-            print(f"[GPU {rank}] 开始处理数据集索引: {data_idx}")
-            
-            # --- a. 从numpy数组中获取数据并转换为Tensor ---
-            # numpy数组格式为 H, W, C -> torch需要 C, H, W
-            image_np = all_images[data_idx]
-            label_np = all_labels[data_idx]
-            map_coef = all_map_coeffs[data_idx]
-            
-            image = torch.from_numpy(image_np).permute(2, 0, 1).float()
-            label = torch.from_numpy(label_np).permute(2, 0, 1).float()
+        print(f"[GPU {rank}] 开始处理数据集索引: {data_idx}")
+        
+        # --- a. 从numpy数组中获取数据并转换为Tensor ---
+        # numpy数组格式为 H, W, C -> torch需要 C, H, W
+        image_np = all_images[data_idx]
+        label_np = all_labels[data_idx]
+        map_coef = all_map_coeffs[data_idx]
 
-            print(f"[GPU {rank}] 加载数据: Image {image.shape}, Label {label.shape}")
-            
-            # --- b. 切分窗口 ---
-            image_windows, label_windows = crop_to_windows(image, label, args.window_size)
-            print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
-            
-            # --- c. 创建特征Buffer (在GPU上) ---
-            feature_buffer = []
-            
-            # 使用一个小的 DataLoader 来批量处理特征提取，防止显存溢出
-            temp_dataloader = DataLoader(image_windows, batch_size=args.batch_size, shuffle=False)
+        label_np = downsample(label_np,16)
+        
+        image = torch.from_numpy(image_np).permute(2, 0, 1).float()
+        label = torch.from_numpy(label_np).permute(2, 0, 1).float()
 
-            with torch.no_grad(): # 确保不计算梯度
-                for image_batch in temp_dataloader:
-                    image_batch = image_batch.to(rank)
-                    feature_batch,_ = encoder(image_batch)
-                    # 将提取的特征直接保留在GPU上
-                    feature_buffer.append(feature_batch)
-            
-            # 拼接所有批次的特征，all_features 张量现在在GPU上
-            all_features = torch.cat(feature_buffer, dim=0).permute(0,2,3,1).flatten(0,2)
-            
-            # 将对应的标签窗口也移动到当前GPU
-            all_labels_for_features = label_windows.to(rank).permute(0,2,3,1).flatten(0,2)
+        print(f"[GPU {rank}] 加载数据: Image {image.shape}, Label {label.shape}")
+        
+        # --- b. 切分窗口 ---
+        image_windows, label_windows = crop_to_windows(image, label, args.window_size)
+        print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
+        
+        # --- c. 创建特征Buffer (在GPU上) ---
+        feature_buffer = []
+        
+        # 使用一个小的 DataLoader 来批量处理特征提取，防止显存溢出
+        temp_dataloader = DataLoader(image_windows, batch_size=args.batch_size, shuffle=False)
 
-            buffer = {
-                'features':all_features,
-                'objs':all_labels_for_features
-            }
+        with torch.no_grad(): # 确保不计算梯度
+            for image_batch in temp_dataloader:
+                image_batch = image_batch.to(rank)
+                feature_batch,_ = encoder(image_batch)
+                # 将提取的特征直接保留在GPU上
+                feature_buffer.append(feature_batch)
+        
+        # 拼接所有批次的特征，all_features 张量现在在GPU上
+        all_features = torch.cat(feature_buffer, dim=0).permute(0,2,3,1).flatten(0,2)
+        
+        # 将对应的标签窗口也移动到当前GPU
+        all_labels_for_features = label_windows.to(rank).permute(0,2,3,1).flatten(0,2)
 
-            # Encoder(MaxPool)会让特征图尺寸减半, Decoder会恢复
-            # 这里我们的示例Decoder输入是128x512x512，输出是Dx1024x1024
-            # 所以label窗口也应该是1024x1024
-            
-            # training_dataset = TensorDataset(all_features, all_labels_for_features)
-            # training_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
+        buffer = {
+            'features':all_features,
+            'objs':all_labels_for_features
+        }
 
-            # --- d. 训练新的Decoder ---
-            decoder = DecoderFinetune(in_channels=encoder.output_channels,block_num=args.decoder_block_num)
-            
-            # 定义保存路径
-            decoder_name = f"decoder_{data_idx}.pth"
-            save_path = os.path.join(args.output_dir, decoder_name)
-            
-            train_single_decoder(
-                rank=rank,
-                decoder=decoder,
-                buffer=buffer,
-                map_coeffs=map_coef,
-                epochs=args.epochs,
-                lr=args.lr,
-                save_path=save_path
-            )
+        # Encoder(MaxPool)会让特征图尺寸减半, Decoder会恢复
+        # 这里我们的示例Decoder输入是128x512x512，输出是Dx1024x1024
+        # 所以label窗口也应该是1024x1024
+        
+        # training_dataset = TensorDataset(all_features, all_labels_for_features)
+        # training_dataloader = DataLoader(training_dataset, batch_size=args.batch_size, shuffle=True)
 
-        except Exception as e:
-            print(f"[GPU {rank}] 处理索引 {data_idx} 时发生错误: {e}")
-            continue # 跳过这个数据，继续下一个
+        # --- d. 训练新的Decoder ---
+        decoder = DecoderFinetune(in_channels=encoder.output_channels,block_num=args.decoder_block_num)
+        
+        # 定义保存路径
+        decoder_name = f"decoder_{data_idx}.pth"
+        save_path = os.path.join(args.output_dir, decoder_name)
+        
+        train_single_decoder(
+            rank=rank,
+            decoder=decoder,
+            buffer=buffer,
+            map_coeffs=map_coef,
+            epochs=args.epochs,
+            lr=args.lr,
+            save_path=save_path
+        )
+
+        # except Exception as e:
+        #     print(f"[GPU {rank}] 处理索引 {data_idx} 时发生错误: {e}")
+        #     continue # 跳过这个数据，继续下一个
 
     cleanup()
     print(f"GPU {rank} 的所有任务已完成。")
