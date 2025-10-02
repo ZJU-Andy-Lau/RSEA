@@ -1,4 +1,6 @@
 import os
+import warnings
+warnings.filterwarnings("ignore")
 import math
 import h5py
 import argparse
@@ -32,6 +34,17 @@ def cleanup():
 
 
 # --- 3. 核心功能函数 ---
+
+def downsample(arr,ds):
+    if ds <= 0:
+        return arr
+    H,W = arr.shape[:2]
+    lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
+    samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
+    sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
+    arr_ds = bilinear_interpolate(arr,sample_idxs)
+    arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
+    return arr_ds
 
 def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     """
@@ -79,19 +92,13 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     
     image_windows = image_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
     label_windows = label_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
+
+    for label_window in label_windows:
+        label_window = downsample(label_window,16)
     
     return image_windows, label_windows
 
-def downsample(arr,ds):
-    if ds <= 0:
-        return arr
-    H,W = arr.shape[:2]
-    lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
-    samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
-    sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
-    arr_ds = bilinear_interpolate(arr,sample_idxs)
-    arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
-    return arr_ds
+
 
 def centerize_obj(obj:np.ndarray):
     x = obj[...,0]
@@ -192,8 +199,6 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         image_np = all_images[data_idx]
         label_np = all_labels[data_idx]
         map_coef = all_map_coeffs[data_idx]
-
-        label_np = downsample(label_np,16)
         
         image = torch.from_numpy(image_np).permute(2, 0, 1).float()
         label = torch.from_numpy(label_np).permute(2, 0, 1).float()
