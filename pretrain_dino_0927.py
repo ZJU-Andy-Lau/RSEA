@@ -244,7 +244,7 @@ def pretrain(args):
         if not args.dataset_select is None:
             args.dataset_num = len(args.dataset_select.split(','))
         elif not args.decoder_path is None:
-            dataset_indices = torch.from_numpy(np.load(os.path.join(args.decoder_path,'dataset_indices.npy')),dtype=torch.long,device=args.device)
+            dataset_indices = torch.from_numpy(np.load(os.path.join(args.decoder_path,'dataset_indices.npy'))).to(dtype=torch.long,device=args.device)
         else:
             dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
         if rank == 0:
