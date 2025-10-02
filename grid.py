@@ -371,7 +371,7 @@ class Grid():
         min_photo_loss = 1e8
 
         patch_noise_buffer = F.normalize(torch.normal(mean=0.,std=1.,size=(1,self.encoder.output_channels,max_patch_num * 5,1)),dim=1).to(self.elements[0].buffer['features'].device)
-        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * 0.01
+        patch_noise_amp = torch.rand(1,1,max_patch_num * 5,1,device=patch_noise_buffer.device,dtype=patch_noise_buffer.dtype) * 0.1
         patch_noise_buffer = patch_noise_buffer * patch_noise_amp
 
         vis_flag = 0
@@ -416,7 +416,7 @@ class Grid():
 
                 dists,idxs = element.query_point_base(sample_linesamps,k=self.options.nearest_neighbor_num) # n,3
                 # torch.cuda.synchronize()
-                valid_mask = (dists.max(dim=1).values < 256) & (dists.min(dim=1).values < 16)
+                valid_mask = (dists.max(dim=1).values < 256)# & (dists.min(dim=1).values < 16)
                 if valid_mask.sum() == 0:
                     continue
                 dists = dists[valid_mask]
