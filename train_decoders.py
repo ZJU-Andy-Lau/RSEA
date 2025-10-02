@@ -140,7 +140,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
         output = decoder(features)
         output = output.permute(0,2,3,1).flatten(0,2)
         pred_obj = warp_by_poly(output,map_coeffs)
-        loss = criterion(pred_obj.to(torch.float),gt_objs.to(torch.float))
+        loss = criterion(pred_obj.to(torch.float),gt_objs.to(torch.float)) / len(pred_obj)
         loss.backward()
         optimizer.step()
         scheduler.step()
