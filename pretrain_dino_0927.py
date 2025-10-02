@@ -243,7 +243,10 @@ def pretrain(args):
     if not args.resume_training:
         if not args.dataset_select is None:
             args.dataset_num = len(args.dataset_select.split(','))
-        dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
+        elif not args.decoder_path is None:
+            dataset_indices = torch.from_numpy(np.load(os.path.join(args.decoder_path,'dataset_indices.npy')))
+        else:
+            dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
         if rank == 0:
             with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
                 total_num = len(f.keys())
@@ -367,6 +370,9 @@ def pretrain(args):
             decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})
             optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_optimizer_{dataset_idx}.pth'),map_location='cpu'))
             scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,f'decoder_scheduler_{dataset_idx}.pth'),map_location='cpu'))
+        elif not args.decoder_path is None:
+            decoder.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.decoder_path,f'decoder_{dataset_idx}.pth'),map_location='cpu').items()})
+                
 
         decoder = decoder.to(args.device)
         for state in optimizer.state.values():
@@ -694,6 +700,7 @@ if __name__ == '__main__':
     parser.add_argument('--vis_img_path',type=str,default=None)
     parser.add_argument('--batch_size',type=int,default=8)
     parser.add_argument('--decoder_block_num',type=int,default=1)
+    parser.add_argument('--decoder_path',type=str,default=None)
     parser.add_argument('--resume_training',type=str2bool,default=False)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
