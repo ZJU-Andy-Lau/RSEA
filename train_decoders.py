@@ -13,7 +13,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
-from utils import apply_polynomial,get_map_coef,bilinear_interpolate
+from utils import apply_polynomial,get_map_coef,downsample
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 
@@ -34,17 +34,6 @@ def cleanup():
 
 
 # --- 3. 核心功能函数 ---
-
-def downsample(arr,ds):
-    if ds <= 0:
-        return arr
-    H,W = arr.shape[:2]
-    lines = np.arange(0,H - ds + 1,ds) + (ds - 1.) * 0.5
-    samps = np.arange(0,W - ds + 1,ds) + (ds - 1.) * 0.5
-    sample_idxs = np.stack(np.meshgrid(samps,lines,indexing='xy'),axis=-1).reshape(-1,2) # x,y
-    arr_ds = bilinear_interpolate(arr,sample_idxs)
-    arr_ds = arr_ds.reshape(len(lines),len(samps),-1).squeeze()
-    return arr_ds
 
 def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     """
@@ -92,12 +81,10 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     
     image_windows = image_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
     label_windows = label_windows.view(num_h_windows * num_w_windows, window_size, window_size, -1)
-
-    for label_window in label_windows:
-        label_window = downsample(label_window,16)
-    
+    label_windows = downsample(label_windows,16)
     label_windows = label_windows.permute(0,3,1,2)
-    
+
+
     return image_windows, label_windows
 
 
