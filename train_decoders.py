@@ -346,7 +346,7 @@ if __name__ == "__main__":
         
     num_datasets = all_images.shape[0]
     print(f"共找到 {num_datasets} 个数据集待处理。")
-    np.save(os.path.join(args.output_path,'dataset_indices.npy'),dataset_indices)
+    np.save(os.path.join(args.output_dir,'dataset_indices.npy'),dataset_indices)
 
     # 2. 启动分布式训练
     world_size = torch.cuda.device_count()
