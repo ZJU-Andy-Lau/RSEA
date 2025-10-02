@@ -241,7 +241,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
             with torch.no_grad(): # 确保不计算梯度
                 for image_batch in temp_dataloader:
                     image_batch = image_batch.to(rank)
-                    feature_batch = encoder(image_batch)
+                    feature_batch,_ = encoder(image_batch)
                     # 将提取的特征直接保留在GPU上
                     feature_buffer.append(feature_batch)
             
