@@ -91,10 +91,12 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     num_w_windows = image_windows.shape[1]
     
     image_windows = image_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
-    label_windows = label_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
+    label_windows = label_windows.view(num_h_windows * num_w_windows, window_size, window_size, -1)
 
     for label_window in label_windows:
         label_window = downsample(label_window,16)
+    
+    label_windows = label_windows.permute(0,3,1,2)
     
     return image_windows, label_windows
 
