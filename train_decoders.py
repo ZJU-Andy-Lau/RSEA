@@ -323,6 +323,7 @@ if __name__ == "__main__":
         all_map_coeffs = []
         for key in tqdm(keys):
             img = database[key]['images']['image_0'][:]
+            img = np.stack([img] * 3,axis = -1)
             obj = database[key]['obj'][:]
             obj = centerize_obj(obj)
             map_coef = {
