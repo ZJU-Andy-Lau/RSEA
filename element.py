@@ -135,7 +135,7 @@ class Element():
         if self.verbose:
             print("[Element]:", *args, **kwargs)
 
-    def __crop_img__(self,crop_size = 256,random_ratio = 1.):
+    def __crop_img__(self,crop_size = 1024,random_ratio = 1.):
 
         self._log("cropping image")
         H, W = self.img_raw.shape[:2]
@@ -151,7 +151,7 @@ class Element():
 
         for ratio in size_ratio:
             raw_size = int(crop_size * ratio)
-            step = int(np.sqrt((H - raw_size) * (W - raw_size) / 150.))
+            step = int(np.sqrt((H - raw_size) * (W - raw_size) / 64.))
 
             if self.verbose > 0:
                 pbar = tqdm(total=int((H - raw_size ) / step + 1) * int((W - raw_size) / step + 1))
