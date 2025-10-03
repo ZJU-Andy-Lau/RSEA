@@ -465,7 +465,7 @@ class CriterionTrainGrid(nn.Module):
         dis_pred = torch.norm(mu_xyh_sample - mu_xyh_anchor,dim=1)
         dis_gt = torch.norm(xyh_gt_sample - xyh_gt_anchor,dim=1)
 
-        loss_dis = torch.clip(dis_pred - dis_gt,min=0.)
+        loss_dis = torch.clip(dis_pred - dis_gt,min=0.) * .1
 
         pairs = np.random.randint(0,len(xy_pred)-1,size=(1000,2))
         invalid_pair_mask = pairs[:, 0] == pairs[:, 1]
