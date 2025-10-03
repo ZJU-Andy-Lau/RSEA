@@ -507,7 +507,7 @@ class Grid():
                 log_sigma_xyh_anchor_p3 = output_anchor_p6[:,3:]
 
                 if iter_idx % 500 == 0:
-                    visualize_subset_points(mu_xyh_sample_p3[:100].cpu().numpy(),objs_sample_p3[:100].cpu().numpy(),os.path.join(self.output_path,f'train_vis_{block_idx}_{iter_idx}.png'),point_radius=2)
+                    visualize_subset_points(mu_xyh_sample_p3[:100].detach().cpu().numpy(),objs_sample_p3[:100].detach().cpu().numpy(),os.path.join(self.output_path,f'train_vis_{block_idx}_{iter_idx}.png'),point_radius=2)
 
                 loss,loss_distribution,loss_obj,loss_height,loss_photo,loss_dis,loss_relative,sigma_avg = criterion(iter_idx,
                                                                                             self.options.grid_training_iters,
