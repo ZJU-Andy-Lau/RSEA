@@ -127,9 +127,10 @@ def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs):
     output = output.permute(0,2,3,1).flatten(0,2)
     pred_obj = warp_by_poly(output,map_coeffs)
     gt_objs = gt_objs.flatten(0,1).cuda()
+    print(f"pred:{pred_obj.mean(dim=0)} \n gt:{gt_objs.mean(dim=0)}")
     dis = torch.norm(pred_obj - gt_objs,dim=1)
     print(f"dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
-    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
+    # visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
 
 
 if __name__ == '__main__':
@@ -174,6 +175,7 @@ if __name__ == '__main__':
             'y':np.array([obj_train[:,:,1].min(),obj_train[:,:,1].max()]),
             'h':get_map_coef(obj_train[:,:,2].reshape(-1))
         }
+    print(f"map coef:{map_coef} \n obj_train:{obj_train.mean(axis=0)} \n obj_test:{obj_test.mean(axis=0)}")
     obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
