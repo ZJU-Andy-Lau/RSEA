@@ -136,7 +136,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="perfomance test")
     parser.add_argument('--encoder_path',type=str,default=None)
     parser.add_argument('--dino_weight_path',type=str,default='./weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth')
-    parser.add_argument('--img_path',type=str,default='./datasets/vis/0.png')
+    parser.add_argument('--img_path',type=str,default='./performance_test_data/0')
     parser.add_argument('--output_path',type=str,default='./datasets/performance_test_res')
     parser.add_argument('--test_name',type=str,default=None)
     # parser.add_argument('--dataset_num',type=int,default=None)
@@ -154,7 +154,7 @@ if __name__ == '__main__':
     if args.test_name is None:
         args.test_name = get_current_time()
 
-    img_train = cv2.imread(args.img_path)
+    img_train = cv2.imread(os.path.join(args.img_path,'image.png'))
     img_test = crop_test_img(img_train)
 
 
@@ -165,7 +165,7 @@ if __name__ == '__main__':
     img_train_tensor = transform(img_train)[None]
     img_test_tensor = transform(img_test)[None]
 
-    obj_train = np.load(args.img_path.replace('.png','.npy'))
+    obj_train = np.load(os.path.join(args.img_path,'obj.npy'))
     obj_test = crop_test_img(obj_train)
     obj_train = centerize_obj(obj_train)
     obj_test = centerize_obj(obj_test)
