@@ -117,20 +117,19 @@ class DinoVisionTransformer(nn.Module):
         logger.info(f"using rescale_coords={pos_embed_rope_rescale_coords} for rope new")
         logger.info(f"using jitter_coords={pos_embed_rope_jitter_coords} for rope new")
         logger.info(f"using dtype={pos_embed_rope_dtype} for rope new")
-        # self.rope_embed = RopePositionEmbedding(
-        #     embed_dim=embed_dim,
-        #     num_heads=num_heads,
-        #     base=pos_embed_rope_base,
-        #     min_period=pos_embed_rope_min_period,
-        #     max_period=pos_embed_rope_max_period,
-        #     normalize_coords=pos_embed_rope_normalize_coords,
-        #     shift_coords=pos_embed_rope_shift_coords,
-        #     jitter_coords=pos_embed_rope_jitter_coords,
-        #     rescale_coords=pos_embed_rope_rescale_coords,
-        #     dtype=dtype_dict[pos_embed_rope_dtype],
-        #     device=device,
-        # )
-        self.rope_embed = None
+        self.rope_embed = RopePositionEmbedding(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            base=pos_embed_rope_base,
+            min_period=pos_embed_rope_min_period,
+            max_period=pos_embed_rope_max_period,
+            normalize_coords=pos_embed_rope_normalize_coords,
+            shift_coords=pos_embed_rope_shift_coords,
+            jitter_coords=pos_embed_rope_jitter_coords,
+            rescale_coords=pos_embed_rope_rescale_coords,
+            dtype=dtype_dict[pos_embed_rope_dtype],
+            device=device,
+        )
         logger.info(f"using {ffn_layer} layer as FFN")
         ffn_layer_cls = ffn_layer_dict[ffn_layer]
         ffn_ratio_sequence = [ffn_ratio] * depth
@@ -224,10 +223,10 @@ class DinoVisionTransformer(nn.Module):
             x.append(t2_x)
             rope.append(hw_tuple)
         for _, blk in enumerate(self.blocks):
-            if self.rope_embed is not None:
-                rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
-            else:
-                rope_sincos = [None for r in rope]
+            # if self.rope_embed is not None:
+            #     rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
+            # else:
+            rope_sincos = [None for r in rope]
             x = blk(x, rope_sincos)
         all_x = x
         output = []
@@ -269,10 +268,10 @@ class DinoVisionTransformer(nn.Module):
         output, total_block_len = [], len(self.blocks)
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
         for i, blk in enumerate(self.blocks):
-            if self.rope_embed is not None:
-                rope_sincos = self.rope_embed(H=H, W=W)
-            else:
-                rope_sincos = None
+            # if self.rope_embed is not None:
+            #     rope_sincos = self.rope_embed(H=H, W=W)
+            # else:
+            rope_sincos = None
             x = blk(x, rope_sincos)
             if i in blocks_to_take:
                 output.append(x)
