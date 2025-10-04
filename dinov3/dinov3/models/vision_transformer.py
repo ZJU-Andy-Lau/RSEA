@@ -223,10 +223,10 @@ class DinoVisionTransformer(nn.Module):
             x.append(t2_x)
             rope.append(hw_tuple)
         for _, blk in enumerate(self.blocks):
-            # if self.rope_embed is not None:
-            #     rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
-            # else:
-            rope_sincos = [None for r in rope]
+            if self.rope_embed is not None:
+                rope_sincos = [self.rope_embed(H=H, W=W) for H, W in rope]
+            else:
+                rope_sincos = [None for r in rope]
             x = blk(x, rope_sincos)
         all_x = x
         output = []
@@ -268,10 +268,10 @@ class DinoVisionTransformer(nn.Module):
         output, total_block_len = [], len(self.blocks)
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
         for i, blk in enumerate(self.blocks):
-            # if self.rope_embed is not None:
-            #     rope_sincos = self.rope_embed(H=H, W=W)
-            # else:
-            rope_sincos = None
+            if self.rope_embed is not None:
+                rope_sincos = self.rope_embed(H=H, W=W)
+            else:
+                rope_sincos = None
             x = blk(x, rope_sincos)
             if i in blocks_to_take:
                 output.append(x)
