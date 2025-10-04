@@ -148,6 +148,7 @@ def train_single_decoder(rank, decoder, buffer, map_coeffs, epochs, lr, save_pat
     features = buffer['features'].permute(1,0)[None,:,:,None] #1,D,P,1
     gt_objs = buffer['objs'] # P,3
     for epoch in range(epochs):
+        optimizer.zero_grad()
         output = decoder(features)
         output = output.permute(0,2,3,1).flatten(0,2)
         pred_obj = warp_by_poly(output,map_coeffs)

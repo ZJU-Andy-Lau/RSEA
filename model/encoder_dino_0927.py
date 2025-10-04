@@ -154,8 +154,9 @@ class Adapter(nn.Module):
     def forward(self,x):
         raw_feat = self.cnn(x)
         B,D,H,W = raw_feat.shape
-        feat_with_pos = self.pos_encoder(raw_feat)
-        feat_seq = feat_with_pos.flatten(2).transpose(1,2)
+        # feat_with_pos = self.pos_encoder(raw_feat)
+        # feat_seq = feat_with_pos.flatten(2).transpose(1,2)
+        feat_seq = raw_feat.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
         feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W),dim=1)
