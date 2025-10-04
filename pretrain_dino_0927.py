@@ -299,7 +299,7 @@ def pretrain(args):
     # if args.resume_training:
     #     encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     # else:
-    encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
+    encoder = EncoderDino(dino_weight_path=args.dino_weight_path,adapter_pos_embed = args.pos_embed)
     fim = FeatureInteractionModule(feature_dim = encoder.output_channels)
     # projector = ProjectHead(encoder.output_channels,128)
     adapter_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(fim.parameters()),lr = args.lr_encoder_max)
@@ -703,6 +703,7 @@ if __name__ == '__main__':
     parser.add_argument('--decoder_block_num',type=int,default=1)
     parser.add_argument('--decoder_path',type=str,default=None)
     parser.add_argument('--resume_training',type=str2bool,default=False)
+    parser.add_argument('--pos_embed',type=str2bool,default=False)
     parser.add_argument('--max_epoch',type=int,default=200)
     parser.add_argument('--lr_encoder_min',type=float,default=1e-7)
     parser.add_argument('--lr_encoder_max',type=float,default=5e-4)

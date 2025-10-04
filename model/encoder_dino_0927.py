@@ -125,7 +125,7 @@ class FeatureInteractionModule(nn.Module):
         return F.normalize(out_a,dim=1), F.normalize(out_b,dim=1)
     
 class Adapter(nn.Module):
-    def __init__(self,input_channels = 512,output_channels = 512):
+    def __init__(self,input_channels = 512,output_channels = 512,pos_embed = False):
         super().__init__()
         self.input_channels = input_channels
         self.output_channels = output_channels
@@ -137,6 +137,7 @@ class Adapter(nn.Module):
             nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
         )
 
+        self.pos_embed = pos_embed
         self.pos_encoder = PositionalEncoding(dim=output_channels)
         
         # 自注意力模块，借鉴CasP中的TransformerBlock设计
@@ -154,9 +155,11 @@ class Adapter(nn.Module):
     def forward(self,x):
         raw_feat = self.cnn(x)
         B,D,H,W = raw_feat.shape
-        feat_with_pos = self.pos_encoder(raw_feat)
-        feat_seq = feat_with_pos.flatten(2).transpose(1,2)
-        # feat_seq = raw_feat.flatten(2).transpose(1,2)
+        if self.pos_embed:
+            feat_with_pos = self.pos_encoder(raw_feat)
+            feat_seq = feat_with_pos.flatten(2).transpose(1,2)
+        else:
+            feat_seq = raw_feat.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
         feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W),dim=1)
@@ -168,7 +171,7 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23]):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False):
         super().__init__()
         self.verbose = verbose
         self.layers = layers
