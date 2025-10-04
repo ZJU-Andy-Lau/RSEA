@@ -30,7 +30,7 @@ def extract_features(args,img_tensor:torch.Tensor):
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     encoder = encoder.cuda().eval()
 
-    upsample_times = int(math.log2(encoder.SAMPLE_FACTOR) - math.log2(args.sample_factor))
+    upsample_times = int(math.log2(encoder.SAMPLE_FACTOR) - math.log2(args.downsample))
 
     img_tensor = img_tensor.cuda()
 
