@@ -177,8 +177,8 @@ if __name__ == '__main__':
     obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
-    train_features = extract_features(img_train_tensor)
-    test_features = extract_features(img_test_tensor)
+    train_features = extract_features(img_train_tensor,args.downsample)
+    test_features = extract_features(img_test_tensor,args.downsample)
 
     decoder = train(args,train_features,obj_train_downsample,map_coef)
     evaluate(args,decoder,test_features,obj_test_downsample,map_coef)
