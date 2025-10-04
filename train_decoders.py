@@ -16,6 +16,7 @@ from model.decoders import DecoderFinetune
 from utils import apply_polynomial,get_map_coef,downsample
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
+import kornia.augmentation as K
 
 
 # --- 2. 分布式环境设置与清理 ---
@@ -50,6 +51,11 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     """
     _, H, W = image_tensor.shape
     
+    transform = K.Normalize(
+                mean=torch.tensor([0.485, 0.456, 0.406]), 
+                std=torch.tensor([0.229, 0.224, 0.225])
+            )
+
     # 计算需要填充多少才能被window_size整除
     pad_h = (window_size - H % window_size) % window_size
     pad_w = (window_size - W % window_size) % window_size
@@ -81,6 +87,9 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     
     image_windows = image_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
     label_windows = label_windows.view(num_h_windows * num_w_windows, window_size, window_size, -1)
+
+    image_windows = transform(image_windows)
+
     label_windows = downsample(label_windows,16)
     label_windows = label_windows.permute(0,3,1,2)
 
@@ -325,6 +334,8 @@ if __name__ == "__main__":
     world_size = torch.cuda.device_count()
     if world_size < 8:
         print(f"警告：检测到 {world_size} 张GPU，但代码为8张GPU优化。将使用所有可用的GPU。")
+    
+    world_size = min(world_size,num_datasets)
     
     print(f"将在 {world_size} 张GPU上启动训练...")
     
