@@ -21,7 +21,7 @@ import cv2
 from torchvision import transforms
 
 @torch.no_grad()
-def extract_features(args,img_tensor:torch.Tensor,sample_factor):
+def extract_features(args,img_tensor:torch.Tensor):
     """
     input: img_tensor 1,3,H,W
     output: features 1,D,h,w
@@ -30,7 +30,7 @@ def extract_features(args,img_tensor:torch.Tensor,sample_factor):
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     encoder = encoder.cuda().eval()
 
-    upsample_times = int(math.log2(encoder.SAMPLE_FACTOR) - math.log2(sample_factor))
+    upsample_times = int(math.log2(encoder.SAMPLE_FACTOR) - math.log2(args.sample_factor))
 
     img_tensor = img_tensor.cuda()
 
@@ -177,8 +177,8 @@ if __name__ == '__main__':
     obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
-    train_features = extract_features(img_train_tensor,args.downsample)
-    test_features = extract_features(img_test_tensor,args.downsample)
+    train_features = extract_features(args,img_train_tensor)
+    test_features = extract_features(args,img_test_tensor)
 
     decoder = train(args,train_features,obj_train_downsample,map_coef)
     evaluate(args,decoder,test_features,obj_test_downsample,map_coef)
