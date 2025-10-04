@@ -66,6 +66,7 @@ def centerize_obj(obj:np.ndarray):
     x = obj[...,0]
     y = obj[...,1]
     h = obj[...,2]
+    print(f"x:{x.shape} \t x_max:{x.max()} \t x_min:{x.min()} \t mean:{(x - (x.max() + x.min()) * .5).mean()}")
     x = x - (x.max() + x.min()) * .5
     y = y - (y.max() + y.min()) * .5
     return np.stack([x,y,h],axis=-1)
@@ -176,7 +177,7 @@ if __name__ == '__main__':
             'y':np.array([obj_train[:,:,1].min(),obj_train[:,:,1].max()]),
             'h':get_map_coef(obj_train[:,:,2].reshape(-1))
         }
-    print(f"map coef:{map_coef} \n obj_train:{obj_train} \n obj_test:{obj_test}")
+    # print(f"map coef:{map_coef} \n obj_train:{obj_train} \n obj_test:{obj_test}")
     obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
