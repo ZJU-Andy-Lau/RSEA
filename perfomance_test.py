@@ -14,7 +14,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
-from utils import apply_polynomial,get_map_coef,bilinear_interpolate,visualize_subset_points
+from utils import apply_polynomial,get_map_coef,bilinear_interpolate,visualize_subset_points,get_current_time
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import cv2
@@ -129,7 +129,7 @@ def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs):
     gt_objs = gt_objs.flatten(0,1)
     dis = torch.norm(pred_obj - gt_objs,dim=1)
     print(f"dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
-    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),args.img_path.replace('.png','_res.png'))
+    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
 
 
 if __name__ == '__main__':
@@ -137,6 +137,8 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_path',type=str,default=None)
     parser.add_argument('--dino_weight_path',type=str,default='./weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth')
     parser.add_argument('--img_path',type=str,default='./datasets/vis/0.png')
+    parser.add_argument('--output_path',type=str,default='./datasets/performance_test_res')
+    parser.add_argument('--test_name',type=str,default=None)
     # parser.add_argument('--dataset_num',type=int,default=None)
     # parser.add_argument('--output_dir', type=str, default='./trained_decoders', help='保存训练好的Decoder权重的目录')
     parser.add_argument('--window_size', type=int, default=1024, help='Encoder的输入窗口大小')
@@ -148,6 +150,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     DOWNSAMPLE = args.downsample
+    os.makedirs(args.output_path,exist_ok = True)
+    if args.test_name is None:
+        args.test_name = get_current_time()
 
     img_train = cv2.imread(args.img_path)
     img_test = crop_test_img(img_train)
