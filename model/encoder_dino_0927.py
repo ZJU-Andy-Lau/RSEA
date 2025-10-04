@@ -137,7 +137,7 @@ class Adapter(nn.Module):
             nn.Conv2d(self.output_channels,self.output_channels,1,1,0),
         )
 
-        self.pos_encoder = PositionalEncoding(dim=output_channels)
+        # self.pos_encoder = PositionalEncoding(dim=output_channels)
         
         # 自注意力模块，借鉴CasP中的TransformerBlock设计
         self.self_attention_block = AttentionBlock(dim=output_channels, num_heads=8)
