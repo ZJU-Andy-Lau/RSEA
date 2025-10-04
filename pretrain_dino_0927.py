@@ -241,24 +241,24 @@ def pretrain(args):
             logger = None
 
     if not args.resume_training:
-        if not args.dataset_select is None:
-            args.dataset_num = len(args.dataset_select.split(','))
-        elif not args.decoder_path is None:
+        if not args.decoder_path is None:
             dataset_indices = torch.from_numpy(np.load(os.path.join(args.decoder_path,'dataset_indices.npy'))).to(dtype=torch.long,device=args.device)
         else:
+
+            if not args.dataset_select is None:
+                args.dataset_num = len(args.dataset_select.split(','))
             dataset_indices = torch.empty(args.dataset_num,dtype=torch.long,device=args.device)
-        if rank == 0:
-            with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
-                total_num = len(f.keys())
-            if args.decoder_path is None:
+            if rank == 0:
+                with h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r') as f:
+                    total_num = len(f.keys())
                 if args.dataset_select is None:
                     dataset_indices = torch.randperm(total_num)[:args.dataset_num].to(args.device)
                 else:
                     dataset_indices = torch.tensor([int(i) for i in args.dataset_select.split(',')],dtype=int,device=args.device)
-            indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
-            indices_str = " ".join(indices_str)
-            with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
-                f.write(f"{indices_str}\n")
+                indices_str = [str(idx) for idx in dataset_indices.cpu().numpy()]
+                indices_str = " ".join(indices_str)
+                with open(os.path.join('./log',f'{args.log_prefix}_dataset_idxs_log.txt'),'a') as f:
+                    f.write(f"{indices_str}\n")
 
     dist.barrier()
     dist.broadcast(dataset_indices,src=0)
