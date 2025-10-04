@@ -46,16 +46,16 @@ def crop_test_img(image):
 
     src_points = np.float32([
         [W / 2, 0],      # 上边中点
-        [W, H / 2],      # 右边中点
-        [W / 2, H],      # 下边中点
+        [W - 1, H / 2],      # 右边中点
+        [W / 2, H - 1],      # 下边中点
         [0, H / 2]       # 左边中点
     ])
 
     dst_points = np.float32([
         [0, 0],          # 左上角
-        [W, 0],          # 右上角
-        [W, H],          # 右下角
-        [0, H]           # 左下角
+        [W - 1, 0],          # 右上角
+        [W - 1, H - 1],          # 右下角
+        [0, H - 1]           # 左下角
     ])
     M = cv2.getPerspectiveTransform(src_points, dst_points)
     warped_image = cv2.warpPerspective(image, M, (W, H))
