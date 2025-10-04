@@ -117,19 +117,20 @@ class DinoVisionTransformer(nn.Module):
         logger.info(f"using rescale_coords={pos_embed_rope_rescale_coords} for rope new")
         logger.info(f"using jitter_coords={pos_embed_rope_jitter_coords} for rope new")
         logger.info(f"using dtype={pos_embed_rope_dtype} for rope new")
-        self.rope_embed = RopePositionEmbedding(
-            embed_dim=embed_dim,
-            num_heads=num_heads,
-            base=pos_embed_rope_base,
-            min_period=pos_embed_rope_min_period,
-            max_period=pos_embed_rope_max_period,
-            normalize_coords=pos_embed_rope_normalize_coords,
-            shift_coords=pos_embed_rope_shift_coords,
-            jitter_coords=pos_embed_rope_jitter_coords,
-            rescale_coords=pos_embed_rope_rescale_coords,
-            dtype=dtype_dict[pos_embed_rope_dtype],
-            device=device,
-        )
+        # self.rope_embed = RopePositionEmbedding(
+        #     embed_dim=embed_dim,
+        #     num_heads=num_heads,
+        #     base=pos_embed_rope_base,
+        #     min_period=pos_embed_rope_min_period,
+        #     max_period=pos_embed_rope_max_period,
+        #     normalize_coords=pos_embed_rope_normalize_coords,
+        #     shift_coords=pos_embed_rope_shift_coords,
+        #     jitter_coords=pos_embed_rope_jitter_coords,
+        #     rescale_coords=pos_embed_rope_rescale_coords,
+        #     dtype=dtype_dict[pos_embed_rope_dtype],
+        #     device=device,
+        # )
+        self.rope_embed = None
         logger.info(f"using {ffn_layer} layer as FFN")
         ffn_layer_cls = ffn_layer_dict[ffn_layer]
         ffn_ratio_sequence = [ffn_ratio] * depth

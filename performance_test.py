@@ -132,7 +132,7 @@ def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs):
     # print(f"pred:{pred_obj.mean(dim=0)} \n gt:{gt_objs.mean(dim=0)}")
     dis = torch.norm(pred_obj - gt_objs,dim=1)
     print(f"dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
-    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
+    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"),point_radius=2)
 
 
 if __name__ == '__main__':
