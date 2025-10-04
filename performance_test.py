@@ -105,6 +105,7 @@ def train(args,features,gt_objs,map_coeffs):
     # criterion = nn.MSELoss()
     min_loss = 1e9
     for epoch in range(epochs):
+        optimizer.zero_grad()
         output = decoder(features)
         output = output.permute(0,2,3,1).flatten(0,2)
         pred_obj = warp_by_poly(output,map_coeffs)
@@ -128,10 +129,10 @@ def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs):
     output = output.permute(0,2,3,1).flatten(0,2)
     pred_obj = warp_by_poly(output,map_coeffs)
     gt_objs = gt_objs.flatten(0,1).cuda()
-    print(f"pred:{pred_obj.mean(dim=0)} \n gt:{gt_objs.mean(dim=0)}")
+    # print(f"pred:{pred_obj.mean(dim=0)} \n gt:{gt_objs.mean(dim=0)}")
     dis = torch.norm(pred_obj - gt_objs,dim=1)
     print(f"dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
-    # visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
+    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"))
 
 
 if __name__ == '__main__':
@@ -169,7 +170,7 @@ if __name__ == '__main__':
 
     obj_train = np.load(os.path.join(args.img_path,'obj.npy'))
     obj_test = crop_test_img(obj_train)
-    print(obj_train.shape,obj_test.shape)
+    # print(obj_train.shape,obj_test.shape)
     obj_train = centerize_obj(obj_train)
     obj_test = centerize_obj(obj_test)
     map_coef = {
