@@ -168,6 +168,7 @@ if __name__ == '__main__':
 
     obj_train = np.load(os.path.join(args.img_path,'obj.npy'))
     obj_test = crop_test_img(obj_train)
+    print(obj_train.shape,obj_test.shape)
     obj_train = centerize_obj(obj_train)
     obj_test = centerize_obj(obj_test)
     map_coef = {
@@ -175,7 +176,7 @@ if __name__ == '__main__':
             'y':np.array([obj_train[:,:,1].min(),obj_train[:,:,1].max()]),
             'h':get_map_coef(obj_train[:,:,2].reshape(-1))
         }
-    print(f"map coef:{map_coef} \n obj_train:{obj_train.mean(axis=0)} \n obj_test:{obj_test.mean(axis=0)}")
+    print(f"map coef:{map_coef} \n obj_train:{obj_train} \n obj_test:{obj_test}")
     obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
