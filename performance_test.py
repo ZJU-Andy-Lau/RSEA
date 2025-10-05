@@ -175,7 +175,7 @@ def downsample(arr,ds):
     return arr_ds
 
 
-def train(args,features,gt_objs,map_coeffs):
+def train(args,features,gt_objs,test_features,test_obj,map_coeffs):
     decoder = DecoderFinetune(in_channels=features.shape[1],block_num=args.decoder_block_num)
     decoder = decoder.cuda()
     
@@ -200,6 +200,7 @@ def train(args,features,gt_objs,map_coeffs):
         scheduler.step()
         if (epoch + 1) % (epochs // 10) == 0: # 打印10轮日志
             print(f"Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f} | min Loss: {min_loss:.4f}")
+            evaluate(args,decoder,test_features,test_obj,map_coef,epochs // 10)
 
         if loss < min_loss:
             best_state_dict = decoder.state_dict()
@@ -209,15 +210,15 @@ def train(args,features,gt_objs,map_coeffs):
     return decoder
 
 @torch.no_grad()
-def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs):
+def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs,idx=0):
     output = decoder(features)
     output = output.permute(0,2,3,1).flatten(0,2)
     pred_obj = warp_by_poly(output,map_coeffs)
     gt_objs = gt_objs.flatten(0,1).cuda()
     # print(f"pred:{pred_obj.mean(dim=0)} \n gt:{gt_objs.mean(dim=0)}")
     dis = torch.norm(pred_obj - gt_objs,dim=1)
-    print(f"dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
-    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res.png"),point_radius=2)
+    print(f"| eval | dis: mean:{dis.mean().item():.2f} \t median:{dis.median().item():.2f} \t min:{dis.min().item():.2f} \t max:{dis.max().item():.2f}")
+    visualize_subset_points(pred_obj.cpu().numpy(),gt_objs.cpu().numpy(),os.path.join(args.output_path,f"{args.test_name}_res_{idx}.png"),point_radius=2)
 
 
 if __name__ == '__main__':
@@ -275,8 +276,8 @@ if __name__ == '__main__':
     train_features = extract_features(args,img_train_tensor)
     test_features = extract_features(args,img_test_tensor)
 
-    decoder = train(args,train_features,obj_train_downsample,map_coef)
-    evaluate(args,decoder,test_features,obj_test_downsample,map_coef)
+    decoder = train(args,train_features,obj_train_downsample,test_features,obj_test_downsample,map_coef)
+    evaluate(args,decoder,test_features,obj_test_downsample,map_coef,'final')
     
 
     
