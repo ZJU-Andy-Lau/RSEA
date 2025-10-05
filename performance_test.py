@@ -33,15 +33,100 @@ def extract_features(args,img_tensor:torch.Tensor):
     upsample_times = int(math.log2(encoder.SAMPLE_FACTOR) - math.log2(args.downsample))
 
     img_tensor = img_tensor.cuda()
+    features = []
 
-    features,_ = encoder(img_tensor)
+    for idx in range(img_tensor.shape[0]):
+        feature,_ = encoder(img_tensor[idx:idx+1])
+        features.append(feature)
+    
+    features = torch.stack(features,dim=0)
 
     for _ in range(upsample_times):
         features = F.interpolate(features,scale_factor = 2,mode = 'bilinear')
 
     return features
 
-def crop_test_img(image):
+def crop_train_data(image, k):
+    """
+    在每条边上取k等分点，依次将每个点作为裁切图像的左上角，
+    其他边上也取对应点作为其他顶点，裁切一圈的影像。
+
+    参数:
+    image (np.ndarray): 输入的OpenCV图像 (H, W, C)。
+    k (int): 每条边的分段数。k=3 表示每条边有2个等分点+2个角点。
+
+    返回:
+    list: 包含所有裁切和变换后的图像的列表。
+    """
+    def get_point_on_perimeter(index, k, W, H):
+        if not k > 0:
+            raise ValueError("k 必须是正整数")
+
+        # 上边 (0 <= index < k)
+        if index < k:
+            # t 是在当前边上的进度 (0.0 到 1.0)
+            t = index / k
+            return (W * t, 0)
+        
+        # 右边 (k <= index < 2*k)
+        elif index < 2 * k:
+            t = (index - k) / k
+            return (W, H * t)
+
+        # 下边 (2*k <= index < 3*k)
+        elif index < 3 * k:
+            t = (index - 2 * k) / k
+            # 从右向左移动，所以是 1-t
+            return (W * (1 - t), H)
+            
+        # 左边 (3*k <= index < 4*k)
+        else:
+            t = (index - 3 * k) / k
+            # 从下向上移动，所以是 1-t
+            return (0, H * (1 - t))
+    if not isinstance(k, int) or k <= 0:
+        print("参数 k 必须是一个正整数。")
+        return []
+
+    H, W = image.shape[:2]
+    total_steps = 4 * k
+    cropped_images = []
+
+    # 目标图像的四个角点是固定的
+    dst_points = np.float32([
+        [0, 0],      # 左上角
+        [W - 1, 0],      # 右上角
+        [W - 1, H - 1],      # 右下角
+        [0, H - 1]       # 左下角
+    ])
+
+    for i in range(total_steps):
+        # 计算当前裁切四边形的四个源顶点
+        # p1 是左上角顶点
+        # p2 是右上角顶点, 领先 k 步
+        # p3 是右下角顶点, 领先 2k 步
+        # p4 是左下角顶点, 领先 3k 步
+        p1_idx = i
+        p2_idx = (i + k) % total_steps
+        p3_idx = (i + 2 * k) % total_steps
+        p4_idx = (i + 3 * k) % total_steps
+
+        p1 = get_point_on_perimeter(p1_idx, k, W - 1, H - 1)
+        p2 = get_point_on_perimeter(p2_idx, k, W - 1, H - 1)
+        p3 = get_point_on_perimeter(p3_idx, k, W - 1, H - 1)
+        p4 = get_point_on_perimeter(p4_idx, k, W - 1, H - 1)
+
+        src_points = np.float32([p1, p2, p3, p4])
+
+        # 计算并应用透视变换
+        M = cv2.getPerspectiveTransform(src_points, dst_points)
+        warped_image = cv2.warpPerspective(image, M, (W, H))
+        
+        cropped_images.append(warped_image)
+
+    return cropped_images
+
+def crop_test_data(image):
     H, W = image.shape[:2]
 
     src_points = np.float32([
@@ -101,7 +186,7 @@ def train(args,features,gt_objs,map_coeffs):
                                      warmup_ratio=.1,
                                      cooldown_ratio=.7)
     
-    gt_objs = gt_objs.flatten(0,1).cuda()
+    gt_objs = gt_objs.flatten(0,2).cuda()
     # criterion = nn.MSELoss()
     min_loss = 1e9
     for epoch in range(epochs):
@@ -157,29 +242,34 @@ if __name__ == '__main__':
     if args.test_name is None:
         args.test_name = get_current_time()
 
-    img_train = cv2.imread(os.path.join(args.img_path,'image.png'))
-    img_test = crop_test_img(img_train)
+    img = cv2.imread(os.path.join(args.img_path,'image.png'))
+    imgs_train = crop_train_data(img,k=3)
+    img_test = crop_test_data(img)
 
 
     transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize((0.485, 0.456, 0.406),(0.229, 0.224, 0.225))
                 ])
-    img_train_tensor = transform(img_train)[None]
+    
+    img_train_tensor = torch.stack([transform(img_train) for img_train in imgs_train],dim=0)
     img_test_tensor = transform(img_test)[None]
 
-    obj_train = np.load(os.path.join(args.img_path,'obj.npy'))
-    obj_test = crop_test_img(obj_train)
-    # print(obj_train.shape,obj_test.shape)
-    obj_train = centerize_obj(obj_train)
-    obj_test = centerize_obj(obj_test)
+    obj = np.load(os.path.join(args.img_path,'obj.npy'))
+    obj = centerize_obj(obj)
+
+    objs_train = crop_train_data(obj,k = 3)
+    obj_test = crop_test_data(obj)
+
     map_coef = {
-            'x':np.array([obj_train[:,:,0].min(),obj_train[:,:,0].max()]),
-            'y':np.array([obj_train[:,:,1].min(),obj_train[:,:,1].max()]),
-            'h':get_map_coef(obj_train[:,:,2].reshape(-1))
+            'x':np.array([obj[:,:,0].min(),obj[:,:,0].max()]),
+            'y':np.array([obj[:,:,1].min(),obj[:,:,1].max()]),
+            'h':get_map_coef(obj[:,:,2].reshape(-1))
         }
-    # print(f"map coef:{map_coef} \n obj_train:{obj_train} \n obj_test:{obj_test}")
-    obj_train_downsample = torch.from_numpy(downsample(obj_train,DOWNSAMPLE))
+    
+
+
+    obj_train_downsample = torch.stack([torch.from_numpy(downsample(obj_train,DOWNSAMPLE)) for obj_train in objs_train],dim=0)
     obj_test_downsample = torch.from_numpy(downsample(obj_test,DOWNSAMPLE))
 
     train_features = extract_features(args,img_train_tensor)
