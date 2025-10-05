@@ -17,6 +17,7 @@ from utils import apply_polynomial,get_map_coef,downsample
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import kornia.augmentation as K
+import cv2
 
 
 # --- 2. 分布式环境设置与清理 ---
@@ -86,15 +87,30 @@ def crop_to_windows(image_tensor, label_tensor, window_size=1024):
     num_w_windows = image_windows.shape[1]
     
     image_windows = image_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
-    label_windows = label_windows.view(num_h_windows * num_w_windows, window_size, window_size, -1)
+    label_windows = label_windows.view(num_h_windows * num_w_windows, -1, window_size, window_size)
 
     image_windows = transform(image_windows)
 
-    label_windows = downsample(label_windows,16)
-    label_windows = label_windows.permute(0,3,1,2)
+    # 旋转图像窗口
+    img_v0 = image_windows
+    img_v1 = torch.rot90(image_windows, 1, [2, 3])
+    img_v2 = torch.rot90(image_windows, 2, [2, 3])
+    img_v3 = torch.rot90(image_windows, 3, [2, 3])
+    image_windows_augmented = torch.cat([img_v0, img_v1, img_v2, img_v3], dim=0)
+
+    # 旋转标签窗口
+    lbl_v0 = label_windows
+    lbl_v1 = torch.rot90(label_windows, 1, [2, 3])
+    lbl_v2 = torch.rot90(label_windows, 2, [2, 3])
+    lbl_v3 = torch.rot90(label_windows, 3, [2, 3])
+    label_windows_rotated = torch.cat([lbl_v0, lbl_v1, lbl_v2, lbl_v3], dim=0)
+
+    label_windows_rotated = label_windows_rotated.permute(0, 2, 3, 1) # (N, H, W, C)
+    label_windows_downsampled = downsample(label_windows_rotated, 16)
+    label_windows_augmented = label_windows_downsampled.permute(0, 3, 1, 2) # (N, C, H_new, W_new)
 
 
-    return image_windows, label_windows
+    return image_windows_augmented, label_windows_augmented
 
 
 
@@ -278,6 +294,7 @@ if __name__ == "__main__":
     parser.add_argument('--dino_weight_path',type=str,default=None)
     parser.add_argument('--dataset_path',type=str,default='./datasets')
     parser.add_argument('--dataset_num',type=int,default=None)
+    parser.add_argument('--dataset_select',type=str,default=None)
     parser.add_argument('--output_dir', type=str, default='./trained_decoders', help='保存训练好的Decoder权重的目录')
     parser.add_argument('--window_size', type=int, default=1024, help='Encoder的输入窗口大小')
     parser.add_argument('--epochs', type=int, default=50, help='每个Decoder的训练轮数')
@@ -295,10 +312,15 @@ if __name__ == "__main__":
         print("加载数据")
         database = h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r')
         all_keys = list(database.keys())
-        dataset_num = args.dataset_num
-        if dataset_num is None:
-            dataset_num = len(all_keys)
-        dataset_indices = torch.randperm(len(all_keys))[:dataset_num].numpy()
+        if args.dataset_select is None:
+            dataset_num = args.dataset_num
+            if dataset_num is None:
+                dataset_num = len(all_keys)
+            dataset_indices = torch.randperm(len(all_keys))[:dataset_num].numpy()
+        else:
+            dataset_indices = [int(i) for i in args.dataset_select.split(',')]
+            dataset_num = len(dataset_indices)
+
         keys = [all_keys[i] for i in dataset_indices]
         all_images = []
         all_labels = []
@@ -306,6 +328,7 @@ if __name__ == "__main__":
         for key in tqdm(keys):
             img = database[key]['images']['image_0'][:]
             img = np.stack([img] * 3,axis = -1)
+            cv2.imwrite(os.path.join(args.output_dir,f'{key}.png'),img)
             obj = database[key]['obj'][:]
             obj = centerize_obj(obj)
             map_coef = {
