@@ -190,6 +190,7 @@ def train(args,features,gt_objs,test_features,test_obj,map_coeffs):
     # criterion = nn.MSELoss()
     min_loss = 1e9
     for epoch in range(epochs):
+        decoder.train()
         optimizer.zero_grad()
         output = decoder(features)
         output = output.permute(0,2,3,1).flatten(0,2)
@@ -198,9 +199,10 @@ def train(args,features,gt_objs,test_features,test_obj,map_coeffs):
         loss.backward()
         optimizer.step()
         scheduler.step()
-        if (epoch + 1) % (epochs // 10) == 0: # 打印10轮日志
+        if (epoch + 1) % (epochs // 100) == 0:
             print(f"Epoch [{epoch+1}/{epochs}] | Loss: {loss:.4f} | min Loss: {min_loss:.4f}")
-            evaluate(args,decoder,test_features,test_obj,map_coef,epochs // 10)
+            if (epoch + 1) % (epochs // 10) == 0:
+                evaluate(args,decoder,test_features,test_obj,map_coef,epoch)
 
         if loss < min_loss:
             best_state_dict = decoder.state_dict()
@@ -211,6 +213,7 @@ def train(args,features,gt_objs,test_features,test_obj,map_coeffs):
 
 @torch.no_grad()
 def evaluate(args,decoder:DecoderFinetune,features,gt_objs,map_coeffs,idx=0):
+    decoder.eval()
     output = decoder(features)
     output = output.permute(0,2,3,1).flatten(0,2)
     pred_obj = warp_by_poly(output,map_coeffs)
