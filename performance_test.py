@@ -39,7 +39,7 @@ def extract_features(args,img_tensor:torch.Tensor):
         feature,_ = encoder(img_tensor[idx:idx+1])
         features.append(feature)
     
-    features = torch.stack(features,dim=0)
+    features = torch.concatenate(features,dim=0)
 
     for _ in range(upsample_times):
         features = F.interpolate(features,scale_factor = 2,mode = 'bilinear')
