@@ -89,7 +89,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
             cv2.rectangle(vis_image, (left, top), (left + window_size, top + window_size), (0, 255, 0), 5)
 
     # 2. 随机裁切和旋转窗口 (Random Cropping and Rotation)
-    num_random_windows = win_num * win_num
+    num_random_windows = win_num
     # 为了旋转后内部不出现黑边，需要裁切一个更大的临时窗口
     large_crop_size = int(math.ceil(window_size * math.sqrt(2)))
     
