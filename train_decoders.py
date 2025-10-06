@@ -110,8 +110,8 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
         lbl_large = label_tensor[:, top:top+large_crop_size, left:left+large_crop_size].float().unsqueeze(0)
         
         # 旋转大窗口
-        img_rotated = KT.rotate(img_large, angle, center=None, mode='reflection')
-        lbl_rotated = KT.rotate(lbl_large, angle, center=None, mode='reflection')
+        img_rotated = KT.rotate(img_large, angle, center=None, mode='bilinear')
+        lbl_rotated = KT.rotate(lbl_large, angle, center=None, mode='bilinear')
 
         # 从旋转后的大窗口中心裁切出最终窗口
         center_crop = K.CenterCrop(window_size)
