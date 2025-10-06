@@ -105,9 +105,9 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
         top = torch.randint(0, max_top, (1,)).item()
         left = torch.randint(0, max_left, (1,)).item()
 
-        # 裁切大窗口
-        img_large = image_tensor[:, top:top+large_crop_size, left:left+large_crop_size].unsqueeze(0)
-        lbl_large = label_tensor[:, top:top+large_crop_size, left:left+large_crop_size].unsqueeze(0)
+        # 裁切大窗口并转换为float类型以进行旋转
+        img_large = image_tensor[:, top:top+large_crop_size, left:left+large_crop_size].float().unsqueeze(0)
+        lbl_large = label_tensor[:, top:top+large_crop_size, left:left+large_crop_size].float().unsqueeze(0)
         
         # 旋转大窗口
         img_rotated = KT.rotate(img_large, angle, center=None, mode='reflection')
@@ -154,7 +154,8 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     if output_path:
         for i in range(image_windows_augmented.shape[0]):
             img_to_save = image_windows_augmented[i].permute(1, 2, 0).cpu().numpy()
-            img_to_save = (img_to_save * 255).astype(np.uint8) if img_to_save.max() <= 1.0 else img_to_save.astype(np.uint8)
+            # 转换回uint8以便保存为图像文件
+            img_to_save = img_to_save.astype(np.uint8)
             cv2.imwrite(os.path.join(output_path, f'window_{i:04d}.png'), img_to_save)
 
     # --- 4. 标准化和下采样 (Normalization and Downsampling) ---
@@ -162,6 +163,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
                 std=torch.tensor([0.229, 0.224, 0.225])
             )
+    # 在标准化之前确保数据是浮点数并归一化到[0,1]
     image_windows_augmented = transform(image_windows_augmented.float() / 255.0)
 
     label_windows_rotated = label_windows_rotated.permute(0, 2, 3, 1) # (N, H, W, C)
@@ -347,12 +349,13 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         
         # 旋转45度
         val_angle = torch.tensor([45.0])
-        val_img_rotated = KT.rotate(val_img_crop, val_angle, mode='reflection')
-        val_lbl_rotated = KT.rotate(val_lbl_crop, val_angle, mode='reflection')
+        # 旋转前转换为float
+        val_img_rotated = KT.rotate(val_img_crop.float(), val_angle, mode='reflection')
+        val_lbl_rotated = KT.rotate(val_lbl_crop.float(), val_angle, mode='reflection')
         
         # 标准化和下采样
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
-        val_img = norm_transform(val_img_rotated.float() / 255.0)
+        val_img = norm_transform(val_img_rotated / 255.0)
         val_lbl_downsampled = downsample(val_lbl_rotated.permute(0,2,3,1), 16)
         val_lbl = val_lbl_downsampled.permute(0,3,1,2)
         print(f"[GPU {rank}] 验证数据已创建. Shape: {val_img.shape}")
