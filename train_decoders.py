@@ -350,8 +350,8 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         # 旋转45度
         val_angle = torch.tensor([45.0])
         # 旋转前转换为float
-        val_img_rotated = KT.rotate(val_img_crop.float(), val_angle, mode='reflection')
-        val_lbl_rotated = KT.rotate(val_lbl_crop.float(), val_angle, mode='reflection')
+        val_img_rotated = KT.rotate(val_img_crop.float(), val_angle, mode='bilinear')
+        val_lbl_rotated = KT.rotate(val_lbl_crop.float(), val_angle, mode='bilinear')
         
         # 标准化和下采样
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
