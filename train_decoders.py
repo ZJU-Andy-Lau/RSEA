@@ -42,6 +42,7 @@ def cleanup():
 def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=1024, win_num=3, output_path=None):
     """
     将大尺寸图像和标签高效地切分成多个窗口，包括均匀分布和随机旋转的窗口。
+    采用拒绝采样方法确保旋转窗口完全在原图内，不含任何padding。
 
     参数:
         image_tensor (torch.Tensor): 形状为 (C, H, W) 的图像张量。
@@ -76,7 +77,6 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
             top = int(i * stride_h)
             left = int(j * stride_w)
             
-            # 确保窗口在图像范围内
             top = min(top, H - window_size)
             left = min(left, W - window_size)
 
@@ -85,48 +85,70 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
             image_windows_list.append(img_win)
             label_windows_list.append(lbl_win)
             
-            # 在可视化图上绘制矩形框
             cv2.rectangle(vis_image, (left, top), (left + window_size, top + window_size), (0, 255, 0), 5)
 
-    # 2. 随机裁切和旋转窗口 (Random Cropping and Rotation)
-    num_random_windows = win_num
-    # 为了旋转后内部不出现黑边，需要裁切一个更大的临时窗口
-    large_crop_size = int(math.ceil(window_size * math.sqrt(2)))
+    # 2. 随机裁切和旋转窗口 (Random Cropping and Rotation) - 采用拒绝采样策略
+    num_random_windows = win_num * win_num
+    num_found = 0
     
-    for i in range(num_random_windows):
-        angle = torch.rand(1) * 360
-        
-        # 确定可以裁切大窗口的有效区域
-        max_top = H - large_crop_size
-        max_left = W - large_crop_size
-        
-        if max_top <= 0 or max_left <= 0: continue # 如果图像太小，无法进行随机旋转裁切
+    ws_half = window_size / 2.0
+    # 预计算窗口四个角的相对坐标
+    corners = torch.tensor([[-ws_half, -ws_half], [ws_half, -ws_half], [ws_half, ws_half], [-ws_half, ws_half]])
 
-        top = torch.randint(0, max_top, (1,)).item()
-        left = torch.randint(0, max_left, (1,)).item()
+    # 只有当图像足够大时才进行随机裁切
+    if H > window_size and W > window_size:
+        with tqdm(total=num_random_windows, desc=f"Finding {num_random_windows} valid random crops", leave=False) as pbar:
+            while num_found < num_random_windows:
+                angle_deg = torch.rand(1) * 360
+                angle_rad = torch.deg2rad(angle_deg)
+                
+                center_x = torch.rand(1) * W
+                center_y = torch.rand(1) * H
 
-        # 裁切大窗口并转换为float类型以进行旋转
-        img_large = image_tensor[:, top:top+large_crop_size, left:left+large_crop_size].float().unsqueeze(0)
-        lbl_large = label_tensor[:, top:top+large_crop_size, left:left+large_crop_size].float().unsqueeze(0)
-        
-        # 旋转大窗口
-        img_rotated = KT.rotate(img_large, angle, center=None, mode='bilinear')
-        lbl_rotated = KT.rotate(lbl_large, angle, center=None, mode='bilinear')
+                # 构建旋转矩阵
+                c, s = torch.cos(angle_rad), torch.sin(angle_rad)
+                rot_mat = torch.tensor([[c, -s], [s, c]])
+                
+                # 计算旋转后四个角的绝对坐标
+                rotated_corners = corners @ rot_mat.T + torch.tensor([center_x, center_y])
 
-        # 从旋转后的大窗口中心裁切出最终窗口
-        center_crop = K.CenterCrop(window_size)
-        img_win = center_crop(img_rotated).squeeze(0)
-        lbl_win = center_crop(lbl_rotated).squeeze(0)
+                # 验证所有角点是否在图像边界内
+                if torch.all(rotated_corners[:, 0] >= 0) and torch.all(rotated_corners[:, 0] <= W) and \
+                   torch.all(rotated_corners[:, 1] >= 0) and torch.all(rotated_corners[:, 1] <= H):
+                    
+                    # --- 有效样本，执行裁切 ---
+                    num_found += 1
+                    pbar.update(1)
 
-        image_windows_list.append(img_win)
-        label_windows_list.append(lbl_win)
+                    # 计算旋转窗口的最小轴对齐边界框
+                    xmin, ymin = rotated_corners.min(dim=0).values.floor().int()
+                    xmax, ymax = rotated_corners.max(dim=0).values.ceil().int()
+                    
+                    # 确保边界框不越界
+                    xmin, ymin = max(0, xmin), max(0, ymin)
+                    xmax, ymax = min(W, xmax), min(H, ymax)
 
-        # 在可视化图上绘制旋转后的矩形框
-        box_center = (left + large_crop_size / 2, top + large_crop_size / 2)
-        rect = (box_center, (window_size, window_size), -angle.item()) # OpenCV角度为负
-        box_pts = cv2.boxPoints(rect)
-        box_pts = np.int0(box_pts)
-        cv2.drawContours(vis_image, [box_pts], 0, (255, 0, 0), 5)
+                    # 裁切出包含旋转窗口的最小区域
+                    temp_img = image_tensor[:, ymin:ymax, xmin:xmax]
+                    temp_lbl = label_tensor[:, ymin:ymax, xmin:xmax]
+                    
+                    # 计算新的旋转中心（相对于裁切出的区域）
+                    center_x_new = center_x - xmin
+                    center_y_new = center_y - ymin
+
+                    # 旋转这个小区域
+                    rotated_temp_img = KT.rotate(temp_img.float().unsqueeze(0), angle_deg, center=torch.tensor([[center_x_new, center_y_new]]), mode='bilinear', align_corners=True)
+                    rotated_temp_lbl = KT.rotate(temp_lbl.float().unsqueeze(0), angle_deg, center=torch.tensor([[center_x_new, center_y_new]]), mode='bilinear', align_corners=True)
+
+                    # 从旋转后的小区域中心裁切出最终窗口
+                    final_img_win = K.CenterCrop(window_size)(rotated_temp_img).squeeze(0)
+                    final_lbl_win = K.CenterCrop(window_size)(rotated_temp_lbl).squeeze(0)
+
+                    image_windows_list.append(final_img_win)
+                    label_windows_list.append(final_lbl_win)
+
+                    # 在可视化图上绘制旋转后的矩形框
+                    cv2.drawContours(vis_image, [rotated_corners.int().numpy()], 0, (255, 0, 0), 5)
     
     if output_path:
         cv2.imwrite(os.path.join(output_path, 'window_visualization.png'), vis_image)
@@ -153,9 +175,10 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     # 保存所有裁切出的小图
     if output_path:
         for i in range(image_windows_augmented.shape[0]):
-            img_to_save = image_windows_augmented[i].permute(1, 2, 0).cpu().numpy()
-            # 转换回uint8以便保存为图像文件
-            img_to_save = img_to_save.astype(np.uint8)
+            # The tensor is float32 with values in [0, 255] range at this point
+            tensor_slice = image_windows_augmented[i]
+            # Permute, move to CPU, clamp, convert to uint8, then convert to numpy
+            img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
             cv2.imwrite(os.path.join(output_path, f'window_{i:04d}.png'), img_to_save)
 
     # --- 4. 标准化和下采样 (Normalization and Downsampling) ---
@@ -163,7 +186,6 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
                 std=torch.tensor([0.229, 0.224, 0.225])
             )
-    # 在标准化之前确保数据是浮点数并归一化到[0,1]
     image_windows_augmented = transform(image_windows_augmented.float() / 255.0)
 
     label_windows_rotated = label_windows_rotated.permute(0, 2, 3, 1) # (N, H, W, C)
@@ -232,7 +254,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
             
             print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {loss:.4f} | Val Loss: {val_loss:.4f} | min Loss: {min_loss:.4f}")
 
-            # --- 为本次验证生成并保存散点图 ---
             pred_coords = val_pred_obj.cpu().numpy()
             true_coords = val_gt_obj.cpu().numpy()
             
@@ -252,16 +273,13 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
             plt.close()
             print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
 
-
         if loss < min_loss:
             best_state_dict = decoder.state_dict()
             min_loss = loss
 
-    # 保存训练好的Decoder权重
     torch.save(best_state_dict, save_path)
     print(f"[GPU {rank}] 训练完成. Decoder已保存至 {save_path}")
 
-    # --- 使用最佳模型进行最终验证和可视化 ---
     print(f"[GPU {rank}] 正在使用最佳模型生成最终验证散点图...")
     decoder.load_state_dict(best_state_dict)
     decoder.eval()
@@ -300,13 +318,10 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         os.makedirs(vis_output_dir, exist_ok=True)
     dist.barrier()
 
-
-    # 1. 确定当前GPU需要处理的数据集索引
     num_total_datasets = all_images.shape[0]
     indices_for_this_gpu = list(range(num_total_datasets))[rank::world_size]
     print(f"[GPU {rank}] 分配到 {len(indices_for_this_gpu)} 个训练任务 (Indices: {indices_for_this_gpu[:5]}...).")
     
-    # 2. 加载预训练的Encoder
     encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     encoder.to(rank)
@@ -314,7 +329,6 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
     for param in encoder.parameters():
         param.requires_grad = False
 
-    # 3. 遍历分配到的任务，逐一训练Decoder
     for data_idx in indices_for_this_gpu:
         print(f"[GPU {rank}] 开始处理数据集索引: {data_idx}")
         
@@ -327,35 +341,52 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
 
         print(f"[GPU {rank}] 加载数据: Image {image.shape}, Label {label.shape}")
         
-        # --- a. 创建当前图像的可视化输出文件夹 ---
         img_vis_dir = os.path.join(vis_output_dir, f'data_{data_idx}')
         if rank == 0:
             os.makedirs(img_vis_dir, exist_ok=True)
         dist.barrier()
         
-        # --- b. 切分窗口 ---
         image_windows, label_windows = crop_to_windows(image, label, image_np, args.window_size, args.win_num, img_vis_dir)
         if image_windows is None:
             print(f"[GPU {rank}] 索引 {data_idx} 的图像尺寸过小，无法裁切，已跳过。")
             continue
         print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
         
-        # --- c. 创建验证数据 ---
+        # --- c. 创建验证数据 (新逻辑) ---
         H, W = image.shape[1], image.shape[2]
-        top = max(0, H // 2 - args.window_size // 2)
-        left = max(0, W // 2 - args.window_size // 2)
-        val_img_crop = image[:, top:top+args.window_size, left:left+args.window_size].unsqueeze(0)
-        val_lbl_crop = label[:, top:top+args.window_size, left:left+args.window_size].unsqueeze(0)
-        
-        # 旋转45度
         val_angle = torch.tensor([45.0])
-        # 旋转前转换为float
-        val_img_rotated = KT.rotate(val_img_crop.float(), val_angle, mode='bilinear')
-        val_lbl_rotated = KT.rotate(val_lbl_crop.float(), val_angle, mode='bilinear')
-        
-        # 标准化和下采样
+        center_crop = K.CenterCrop(args.window_size)
+
+        # 1. 先旋转整个图像
+        # 添加batch维度以进行旋转
+        full_img_rotated = KT.rotate(image.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
+        full_lbl_rotated = KT.rotate(label.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
+
+        # 2. 然后从旋转后的图像中心裁切
+        val_img_unnormalized = center_crop(full_img_rotated)
+        val_lbl_rotated = center_crop(full_lbl_rotated)
+
+        # 3. 保存裁切出的验证样本图像
+        val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().to(torch.uint8).numpy()
+        cv2.imwrite(os.path.join(img_vis_dir, 'validation_sample.png'), val_img_to_save)
+        print(f"[GPU {rank}] 验证样本图像已保存至 {os.path.join(img_vis_dir, 'validation_sample.png')}")
+
+        # 4. 创建并保存在原图上框出验证区域的可视化图像
+        # 将训练样本的可视化结果作为底图
+        vis_val_image = cv2.imread(os.path.join(img_vis_dir, 'window_visualization.png'))
+        center_x, center_y = W / 2, H / 2
+        # OpenCV的旋转角度为逆时针，所以用-45度
+        rect = ((center_x, center_y), (args.window_size, args.window_size), -45.0) 
+        box_pts = cv2.boxPoints(rect)
+        box_pts = np.int0(box_pts)
+        # 使用黄色 (0, 255, 255) 框出验证区域
+        cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
+        cv2.imwrite(os.path.join(img_vis_dir, 'window_visualization_with_validation.png'), vis_val_image)
+        print(f"[GPU {rank}] 验证区域可视化图像已保存至 {os.path.join(img_vis_dir, 'window_visualization_with_validation.png')}")
+
+        # 5. 标准化和下采样，准备输入模型
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
-        val_img = norm_transform(val_img_rotated / 255.0)
+        val_img = norm_transform(val_img_unnormalized / 255.0) 
         val_lbl_downsampled = downsample(val_lbl_rotated.permute(0,2,3,1), 16)
         val_lbl = val_lbl_downsampled.permute(0,3,1,2)
         print(f"[GPU {rank}] 验证数据已创建. Shape: {val_img.shape}")
@@ -421,11 +452,9 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
 
-    # 确保输出目录存在
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, 'vis_output'), exist_ok=True)
 
-    # 1. 从.npy文件加载数据
     try:
         print("加载数据")
         database = h5py.File(os.path.join(args.dataset_path,'train_data.h5'),'r')
@@ -445,7 +474,6 @@ if __name__ == "__main__":
         all_map_coeffs = []
         for key in tqdm(keys, desc="Loading data"):
             img = database[key]['images']['image_0'][:]
-            # 确保图像是3通道的
             if img.ndim == 2:
                 img = np.stack([img] * 3, axis=-1)
             elif img.shape[2] == 1:
@@ -476,7 +504,6 @@ if __name__ == "__main__":
     print(f"共找到 {num_datasets} 个数据集待处理。")
     np.save(os.path.join(args.output_dir,'dataset_indices.npy'),dataset_indices)
 
-    # 2. 启动分布式训练
     world_size = torch.cuda.device_count()
     if world_size == 0:
         print("错误：没有检测到可用的GPU。")
