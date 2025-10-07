@@ -253,7 +253,7 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
         optimizer.step()
         scheduler.step()
 
-        if (epoch + 1) % (epochs // 10) == 0 and (epoch + 1) > 0:
+        if (epoch + 1) % 100 == 0 and (epoch + 1) > 0:
             decoder.eval()
             with torch.no_grad():
                 val_img_gpu = val_img.to(rank)
@@ -267,24 +267,25 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
             
             print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {loss:.4f} | Val Loss: {val_loss:.4f} | min Loss: {min_loss:.4f}")
 
-            pred_coords = val_pred_obj.cpu().numpy()
-            true_coords = val_gt_obj.cpu().numpy()
-            
-            plt.figure(figsize=(10, 10))
-            plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-            plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-            plt.legend()
-            plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1})')
-            plt.xlabel('X coordinate')
-            plt.ylabel('Y coordinate')
-            plt.grid(True)
-            plt.axis('equal')
+            if (epoch + 1) % 1000 == 0 and (epoch + 1) > 0:
+                pred_coords = val_pred_obj.cpu().numpy()
+                true_coords = val_gt_obj.cpu().numpy()
+                
+                plt.figure(figsize=(10, 10))
+                plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+                plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+                plt.legend()
+                plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1})')
+                plt.xlabel('X coordinate')
+                plt.ylabel('Y coordinate')
+                plt.grid(True)
+                plt.axis('equal')
 
-            path_parts = os.path.splitext(vis_save_path)
-            epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
-            plt.savefig(epoch_save_path)
-            plt.close()
-            print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
+                path_parts = os.path.splitext(vis_save_path)
+                epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
+                plt.savefig(epoch_save_path)
+                plt.close()
+                print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
 
             # --- 保存断点 ---
             checkpoint_state = {
