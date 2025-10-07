@@ -347,34 +347,35 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
             
             print(f"[GPU {rank}] 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{args.epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss(Center): {val_loss_center.item():.4f} | Val Loss(Last): {val_loss_last.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
 
-            # --- 为中心样本生成散点图 ---
-            pred_coords_center = val_pred_obj_center.cpu().numpy()
-            true_coords_center = val_gt_obj_center.cpu().numpy()
-            plt.figure(figsize=(10, 10))
-            plt.scatter(true_coords_center[:, 0], true_coords_center[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-            plt.scatter(pred_coords_center[:, 0], pred_coords_center[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-            plt.legend()
-            plt.title(f'Validation (Center): Pred vs GT (Epoch {epoch+1}) - Rank {rank}')
-            plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
-            path_parts_center = os.path.splitext(vis_save_path)
-            epoch_save_path_center = f"{path_parts_center[0]}_center_epoch_{epoch+1}_rank{rank}{path_parts_center[1]}"
-            plt.savefig(epoch_save_path_center); plt.close()
+            if (epoch + 1) % 1000 == 0 and (epoch + 1) > 0:
+                # --- 为中心样本生成散点图 ---
+                pred_coords_center = val_pred_obj_center.cpu().numpy()
+                true_coords_center = val_gt_obj_center.cpu().numpy()
+                plt.figure(figsize=(10, 10))
+                plt.scatter(true_coords_center[:, 0], true_coords_center[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+                plt.scatter(pred_coords_center[:, 0], pred_coords_center[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+                plt.legend()
+                plt.title(f'Validation (Center): Pred vs GT (Epoch {epoch+1}) - Rank {rank}')
+                plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
+                path_parts_center = os.path.splitext(vis_save_path)
+                epoch_save_path_center = f"{path_parts_center[0]}_center_epoch_{epoch+1}_rank{rank}{path_parts_center[1]}"
+                plt.savefig(epoch_save_path_center); plt.close()
 
-            # --- 为末尾样本生成散点图 ---
-            pred_coords_last = val_pred_obj_last.cpu().numpy()
-            true_coords_last = val_gt_obj_last.cpu().numpy()
-            plt.figure(figsize=(10, 10))
-            plt.scatter(true_coords_last[:, 0], true_coords_last[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-            plt.scatter(pred_coords_last[:, 0], pred_coords_last[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-            plt.legend()
-            plt.title(f'Validation (Last Sample): Pred vs GT (Epoch {epoch+1}) - Rank {rank}')
-            plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
-            path_parts_last = os.path.splitext(vis_save_path)
-            epoch_save_path_last = f"{path_parts_last[0]}_last_sample_epoch_{epoch+1}_rank{rank}{path_parts_last[1]}"
-            plt.savefig(epoch_save_path_last); plt.close()
+                # --- 为末尾样本生成散点图 ---
+                pred_coords_last = val_pred_obj_last.cpu().numpy()
+                true_coords_last = val_gt_obj_last.cpu().numpy()
+                plt.figure(figsize=(10, 10))
+                plt.scatter(true_coords_last[:, 0], true_coords_last[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+                plt.scatter(pred_coords_last[:, 0], pred_coords_last[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+                plt.legend()
+                plt.title(f'Validation (Last Sample): Pred vs GT (Epoch {epoch+1}) - Rank {rank}')
+                plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
+                path_parts_last = os.path.splitext(vis_save_path)
+                epoch_save_path_last = f"{path_parts_last[0]}_last_sample_epoch_{epoch+1}_rank{rank}{path_parts_last[1]}"
+                plt.savefig(epoch_save_path_last); plt.close()
 
-            checkpoint_state = {'epoch': epoch, 'state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'min_loss': min_loss}
-            torch.save(checkpoint_state, checkpoint_path)
+                checkpoint_state = {'epoch': epoch, 'state_dict': decoder.state_dict(), 'optimizer_state_dict': optimizer.state_dict(), 'scheduler_state_dict': scheduler.state_dict(), 'min_loss': min_loss}
+                torch.save(checkpoint_state, checkpoint_path)
 
         if avg_epoch_loss < min_loss:
             min_loss = avg_epoch_loss
