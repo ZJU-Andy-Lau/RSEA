@@ -12,6 +12,7 @@ import torch.multiprocessing as mp
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import time # 引入time模块
+import datetime # 引入datetime模块
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
 from utils import apply_polynomial,get_map_coef,downsample
@@ -30,7 +31,8 @@ def setup_distributed(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     # 使用NCCL后端，它为NVIDIA GPU提供了最优的性能
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+    # --- 修改：使用datetime.timedelta设置一个明确的超时时间，例如60分钟 ---
+    dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=60))
     torch.cuda.set_device(rank)
 
 def cleanup():
@@ -69,7 +71,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     """
     C, H, W = image_tensor.shape
     
-    if output_path and rank == 0:
+    if output_path:
         os.makedirs(output_path, exist_ok=True)
     
     vis_image = image_np_for_vis.copy()
@@ -97,8 +99,8 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
             image_windows_list.append(img_win)
             label_windows_list.append(lbl_win)
             
-            if rank == 0:
-                cv2.rectangle(vis_image, (left, top), (left + window_size, top + window_size), (0, 255, 0), 5)
+            # --- 修改：移除 rank == 0 条件 ---
+            cv2.rectangle(vis_image, (left, top), (left + window_size, top + window_size), (0, 255, 0), 5)
 
     # 2. 动态多尺度随机旋转裁切 (Dynamic Multi-Scale Random Rotated Cropping)
     num_random_windows = win_num * win_num
@@ -109,12 +111,11 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     min_allowed_size = min(min_crop_size, max_allowed_size)
         
     if min_allowed_size >= max_allowed_size:
-        if rank == 0:
-            print(f"Skipping random crops: image dimensions ({H}x{W}) are too small for the crop size range [{min_crop_size}, {max_crop_size}].")
+        # --- 修改：移除 rank == 0 条件 ---
+        print(f"[GPU {rank}] Skipping random crops: image dimensions ({H}x{W}) are too small for the crop size range [{min_crop_size}, {max_crop_size}].")
     else:
-        pbar = None
-        if rank == 0:
-            pbar = tqdm(total=num_random_windows, desc=f"Finding {num_random_windows} valid random crops", leave=False)
+        # --- 修改：为每个进程的进度条添加rank标识 ---
+        pbar = tqdm(total=num_random_windows, desc=f"[GPU {rank}] Finding {num_random_windows} valid random crops", leave=False, position=rank)
 
         while num_found < num_random_windows:
             # 在每轮循环中动态随机选择一个裁切尺寸
@@ -135,8 +136,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                torch.all(rotated_corners[:, 1] >= 0) and torch.all(rotated_corners[:, 1] <= H):
                 
                 num_found += 1
-                if rank == 0:
-                    pbar.update(1)
+                pbar.update(1)
 
                 xmin, ymin = rotated_corners.min(dim=0).values.floor().int()
                 xmax, ymax = rotated_corners.max(dim=0).values.ceil().int()
@@ -159,14 +159,15 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                 image_windows_list.append(final_img_win)
                 label_windows_list.append(final_lbl_win)
                 
-                if rank == 0:
-                    cv2.drawContours(vis_image, [rotated_corners.int().numpy()], 0, (255, 0, 0), 5) # 使用统一颜色表示所有随机裁切
+                # --- 修改：移除 rank == 0 条件 ---
+                cv2.drawContours(vis_image, [rotated_corners.int().numpy()], 0, (255, 0, 0), 5) # 使用统一颜色表示所有随机裁切
         
-        if rank == 0 and pbar:
+        if pbar:
             pbar.close()
     
-    if output_path and rank == 0:
-        cv2.imwrite(os.path.join(output_path, 'window_visualization.png'), vis_image)
+    if output_path:
+        # --- 修改：移除 rank == 0 条件 ---
+        cv2.imwrite(os.path.join(output_path, f'window_visualization_rank{rank}.png'), vis_image)
 
     if not image_windows_list:
         return None, None
@@ -188,11 +189,12 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     label_windows_rotated = torch.cat([lbl_v0, lbl_v1, lbl_v2, lbl_v3], dim=0)
 
     # 保存所有裁切出的小图
-    if output_path and rank == 0:
+    if output_path:
+        # --- 修改：移除 rank == 0 条件 ---
         for i in range(image_windows_augmented.shape[0]):
             tensor_slice = image_windows_augmented[i]
             img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
-            cv2.imwrite(os.path.join(output_path, f'window_{i:04d}.png'), img_to_save)
+            cv2.imwrite(os.path.join(output_path, f'window_{i:04d}_rank{rank}.png'), img_to_save)
 
     # --- 4. 标准化和下采样 (Normalization and Downsampling) ---
     transform = K.Normalize(
@@ -242,7 +244,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
     """
     decoder.to(rank)
     
-    # --- 修改：采用 AdamW 优化器 ---
     optimizer = optim.AdamW(decoder.parameters(), lr=lr, weight_decay=args.weight_decay)
     scheduler = MultiStageOneCycleLR(optimizer,
                                      total_steps=epochs,
@@ -255,22 +256,19 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
     checkpoint_path = os.path.join(args.output_dir, 'checkpoints', checkpoint_base_name)
     
     if args.resume_training and os.path.exists(checkpoint_path):
-        if rank == 0:
-            print(f"发现断点文件，正在恢复训练: {checkpoint_path}")
+        print(f"[GPU {rank}] 发现断点文件，正在恢复训练: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=f'cuda:{rank}')
         decoder.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         start_epoch = checkpoint['epoch'] + 1
         min_loss = checkpoint['min_loss']
-        if rank == 0:
-            print(f"已从 Epoch {start_epoch} 恢复. 当前最小损失: {min_loss:.4f}")
+        print(f"[GPU {rank}] 已从 Epoch {start_epoch} 恢复. 当前最小损失: {min_loss:.4f}")
 
     last_reported_min_loss = min_loss
     best_state_dict = decoder.state_dict()
 
-    if rank == 0:
-        print(f"开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
+    print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
     all_features = buffer['features'].to(rank)
     all_gt_objs = buffer['objs'].to(rank)
     num_total_features = all_features.shape[0]
@@ -321,48 +319,49 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
                 val_gt_obj = val_lbl_gpu.permute(0,2,3,1).flatten(0,2)
                 val_loss = torch.norm(val_pred_obj - val_gt_obj, dim=1).mean()
             
-            if rank == 0:
-                elapsed_seconds = time.time() - start_time
-                epochs_done = epoch - start_epoch + 1
-                total_epochs_in_run = epochs - start_epoch
-                
-                time_per_epoch = elapsed_seconds / epochs_done if epochs_done > 0 else 0
-                remaining_seconds = time_per_epoch * (total_epochs_in_run - epochs_done)
-                
-                min_loss_delta = last_reported_min_loss - min_loss
-                min_loss_str = f"min Loss: {min_loss:.4f}"
-                if min_loss_delta > 1e-6:
-                    min_loss_str += f" (↓{min_loss_delta:.4f})"
-                last_reported_min_loss = min_loss
-                
-                print(f"任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss: {val_loss.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
+            # --- 修改：移除 rank == 0 条件 ---
+            elapsed_seconds = time.time() - start_time
+            epochs_done = epoch - start_epoch + 1
+            total_epochs_in_run = epochs - start_epoch
+            
+            time_per_epoch = elapsed_seconds / epochs_done if epochs_done > 0 else 0
+            remaining_seconds = time_per_epoch * (total_epochs_in_run - epochs_done)
+            
+            min_loss_delta = last_reported_min_loss - min_loss
+            min_loss_str = f"min Loss: {min_loss:.4f}"
+            if min_loss_delta > 1e-6:
+                min_loss_str += f" (↓{min_loss_delta:.4f})"
+            last_reported_min_loss = min_loss
+            
+            print(f"[GPU {rank}] 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss: {val_loss.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
 
-                pred_coords = val_pred_obj.cpu().numpy()
-                true_coords = val_gt_obj.cpu().numpy()
-                
-                plt.figure(figsize=(10, 10))
-                plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-                plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-                plt.legend()
-                plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1})')
-                plt.xlabel('X coordinate')
-                plt.ylabel('Y coordinate')
-                plt.grid(True)
-                plt.axis('equal')
+            pred_coords = val_pred_obj.cpu().numpy()
+            true_coords = val_gt_obj.cpu().numpy()
+            
+            plt.figure(figsize=(10, 10))
+            plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+            plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+            plt.legend()
+            plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1}) - Rank {rank}')
+            plt.xlabel('X coordinate')
+            plt.ylabel('Y coordinate')
+            plt.grid(True)
+            plt.axis('equal')
 
-                path_parts = os.path.splitext(vis_save_path)
-                epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
-                plt.savefig(epoch_save_path)
-                plt.close()
-                
-                checkpoint_state = {
-                    'epoch': epoch,
-                    'state_dict': decoder.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
-                    'scheduler_state_dict': scheduler.state_dict(),
-                    'min_loss': min_loss
-                }
-                torch.save(checkpoint_state, checkpoint_path)
+            path_parts = os.path.splitext(vis_save_path)
+            # --- 修改：在文件名中加入rank以避免冲突 ---
+            epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}_rank{rank}{path_parts[1]}"
+            plt.savefig(epoch_save_path)
+            plt.close()
+            
+            checkpoint_state = {
+                'epoch': epoch,
+                'state_dict': decoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'min_loss': min_loss
+            }
+            torch.save(checkpoint_state, checkpoint_path)
 
         if avg_epoch_loss < min_loss:
             min_loss = avg_epoch_loss
@@ -370,32 +369,34 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
     
     dist.barrier()
     
-    if rank == 0:
-        torch.save(best_state_dict, save_path)
-        print(f"训练完成. 最佳模型已保存至 {save_path}")
+    # --- 修改：移除 rank == 0 条件 ---
+    torch.save(best_state_dict, save_path)
+    print(f"[GPU {rank}] 训练完成. 最佳模型已保存至 {save_path}")
 
-        print(f"正在使用最佳模型生成最终验证散点图...")
-        decoder.load_state_dict(best_state_dict)
-        decoder.eval()
-        with torch.no_grad():
-            val_img_gpu = val_img.to(rank)
-            val_feat, _ = encoder(val_img_gpu)
-            val_output = decoder(val_feat).permute(0,2,3,1).flatten(0,2)
-            pred_coords = warp_by_poly(val_output, map_coeffs).cpu().numpy()
-            true_coords = val_lbl.permute(0,2,3,1).flatten(0,2).cpu().numpy()
+    print(f"[GPU {rank}] 正在使用最佳模型生成最终验证散点图...")
+    decoder.load_state_dict(best_state_dict)
+    decoder.eval()
+    with torch.no_grad():
+        val_img_gpu = val_img.to(rank)
+        val_feat, _ = encoder(val_img_gpu)
+        val_output = decoder(val_feat).permute(0,2,3,1).flatten(0,2)
+        pred_coords = warp_by_poly(val_output, map_coeffs).cpu().numpy()
+        true_coords = val_lbl.permute(0,2,3,1).flatten(0,2).cpu().numpy()
 
-        plt.figure(figsize=(10, 10))
-        plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-        plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-        plt.legend()
-        plt.title('Final Validation with Best Model: Prediction vs. Ground Truth')
-        plt.xlabel('X coordinate')
-        plt.ylabel('Y coordinate')
-        plt.grid(True)
-        plt.axis('equal')
-        plt.savefig(vis_save_path)
-        plt.close()
-        print(f"最终散点图已保存至 {vis_save_path}")
+    plt.figure(figsize=(10, 10))
+    plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+    plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+    plt.legend()
+    plt.title(f'Final Validation with Best Model: Prediction vs. Ground Truth - Rank {rank}')
+    plt.xlabel('X coordinate')
+    plt.ylabel('Y coordinate')
+    plt.grid(True)
+    plt.axis('equal')
+    # --- 修改：在文件名中加入rank以避免冲突 ---
+    final_vis_save_path = vis_save_path.replace('.png', f'_rank{rank}.png')
+    plt.savefig(final_vis_save_path)
+    plt.close()
+    print(f"[GPU {rank}] 最终散点图已保存至 {final_vis_save_path}")
 
 
 # --- 4. 主工作进程 ---
@@ -406,16 +407,13 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
     """
     setup_distributed(rank, world_size)
     
-    if rank == 0:
-        print(f"启动 {world_size} 个工作进程...")
+    print(f"[GPU {rank}] 启动工作进程...")
     
     vis_output_dir = os.path.join(args.output_dir, 'vis_output')
-    if rank == 0:
-        os.makedirs(vis_output_dir, exist_ok=True)
+    os.makedirs(vis_output_dir, exist_ok=True)
     
     indices_for_this_gpu = padded_task_indices[rank::world_size]
-    if rank == 0:
-        print(f"每个GPU将执行 {len(indices_for_this_gpu)} 轮任务（包含虚拟任务）。")
+    print(f"[GPU {rank}] 将执行 {len(indices_for_this_gpu)} 轮任务（包含虚拟任务）。")
     
     encoder = EncoderDino(dino_weight_path=args.dino_weight_path)
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
@@ -428,7 +426,8 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         
         is_dummy_task = (data_idx == -1)
         
-        if rank == 0 and not is_dummy_task:
+        # --- 修改：移除 rank == 0 条件 ---
+        if not is_dummy_task:
             img_vis_dir = os.path.join(vis_output_dir, f'data_{data_idx}')
             os.makedirs(img_vis_dir, exist_ok=True)
         
@@ -437,8 +436,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         if is_dummy_task:
             continue
 
-        if rank == 0:
-            print(f"\n[GPU {rank}] 开始处理数据集索引: {data_idx}")
+        print(f"\n[GPU {rank}] 开始处理数据集索引: {data_idx}")
         
         img_vis_dir = os.path.join(vis_output_dir, f'data_{data_idx}')
         
@@ -449,17 +447,14 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         image = torch.from_numpy(image_np).permute(2, 0, 1)
         label = torch.from_numpy(label_np).permute(2, 0, 1)
 
-        if rank == 0:
-            print(f"加载数据: Image {image.shape}, Label {label.shape}")
+        print(f"[GPU {rank}] 加载数据: Image {image.shape}, Label {label.shape}")
         
         image_windows, label_windows = crop_to_windows(image, label, image_np, args.window_size, args.win_num, img_vis_dir, rank, args.min_crop_size, args.max_crop_size)
         if image_windows is None:
-            if rank == 0:
-                print(f"索引 {data_idx} 的图像尺寸过小，无法裁切，已跳过。")
+            print(f"[GPU {rank}] 索引 {data_idx} 的图像尺寸过小，无法裁切，已跳过。")
             continue
         
-        if rank == 0:
-            print(f"图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
+        print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
         
         H, W = image.shape[1], image.shape[2]
         val_angle = torch.tensor([45.0])
@@ -471,26 +466,28 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         val_img_unnormalized = center_crop(full_img_rotated)
         val_lbl_rotated = center_crop(full_lbl_rotated)
 
-        if rank == 0:
-            val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
-            cv2.imwrite(os.path.join(img_vis_dir, 'validation_sample.png'), val_img_to_save)
+        # --- 修改：移除 rank == 0 条件 ---
+        val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
+        cv2.imwrite(os.path.join(img_vis_dir, f'validation_sample_rank{rank}.png'), val_img_to_save)
 
-            vis_val_image = cv2.imread(os.path.join(img_vis_dir, 'window_visualization.png'))
+        vis_val_image_path = os.path.join(img_vis_dir, f'window_visualization_rank{rank}.png')
+        # 只有当对应的可视化文件存在时才读取和修改
+        if os.path.exists(vis_val_image_path):
+            vis_val_image = cv2.imread(vis_val_image_path)
             if vis_val_image is not None:
                 center_x, center_y = W / 2, H / 2
                 rect = ((center_x, center_y), (args.window_size, args.window_size), -45.0) 
                 box_pts = cv2.boxPoints(rect)
                 box_pts = np.int0(box_pts)
                 cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
-                cv2.imwrite(os.path.join(img_vis_dir, 'window_visualization_with_validation.png'), vis_val_image)
+                cv2.imwrite(os.path.join(img_vis_dir, f'window_visualization_with_validation_rank{rank}.png'), vis_val_image)
 
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
         val_img = norm_transform(val_img_unnormalized / 255.0) 
         val_lbl_downsampled = downsample(val_lbl_rotated.permute(0,2,3,1), 16)
         val_lbl = val_lbl_downsampled.permute(0,3,1,2)
         
-        if rank == 0:
-            print(f"验证数据已创建. Shape: {val_img.shape}")
+        print(f"[GPU {rank}] 验证数据已创建. Shape: {val_img.shape}")
 
         feature_buffer = []
         temp_dataloader = DataLoader(image_windows, batch_size=args.batch_size, shuffle=False)
@@ -529,8 +526,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         )
 
     cleanup()
-    if rank == 0:
-        print(f"GPU {rank} 的所有任务已完成。")
+    print(f"[GPU {rank}] 的所有任务已完成。")
 
 
 # --- 5. 主程序入口 ---
