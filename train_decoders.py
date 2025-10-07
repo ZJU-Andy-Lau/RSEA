@@ -175,8 +175,8 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
         if pbar:
             pbar.close()
     
-    if output_path:
-        cv2.imwrite(os.path.join(output_path, f'window_visualization_rank{rank}.png'), vis_image)
+    # if output_path:
+    #     cv2.imwrite(os.path.join(output_path, f'window_visualization_rank{rank}.png'), vis_image)
 
     if not image_windows_list:
         return None, None
@@ -197,11 +197,11 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     lbl_v3 = torch.rot90(label_windows, 3, [2, 3])
     label_windows_rotated = torch.cat([lbl_v0, lbl_v1, lbl_v2, lbl_v3], dim=0)
 
-    if output_path:
-        for i in range(image_windows_augmented.shape[0]):
-            tensor_slice = image_windows_augmented[i]
-            img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
-            cv2.imwrite(os.path.join(output_path, f'window_{i:04d}_rank{rank}.png'), img_to_save)
+    # if output_path:
+    #     for i in range(image_windows_augmented.shape[0]):
+    #         tensor_slice = image_windows_augmented[i]
+    #         img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
+    #         cv2.imwrite(os.path.join(output_path, f'window_{i:04d}_rank{rank}.png'), img_to_save)
 
     # --- 4. 标准化和下采样 (Normalization and Downsampling) ---
     transform = K.Normalize(
@@ -462,16 +462,16 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         print(f"[GPU {rank}] 验证数据已创建. 中心样本Shape: {val_img_center.shape}, 末尾样本Shape: {val_img_last.shape}")
 
         # --- 可视化中心验证样本的位置 ---
-        val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
-        cv2.imwrite(os.path.join(img_vis_dir, f'validation_sample_center_rank{rank}.png'), val_img_to_save)
-        vis_val_image_path = os.path.join(img_vis_dir, f'window_visualization_rank{rank}.png')
-        if os.path.exists(vis_val_image_path):
-            vis_val_image = cv2.imread(vis_val_image_path)
-            if vis_val_image is not None:
-                rect = ((W/2, H/2), (args.window_size, args.window_size), -45.0) 
-                box_pts = np.int0(cv2.boxPoints(rect))
-                cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
-                cv2.imwrite(os.path.join(img_vis_dir, f'window_visualization_with_validation_rank{rank}.png'), vis_val_image)
+        # val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
+        # cv2.imwrite(os.path.join(img_vis_dir, f'validation_sample_center_rank{rank}.png'), val_img_to_save)
+        # vis_val_image_path = os.path.join(img_vis_dir, f'window_visualization_rank{rank}.png')
+        # if os.path.exists(vis_val_image_path):
+        #     vis_val_image = cv2.imread(vis_val_image_path)
+        #     if vis_val_image is not None:
+        #         rect = ((W/2, H/2), (args.window_size, args.window_size), -45.0) 
+        #         box_pts = np.int0(cv2.boxPoints(rect))
+        #         cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
+        #         cv2.imwrite(os.path.join(img_vis_dir, f'window_visualization_with_validation_rank{rank}.png'), vis_val_image)
 
         # --- 提取特征 ---
         feature_buffer = []
