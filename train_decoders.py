@@ -11,9 +11,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
+import time # 引入time模块
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
-from utils import apply_polynomial,get_map_coef,downsample,str2bool
+from utils import apply_polynomial,get_map_coef,downsample
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import kornia.augmentation as K
@@ -38,6 +39,14 @@ def cleanup():
 
 
 # --- 3. 核心功能函数 ---
+
+def format_time(seconds):
+    """将秒数转换为HH:MM:SS格式的字符串。"""
+    seconds = int(seconds)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    seconds = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=1024, win_num=3, output_path=None):
     """
@@ -208,9 +217,37 @@ def warp_by_poly(raw,coefs):
     warped = torch.stack([x,y,h],dim=-1)
     return warped
 
+def add_noise_to_features(features, min_cos_sim=0.99):
+    """
+    为单位特征向量添加噪声，确保其仍在单位超球面上，并满足最小余弦相似度约束。
+    """
+    # 计算最大允许的旋转角度
+    max_angle_rad = torch.acos(torch.tensor(min_cos_sim, device=features.device))
+    
+    # 为每个特征向量生成一个随机的、在其允许范围内的旋转角度
+    # Shape: (N, 1)
+    theta = torch.rand(features.shape[0], 1, device=features.device) * max_angle_rad
+    
+    # 生成与特征向量同形的随机高斯噪声
+    noise = torch.randn_like(features)
+    
+    # 使用格拉姆-施密特正交化方法找到与特征向量正交的噪声分量
+    # 1. 计算噪声在特征向量上的投影
+    dot_product = torch.sum(features * noise, dim=1, keepdim=True)
+    # 2. 从噪声中减去投影分量，得到正交分量
+    noise_orthogonal = noise - dot_product * features
+    # 3. 将正交分量归一化，得到一个与原特征正交的单位向量
+    noise_orthogonal_unit = noise_orthogonal / (torch.norm(noise_orthogonal, dim=1, keepdim=True) + 1e-8)
+    
+    # 使用球面线性插值 (SLERP) 的公式来计算旋转后的新特征向量
+    # v' = cos(theta)*v + sin(theta)*u, 其中 v 和 u 是正交单位向量
+    noisy_features = torch.cos(theta) * features + torch.sin(theta) * noise_orthogonal_unit
+    
+    return noisy_features
+
 def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, val_lbl, epochs, lr, save_path, vis_save_path, args):
     """
-    在指定的GPU上训练一个Decoder模型, 并在训练中进行验证, 支持断点续训。
+    在指定的GPU上训练一个Decoder模型, 并在训练中进行验证, 支持断点续训和小批量训练。
     """
     decoder.to(rank)
     
@@ -220,7 +257,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
                                      warmup_ratio=.1,
                                      cooldown_ratio=.7)
     
-    # --- 断点续训逻辑 ---
     start_epoch = 0
     min_loss = 1e9
     checkpoint_base_name = os.path.basename(save_path).replace('.pth', '.pth.tar')
@@ -236,22 +272,47 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
         min_loss = checkpoint['min_loss']
         print(f"[GPU {rank}] 已从 Epoch {start_epoch} 恢复. 当前最小损失: {min_loss:.4f}")
 
-    best_state_dict = decoder.state_dict() # 初始化为当前状态
+    last_reported_min_loss = min_loss
+    best_state_dict = decoder.state_dict()
 
     print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
-    features = buffer['features'].permute(1,0)[None,:,:,None].to(rank)
-    gt_objs = buffer['objs'].to(rank)
-    
+    all_features = buffer['features'].to(rank)
+    all_gt_objs = buffer['objs'].to(rank)
+    num_total_features = all_features.shape[0]
+
+    start_time = time.time() # 启动计时器
     for epoch in range(start_epoch, epochs):
         decoder.train()
-        optimizer.zero_grad()
-        output = decoder(features)
-        output = output.permute(0,2,3,1).flatten(0,2)
-        pred_obj = warp_by_poly(output,map_coeffs)
-        loss = torch.norm(pred_obj - gt_objs,dim=1).mean()
-        loss.backward()
-        optimizer.step()
+        
+        epoch_indices = torch.randperm(num_total_features, device=rank)
+        epoch_loss = 0.0
+        num_batches = 0
+        
+        for i in range(0, num_total_features, args.decoder_batch_size):
+            batch_indices = epoch_indices[i : i + args.decoder_batch_size]
+            
+            feature_batch = all_features[batch_indices]
+            gt_objs_batch = all_gt_objs[batch_indices]
+
+            if args.add_feature_noise:
+                feature_batch = add_noise_to_features(feature_batch, min_cos_sim=args.noise_level)
+
+            feature_batch_reshaped = feature_batch.T.unsqueeze(0).unsqueeze(-1)
+            
+            optimizer.zero_grad()
+            output = decoder(feature_batch_reshaped)
+            output = output.permute(0,2,3,1).flatten(0,2)
+            pred_obj = warp_by_poly(output, map_coeffs)
+            
+            loss = torch.norm(pred_obj - gt_objs_batch, dim=1).mean()
+            loss.backward()
+            optimizer.step()
+            
+            epoch_loss += loss.item()
+            num_batches += 1
+
         scheduler.step()
+        avg_epoch_loss = epoch_loss / num_batches
 
         if (epoch + 1) % 100 == 0 and (epoch + 1) > 0:
             decoder.eval()
@@ -265,7 +326,21 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
                 val_gt_obj = val_lbl_gpu.permute(0,2,3,1).flatten(0,2)
                 val_loss = torch.norm(val_pred_obj - val_gt_obj, dim=1).mean()
             
-            print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {loss:.4f} | Val Loss: {val_loss:.4f} | min Loss: {min_loss:.4f}")
+            # --- 计时和损失下降计算 ---
+            elapsed_seconds = time.time() - start_time
+            epochs_done = epoch - start_epoch + 1
+            total_epochs_in_run = epochs - start_epoch
+            
+            time_per_epoch = elapsed_seconds / epochs_done if epochs_done > 0 else 0
+            remaining_seconds = time_per_epoch * (total_epochs_in_run - epochs_done)
+            
+            min_loss_delta = last_reported_min_loss - min_loss
+            min_loss_str = f"min Loss: {min_loss:.4f}"
+            if min_loss_delta > 1e-6:
+                min_loss_str += f" (↓{min_loss_delta:.4f})"
+            last_reported_min_loss = min_loss
+            
+            print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss: {val_loss.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
 
             if (epoch + 1) % 1000 == 0 and (epoch + 1) > 0:
                 pred_coords = val_pred_obj.cpu().numpy()
@@ -285,8 +360,7 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
                 epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
                 plt.savefig(epoch_save_path)
                 plt.close()
-                print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
-
+            
             # --- 保存断点 ---
             checkpoint_state = {
                 'epoch': epoch,
@@ -296,10 +370,9 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
                 'min_loss': min_loss
             }
             torch.save(checkpoint_state, checkpoint_path)
-            print(f"[GPU {rank}] Checkpoint saved to {checkpoint_path}")
 
-        if loss.item() < min_loss:
-            min_loss = loss.item()
+        if avg_epoch_loss < min_loss:
+            min_loss = avg_epoch_loss
             best_state_dict = decoder.state_dict()
 
     torch.save(best_state_dict, save_path)
@@ -377,25 +450,19 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
             continue
         print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
         
-        # --- c. 创建验证数据 (新逻辑) ---
         H, W = image.shape[1], image.shape[2]
         val_angle = torch.tensor([45.0])
         center_crop = K.CenterCrop(args.window_size)
 
-        # 1. 先旋转整个图像
         full_img_rotated = KT.rotate(image.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
         full_lbl_rotated = KT.rotate(label.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
 
-        # 2. 然后从旋转后的图像中心裁切
         val_img_unnormalized = center_crop(full_img_rotated)
         val_lbl_rotated = center_crop(full_lbl_rotated)
 
-        # 3. 保存裁切出的验证样本图像
         val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
         cv2.imwrite(os.path.join(img_vis_dir, 'validation_sample.png'), val_img_to_save)
-        print(f"[GPU {rank}] 验证样本图像已保存至 {os.path.join(img_vis_dir, 'validation_sample.png')}")
 
-        # 4. 创建并保存在原图上框出验证区域的可视化图像
         vis_val_image = cv2.imread(os.path.join(img_vis_dir, 'window_visualization.png'))
         center_x, center_y = W / 2, H / 2
         rect = ((center_x, center_y), (args.window_size, args.window_size), -45.0) 
@@ -403,9 +470,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         box_pts = np.int0(box_pts)
         cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
         cv2.imwrite(os.path.join(img_vis_dir, 'window_visualization_with_validation.png'), vis_val_image)
-        print(f"[GPU {rank}] 验证区域可视化图像已保存至 {os.path.join(img_vis_dir, 'window_visualization_with_validation.png')}")
 
-        # 5. 标准化和下采样，准备输入模型
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
         val_img = norm_transform(val_img_unnormalized / 255.0) 
         val_lbl_downsampled = downsample(val_lbl_rotated.permute(0,2,3,1), 16)
@@ -466,12 +531,17 @@ if __name__ == "__main__":
     parser.add_argument('--dataset_select',type=str,default=None)
     parser.add_argument('--output_dir', type=str, default='./trained_decoders', help='保存训练好的Decoder权重的目录')
     parser.add_argument('--window_size', type=int, default=1024, help='Encoder的输入窗口大小')
-    parser.add_argument('--win_num', type=int, default=3, help='每条边上裁切的窗口数，总共裁切 win_num*win_num 个均匀窗口和同样数量的随机窗口')
+    parser.add_argument('--win_num', type=int, default=3, help='每条边上裁切的窗口数')
     parser.add_argument('--epochs', type=int, default=200, help='每个Decoder的训练轮数')
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--batch_size', type=int, default=4, help='特征提取时的批量大小')
     parser.add_argument('--decoder_block_num',type=int,default=1)
-    parser.add_argument('--resume_training', type=str2bool,default=False, help='从最新的断点恢复训练')
+    parser.add_argument('--resume_training', action='store_true', help='从最新的断点恢复训练')
+    # --- 新增参数 ---
+    parser.add_argument('--decoder_batch_size', type=int, default=4096, help='训练Decoder时的批量大小')
+    parser.add_argument('--add_feature_noise', action='store_true', help='为特征添加噪声以进行数据增强')
+    parser.add_argument('--noise_level', type=float, default=0.99, help='噪声级别，与原特征的最小余弦相似度')
+
     
     args = parser.parse_args()
 
