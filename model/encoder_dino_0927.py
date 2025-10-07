@@ -183,7 +183,7 @@ class EncoderDino(nn.Module):
         self.backbone.eval()
         self.backbone.requires_grad_(False)
 
-        self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels)
+        self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels,pos_embed=adapter_pos_embed)
 
 
     def forward(self, x):
