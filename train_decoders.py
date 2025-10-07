@@ -30,7 +30,7 @@ def setup_distributed(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     # 使用NCCL后端，它为NVIDIA GPU提供了最优的性能
-    dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=torch.distributed.constants.DEFAULT_TIMEOUT * 2)
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
 def cleanup():
