@@ -492,8 +492,8 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         
         # --- 准备验证数据 2: 训练集末尾样本 ---
         # image_windows 和 label_windows 已经是处理好的，可以直接用
-        val_img_last = image_windows[-1].unsqueeze(0)
-        val_lbl_last = label_windows[-1].unsqueeze(0)
+        val_img_last = image_windows[24].unsqueeze(0)
+        val_lbl_last = label_windows[24].unsqueeze(0)
         
         print(f"[GPU {rank}] 验证数据已创建. 中心样本Shape: {val_img_center.shape}, 末尾样本Shape: {val_img_last.shape}")
 
