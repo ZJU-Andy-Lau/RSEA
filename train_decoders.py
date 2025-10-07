@@ -13,7 +13,7 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
-from utils import apply_polynomial,get_map_coef,downsample
+from utils import apply_polynomial,get_map_coef,downsample,str2bool
 from tqdm import tqdm
 from scheduler import MultiStageOneCycleLR
 import kornia.augmentation as K
@@ -175,9 +175,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     # 保存所有裁切出的小图
     if output_path:
         for i in range(image_windows_augmented.shape[0]):
-            # The tensor is float32 with values in [0, 255] range at this point
             tensor_slice = image_windows_augmented[i]
-            # Permute, move to CPU, clamp, convert to uint8, then convert to numpy
             img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
             cv2.imwrite(os.path.join(output_path, f'window_{i:04d}.png'), img_to_save)
 
@@ -210,26 +208,41 @@ def warp_by_poly(raw,coefs):
     warped = torch.stack([x,y,h],dim=-1)
     return warped
 
-def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, val_lbl, epochs, lr, save_path, vis_save_path):
+def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, val_lbl, epochs, lr, save_path, vis_save_path, args):
     """
-    在指定的GPU上训练一个Decoder模型, 并在训练中进行验证。
+    在指定的GPU上训练一个Decoder模型, 并在训练中进行验证, 支持断点续训。
     """
     decoder.to(rank)
-    best_state_dict = None
-    min_loss = 1e9
     
     optimizer = optim.Adam(decoder.parameters(), lr=lr)
     scheduler = MultiStageOneCycleLR(optimizer,
                                      total_steps=epochs,
                                      warmup_ratio=.1,
                                      cooldown_ratio=.7)
-    criterion = nn.MSELoss()
+    
+    # --- 断点续训逻辑 ---
+    start_epoch = 0
+    min_loss = 1e9
+    checkpoint_base_name = os.path.basename(save_path).replace('.pth', '.pth.tar')
+    checkpoint_path = os.path.join(args.output_dir, 'checkpoints', checkpoint_base_name)
+    
+    if args.resume_training and os.path.exists(checkpoint_path):
+        print(f"[GPU {rank}] 发现断点文件，正在恢复训练: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=f'cuda:{rank}')
+        decoder.load_state_dict(checkpoint['state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        min_loss = checkpoint['min_loss']
+        print(f"[GPU {rank}] 已从 Epoch {start_epoch} 恢复. 当前最小损失: {min_loss:.4f}")
+
+    best_state_dict = decoder.state_dict() # 初始化为当前状态
 
     print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
     features = buffer['features'].permute(1,0)[None,:,:,None].to(rank)
     gt_objs = buffer['objs'].to(rank)
     
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         decoder.train()
         optimizer.zero_grad()
         output = decoder(features)
@@ -240,7 +253,7 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
         optimizer.step()
         scheduler.step()
 
-        if (epoch + 1) % 100 == 0 and (epoch + 1) > 0:
+        if (epoch + 1) % (epochs // 10) == 0 and (epoch + 1) > 0:
             decoder.eval()
             with torch.no_grad():
                 val_img_gpu = val_img.to(rank)
@@ -254,32 +267,42 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img, va
             
             print(f"[GPU {rank}] | 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{epochs}] | Train Loss: {loss:.4f} | Val Loss: {val_loss:.4f} | min Loss: {min_loss:.4f}")
 
-            if (epoch + 1) % 1000 == 0 and (epoch + 1) > 0:
-                pred_coords = val_pred_obj.cpu().numpy()
-                true_coords = val_gt_obj.cpu().numpy()
-                
-                plt.figure(figsize=(10, 10))
-                plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-                plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-                plt.legend()
-                plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1})')
-                plt.xlabel('X coordinate')
-                plt.ylabel('Y coordinate')
-                plt.grid(True)
-                plt.axis('equal')
+            pred_coords = val_pred_obj.cpu().numpy()
+            true_coords = val_gt_obj.cpu().numpy()
+            
+            plt.figure(figsize=(10, 10))
+            plt.scatter(true_coords[:, 0], true_coords[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
+            plt.scatter(pred_coords[:, 0], pred_coords[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
+            plt.legend()
+            plt.title(f'Validation: Prediction vs. Ground Truth (Epoch {epoch+1})')
+            plt.xlabel('X coordinate')
+            plt.ylabel('Y coordinate')
+            plt.grid(True)
+            plt.axis('equal')
 
-                path_parts = os.path.splitext(vis_save_path)
-                epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
-                plt.savefig(epoch_save_path)
-                plt.close()
-                print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
+            path_parts = os.path.splitext(vis_save_path)
+            epoch_save_path = f"{path_parts[0]}_epoch_{epoch+1}{path_parts[1]}"
+            plt.savefig(epoch_save_path)
+            plt.close()
+            print(f"[GPU {rank}] Validation scatter plot saved to {epoch_save_path}")
 
-        if loss < min_loss:
+            # --- 保存断点 ---
+            checkpoint_state = {
+                'epoch': epoch,
+                'state_dict': decoder.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'min_loss': min_loss
+            }
+            torch.save(checkpoint_state, checkpoint_path)
+            print(f"[GPU {rank}] Checkpoint saved to {checkpoint_path}")
+
+        if loss.item() < min_loss:
+            min_loss = loss.item()
             best_state_dict = decoder.state_dict()
-            min_loss = loss
 
     torch.save(best_state_dict, save_path)
-    print(f"[GPU {rank}] 训练完成. Decoder已保存至 {save_path}")
+    print(f"[GPU {rank}] 训练完成. 最佳模型已保存至 {save_path}")
 
     print(f"[GPU {rank}] 正在使用最佳模型生成最终验证散点图...")
     decoder.load_state_dict(best_state_dict)
@@ -359,7 +382,6 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         center_crop = K.CenterCrop(args.window_size)
 
         # 1. 先旋转整个图像
-        # 添加batch维度以进行旋转
         full_img_rotated = KT.rotate(image.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
         full_lbl_rotated = KT.rotate(label.float().unsqueeze(0), val_angle, mode='bilinear', align_corners=True)
 
@@ -368,19 +390,16 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
         val_lbl_rotated = center_crop(full_lbl_rotated)
 
         # 3. 保存裁切出的验证样本图像
-        val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().to(torch.uint8).numpy()
+        val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
         cv2.imwrite(os.path.join(img_vis_dir, 'validation_sample.png'), val_img_to_save)
         print(f"[GPU {rank}] 验证样本图像已保存至 {os.path.join(img_vis_dir, 'validation_sample.png')}")
 
         # 4. 创建并保存在原图上框出验证区域的可视化图像
-        # 将训练样本的可视化结果作为底图
         vis_val_image = cv2.imread(os.path.join(img_vis_dir, 'window_visualization.png'))
         center_x, center_y = W / 2, H / 2
-        # OpenCV的旋转角度为逆时针，所以用-45度
         rect = ((center_x, center_y), (args.window_size, args.window_size), -45.0) 
         box_pts = cv2.boxPoints(rect)
         box_pts = np.int0(box_pts)
-        # 使用黄色 (0, 255, 255) 框出验证区域
         cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
         cv2.imwrite(os.path.join(img_vis_dir, 'window_visualization_with_validation.png'), vis_val_image)
         print(f"[GPU {rank}] 验证区域可视化图像已保存至 {os.path.join(img_vis_dir, 'window_visualization_with_validation.png')}")
@@ -427,7 +446,8 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs):
             epochs=args.epochs,
             lr=args.lr,
             save_path=save_path,
-            vis_save_path=scatter_plot_path
+            vis_save_path=scatter_plot_path,
+            args=args
         )
 
     cleanup()
@@ -450,11 +470,13 @@ if __name__ == "__main__":
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--batch_size', type=int, default=4, help='特征提取时的批量大小')
     parser.add_argument('--decoder_block_num',type=int,default=1)
+    parser.add_argument('--resume_training', type=str2bool,default=False, help='从最新的断点恢复训练')
     
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, 'vis_output'), exist_ok=True)
+    os.makedirs(os.path.join(args.output_dir, 'checkpoints'), exist_ok=True)
 
     try:
         print("加载数据")
