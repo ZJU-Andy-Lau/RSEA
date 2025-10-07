@@ -13,6 +13,9 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import time # 引入time模块
 import datetime # 引入datetime模块
+import socket # 引入socket模块
+from contextlib import closing # 引入closing模块
+
 from model.encoder_dino_0927 import EncoderDino
 from model.decoders import DecoderFinetune
 from utils import apply_polynomial,get_map_coef,downsample
@@ -21,15 +24,20 @@ from scheduler import MultiStageOneCycleLR
 import kornia.augmentation as K
 import kornia.geometry.transform as KT
 import cv2
+import matplotlib
+# --- 修复 1: 设置与多进程兼容的matplotlib后端 ---
+# 必须在import pyplot之前设置
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 
 # --- 2. 分布式环境设置与清理 ---
 
-def setup_distributed(rank, world_size):
+def setup_distributed(rank, world_size, port):
     """初始化分布式进程组"""
     os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12355'
+    # --- 修复 2: 使用动态传入的端口号 ---
+    os.environ['MASTER_PORT'] = port
     # 使用NCCL后端，它为NVIDIA GPU提供了最优的性能
     dist.init_process_group("nccl", rank=rank, world_size=world_size, timeout=datetime.timedelta(minutes=60))
     torch.cuda.set_device(rank)
@@ -40,6 +48,13 @@ def cleanup():
 
 
 # --- 3. 核心功能函数 ---
+
+def find_free_port():
+    """动态查找一个空闲的端口"""
+    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
+        s.bind(('', 0))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return str(s.getsockname()[1])
 
 def format_time(seconds):
     """将秒数转换为HH:MM:SS格式的字符串。"""
@@ -330,7 +345,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
                 min_loss_str += f" (↓{min_loss_delta:.4f})"
             last_reported_min_loss = min_loss
             
-            # --- 更新日志输出 ---
             print(f"[GPU {rank}] 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{args.epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss(Center): {val_loss_center.item():.4f} | Val Loss(Last): {val_loss_last.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
 
             # --- 为中心样本生成散点图 ---
@@ -368,7 +382,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
     
     dist.barrier()
     
-    # --- 生成最终的验证图 ---
     print(f"[GPU {rank}] 训练完成. 正在使用最佳模型生成最终验证散点图...")
     decoder.load_state_dict(best_state_dict)
     decoder.eval()
@@ -410,11 +423,11 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
 
 # --- 4. 主工作进程 ---
 
-def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, padded_task_indices):
+def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, padded_task_indices, port):
     """
     每个GPU上运行的主函数。
     """
-    setup_distributed(rank, world_size)
+    setup_distributed(rank, world_size, port)
     
     print(f"[GPU {rank}] 启动工作进程...")
     
@@ -498,14 +511,16 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
 
         # --- 提取特征 ---
         feature_buffer = []
-        temp_dataloader = DataLoader(image_windows, batch_size=args.batch_size, shuffle=False)
+        # 使用不包含最后一个验证样本的列表来提取特征
+        training_image_windows = image_windows[:-1]
+        temp_dataloader = DataLoader(training_image_windows, batch_size=args.batch_size, shuffle=False)
         with torch.no_grad():
             for image_batch in temp_dataloader:
                 feature_batch,_ = encoder(image_batch.to(rank))
                 feature_buffer.append(feature_batch.cpu())
         
         all_features = torch.cat(feature_buffer, dim=0).permute(0,2,3,1).flatten(0,2)
-        all_labels_for_features = label_windows.permute(0,2,3,1).flatten(0,2)
+        all_labels_for_features = label_windows[:-1].permute(0,2,3,1).flatten(0,2)
 
         buffer = {'features': all_features, 'objs': all_labels_for_features}
 
@@ -618,6 +633,10 @@ if __name__ == "__main__":
         
     world_size = min(world_size, num_datasets)
     
+    # --- 修复 2: 动态查找并设置端口 ---
+    port = find_free_port()
+    print(f"使用空闲端口 {port} 进行分布式训练。")
+
     num_real_tasks = len(all_images)
     padded_task_indices = list(range(num_real_tasks))
     num_to_pad = (world_size - num_real_tasks % world_size) % world_size
@@ -628,7 +647,7 @@ if __name__ == "__main__":
     
     mp.spawn(
         main_worker,
-        args=(world_size, args, all_images, all_labels, all_map_coeffs, padded_task_indices),
+        args=(world_size, args, all_images, all_labels, all_map_coeffs, padded_task_indices, port),
         nprocs=world_size,
         join=True
     )
