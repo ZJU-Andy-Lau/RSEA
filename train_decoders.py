@@ -380,43 +380,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
         if avg_epoch_loss < min_loss:
             min_loss = avg_epoch_loss
             best_state_dict = decoder.state_dict()
-    
-    dist.barrier()
-    
-    print(f"[GPU {rank}] 训练完成. 正在使用最佳模型生成最终验证散点图...")
-    decoder.load_state_dict(best_state_dict)
-    decoder.eval()
-    with torch.no_grad():
-        # 中心样本
-        val_img_center_gpu = val_img_center.to(rank)
-        val_feat_center, _ = encoder(val_img_center_gpu)
-        val_output_center = decoder(val_feat_center).permute(0,2,3,1).flatten(0,2)
-        pred_coords_center = warp_by_poly(val_output_center, map_coeffs).cpu().numpy()
-        true_coords_center = val_lbl_center.permute(0,2,3,1).flatten(0,2).cpu().numpy()
-        # 末尾样本
-        val_img_last_gpu = val_img_last.to(rank)
-        val_feat_last, _ = encoder(val_img_last_gpu)
-        val_output_last = decoder(val_feat_last).permute(0,2,3,1).flatten(0,2)
-        pred_coords_last = warp_by_poly(val_output_last, map_coeffs).cpu().numpy()
-        true_coords_last = val_lbl_last.permute(0,2,3,1).flatten(0,2).cpu().numpy()
-
-    # 绘制并保存中心样本的最终散点图
-    plt.figure(figsize=(10, 10))
-    plt.scatter(true_coords_center[:, 0], true_coords_center[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-    plt.scatter(pred_coords_center[:, 0], pred_coords_center[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-    plt.legend(); plt.title(f'Final Validation (Center) with Best Model - Rank {rank}'); plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
-    final_vis_save_path_center = vis_save_path.replace('.png', f'_center_final_rank{rank}.png')
-    plt.savefig(final_vis_save_path_center); plt.close()
-    print(f"[GPU {rank}] 最终中心样本散点图已保存至 {final_vis_save_path_center}")
-
-    # 绘制并保存末尾样本的最终散点图
-    plt.figure(figsize=(10, 10))
-    plt.scatter(true_coords_last[:, 0], true_coords_last[:, 1], c='red', label='Ground Truth', s=10, alpha=0.7)
-    plt.scatter(pred_coords_last[:, 0], pred_coords_last[:, 1], c='green', label='Prediction', s=10, alpha=0.7)
-    plt.legend(); plt.title(f'Final Validation (Last Sample) with Best Model - Rank {rank}'); plt.xlabel('X coordinate'); plt.ylabel('Y coordinate'); plt.grid(True); plt.axis('equal')
-    final_vis_save_path_last = vis_save_path.replace('.png', f'_last_sample_final_rank{rank}.png')
-    plt.savefig(final_vis_save_path_last); plt.close()
-    print(f"[GPU {rank}] 最终末尾样本散点图已保存至 {final_vis_save_path_last}")
 
     torch.save(best_state_dict, save_path)
     print(f"[GPU {rank}] 最佳模型已保存至 {save_path}")
