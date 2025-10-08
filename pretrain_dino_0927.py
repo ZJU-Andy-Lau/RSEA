@@ -108,7 +108,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
     return feat,conf_cont,conf_div
 
 
-def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModule,decoder:DecoderFinetune,criterion:nn.Module,only_decoder:bool = False):
+def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,criterion:nn.Module,only_decoder:bool = False):
     img1 = data['img1'].squeeze(0).to(args.device)
     img2 = data['img2'].squeeze(0).to(args.device)
     obj1 = data['obj1'].squeeze(0).to(args.device)
@@ -123,12 +123,9 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
 
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
-    feat1_it,feat2_it = fim(feat1,feat2)
 
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
-    feat1_it_sample = sample_features(feat1_it,overlap1).unsqueeze(-1)
-    feat2_it_sample = sample_features(feat2_it,overlap2).unsqueeze(-1)
     obj1_sample_P3 = sample_features(obj1.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
     obj2_sample_P3 = sample_features(obj2.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
 
@@ -164,13 +161,10 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
     pred1_sample_P3 = warp_by_poly(output1_sample_P3,obj_map_coef)
     pred2_sample_P3 = warp_by_poly(output2_sample_P3,obj_map_coef)
 
-    feat_vis = [feat1[0].permute(1,2,0).detach().cpu().numpy(),feat2[0].permute(1,2,0).detach().cpu().numpy(),
-                feat1_it[0].permute(1,2,0).detach().cpu().numpy(),feat2_it[0].permute(1,2,0).detach().cpu().numpy()]
+    feat_vis = [feat1[0].permute(1,2,0).detach().cpu().numpy(),feat2[0].permute(1,2,0).detach().cpu().numpy()]
 
     feat1_PD = feat1_sample.permute(0,2,3,1).flatten(0,2)
     feat2_PD = feat2_sample.permute(0,2,3,1).flatten(0,2)
-    feat1_it_PD = feat1_it_sample.permute(0,2,3,1).flatten(0,2)
-    feat2_it_PD = feat2_it_sample.permute(0,2,3,1).flatten(0,2)
     conf1_P = conf1.permute(0,2,3,1).reshape(-1)
     conf2_P = conf2.permute(0,2,3,1).reshape(-1)
     obj1_P3 = obj1.flatten(0,2)
@@ -181,7 +175,6 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,fim:FeatureInteractionModul
 
     loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,k,sp,sn = criterion(epoch,args.max_epoch,
                                                                 feat1_PD,feat2_PD,
-                                                                feat1_it_PD,feat2_it_PD,
                                                                 pred1_P3,pred2_P3,
                                                                 conf1_P,conf2_P,
                                                                 obj1_P3,obj2_P3,
@@ -303,9 +296,8 @@ def pretrain(args):
     #     encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     # else:
     encoder = EncoderDino(dino_weight_path=args.dino_weight_path,adapter_pos_embed = args.pos_embed)
-    fim = FeatureInteractionModule(feature_dim = encoder.output_channels)
     # projector = ProjectHead(encoder.output_channels,128)
-    adapter_optimizer = optim.AdamW(params=list(encoder.adapter.parameters()) + list(fim.parameters()),lr = args.lr_encoder_max)
+    adapter_optimizer = optim.AdamW(params=encoder.adapter.parameters(),lr = args.lr_encoder_max)
     # backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)
 
     adapter_scheduler = MultiStageOneCycleLR(optimizer=adapter_optimizer,
@@ -324,7 +316,6 @@ def pretrain(args):
     
     if args.resume_training:
         encoder.load_adapter(os.path.join(args.checkpoints_path,'adapter.pth'))
-        fim.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'fim.pth'),map_location='cpu').items()})
         # projector.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.checkpoints_path,'projector.pth'),map_location='cpu').items()})
         adapter_optimizer.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'adapter_optimizer.pth'),map_location='cpu'))
         adapter_scheduler.load_state_dict(torch.load(os.path.join(args.checkpoints_path,'adapter_scheduler.pth'),map_location='cpu'))
@@ -333,11 +324,9 @@ def pretrain(args):
         
     elif not args.encoder_path is None:
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-        fim.load_state_dict({k.replace("module.",""):v for k,v in torch.load(os.path.join(args.encoder_path,'fim.pth'),map_location='cpu').items()})
         pprint('Encoder Loaded')
 
     encoder = encoder.to(args.device)
-    fim = fim.to(args.device)
     # projector = projector.to(args.device)
     for state in adapter_optimizer.state.values():
         for k, v in state.items():
@@ -351,10 +340,8 @@ def pretrain(args):
     encoder_op = encoder
     if num_gpus > 1:
         encoder = distibute_model(encoder,args.local_rank)
-        fim = distibute_model(fim,args.local_rank)
         # projector = distibute_model(projector,args.local_rank)
         encoder_op = encoder.module
-        fim_op = fim.module
     
 
     pprint("Building Decoders")     
@@ -443,7 +430,7 @@ def pretrain(args):
                 "res_mid":dataset.red_mids[dataset_idx]
             }
 
-            loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,loss_obj_sample,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,fim,decoder,criterion,epoch < only_decoder_epoch)
+            loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,loss_obj_sample,k,conf_mean,sp,sn,vis_data = compute_loss(args,epoch,compose_data,encoder,decoder,criterion,epoch < only_decoder_epoch)
 
             # if rank == 1 and epoch == 1 and iter_idx == 1:
             #     loss = torch.tensor(torch.nan,device=loss.device)
@@ -582,7 +569,6 @@ def pretrain(args):
                 # backbone_state_dict = {k:v.detach().cpu() for k,v in encoder_op.backbone.state_dict().items()}
                 # torch.save(backbone_state_dict,os.path.join(args.encoder_output_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
                 encoder_op.save_adapter(os.path.join(args.encoder_output_path,'adapter.pth'))
-                torch.save(fim_op.state_dict(),os.path.join(args.encoder_output_path,'fim.pth'))
                 print('best updated')
             
             if epoch % 5 == 0:
@@ -600,7 +586,6 @@ def pretrain(args):
                 torch.save(adapter_scheduler_state_dict,os.path.join(path,'adapter_scheduler.pth'))
                 # torch.save(backbone_scheduler_state_dict,os.path.join(path,'backbone_scheduler.pth'))
                 # torch.save(projector_state_dict,os.path.join(path,'projector.pth'))
-                torch.save(fim_op.state_dict(),os.path.join(path,'fim.pth'))
                 for i in range(dataset_num):
                     decoder_state_dict = {k:v.detach().cpu() for k,v in decoders[i].state_dict().items()}
                     decoder_optimizer_state_dict = optimizers[i].state_dict()
@@ -628,7 +613,6 @@ def pretrain(args):
                 vis_cor_idx = torch.randperm(len(overlap1[0][0]))[:10]
                 cor_idx1, cor_idx2 = overlap1[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]],overlap2[0][0][vis_cor_idx].detach().cpu().numpy()[:,[1,0]]
                 feat_cor = visualize_feature_correspondences(vis_data['feat_vis'][0],vis_data['feat_vis'][1],cor_idx1,cor_idx2)
-                feat_it_cor = visualize_feature_correspondences(vis_data['feat_vis'][2],vis_data['feat_vis'][3],cor_idx1,cor_idx2)
 
                 train_img_1,train_img_2 = img1[0][0].permute(1,2,0).detach().cpu().numpy(),img2[0][0].permute(1,2,0).detach().cpu().numpy()
                 train_img_1 = 255. * (train_img_1 - train_img_1.min()) / (train_img_1.max() - train_img_1.min())
@@ -642,7 +626,6 @@ def pretrain(args):
                 logger.add_image('vis/conf_cont',conf_cont,epoch,dataformats='HWC')
                 logger.add_image('vis/conf_div',conf_div,epoch,dataformats='HWC')
                 logger.add_image('vis/feat_cor',feat_cor,epoch,dataformats='HWC')
-                logger.add_image('vis/feat_it_cor',feat_it_cor,epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_1',train_img_1.astype(np.uint8),epoch,dataformats='HWC')
                 logger.add_image('vis/train_img_2',train_img_2.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/obj_vis_quiver',vis_data['obj_vis']['quiver'],epoch,dataformats='HWC')
