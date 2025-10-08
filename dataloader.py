@@ -429,6 +429,8 @@ class PretrainDataset(Dataset):
         key = self.database_keys[index]
         img_num = len(self.database[key]['images'])
         idx1,idx2 = np.random.choice(img_num,2)
+        if idx1 == idx2:
+            idx2 = (idx1 + 1) % img_num
 
         image_1_full = self.database[key]['images'][f"image_{idx1}"][:]
         image_2_full = self.database[key]['images'][f"image_{idx2}"][:]
