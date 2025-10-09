@@ -268,11 +268,11 @@ def train_single_decoder(rank, decoder, encoder, image_full, label_full, map_coe
         
         # --- 3. 准备特征和标签用于训练 ---
         all_features = features_for_epoch.permute(0,2,3,1).flatten(0,2)
-        all_gt_objs = label_windows.permute(0,2,3,1).flatten(0,2)
+        all_gt_objs = label_windows.permute(0,2,3,1).flatten(0,2).to(all_features.device)
         num_total_features = all_features.shape[0]
 
         # --- 4. Mini-batch 训练循环 ---
-        epoch_indices = torch.randperm(num_total_features, device=rank)
+        epoch_indices = torch.randperm(num_total_features, device=rank).to(all_features.device)
         epoch_loss = 0.0
         num_batches = 0
         
