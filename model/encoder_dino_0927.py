@@ -175,7 +175,7 @@ class EncoderDino(nn.Module):
         super().__init__()
         self.verbose = verbose
         self.layers = layers
-        self.SAMPLE_FACTOR = 8
+        self.SAMPLE_FACTOR = 4
         self.input_channels = 3
         self.output_channels = output_channels
 
@@ -193,8 +193,13 @@ class EncoderDino(nn.Module):
         feat_backbone = torch.cat(feat_backbone,dim=-1)
         feat_backbone = feat_backbone.reshape(B,H // 16,W // 16,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
+
         feat = F.interpolate(feat,scale_factor=2)
         conf = F.interpolate(conf,scale_factor=2)
+
+        feat = F.interpolate(feat,scale_factor=2)
+        conf = F.interpolate(conf,scale_factor=2)
+        
         return feat,conf
     
     def unfreeze_backbone(self,layers:List[int] = []):
