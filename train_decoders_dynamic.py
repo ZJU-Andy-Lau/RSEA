@@ -196,7 +196,7 @@ def warp_by_poly(raw,coefs):
     
     x = (raw[:,0] + 1.) * .5 * (x_coef[1] - x_coef[0]) + x_coef[0]
     y = (raw[:,1] + 1.) * .5 * (y_coef[1] - y_coef[0]) + y_coef[0]
-    h = apply_polynomial(raw[:,2],coefs['h'], device) # 确保此函数支持device参数
+    h = apply_polynomial(raw[:,2],coefs['h']) # 确保此函数支持device参数
     warped = torch.stack([x,y,h],dim=-1)
     return warped
 
