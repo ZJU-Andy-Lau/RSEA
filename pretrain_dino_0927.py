@@ -266,7 +266,7 @@ def pretrain(args):
     dataset = PretrainDataset(root = args.dataset_path,
                               dataset_idxs=dataset_indices,
                               batch_size = args.batch_size,
-                              downsample = 16,
+                              downsample = 8,
                               input_size = 1024,
                               obj_map_coefs = obj_map_coefs,
                               norm_coefs={
