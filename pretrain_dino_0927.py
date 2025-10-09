@@ -124,7 +124,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
 
-    print(feat1.shape,conf1.shape,residual1.shape,obj1.shape,overlap1.shape)
+    # print(feat1.shape,conf1.shape,residual1.shape,obj1.shape,overlap1.shape)
 
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)

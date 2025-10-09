@@ -194,7 +194,7 @@ class EncoderDino(nn.Module):
         feat_backbone = feat_backbone.reshape(B,H // 16,W // 16,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
         feat = F.interpolate(feat,scale_factor=2)
-        conf = F.interpolate(feat,scale_factor=2)
+        conf = F.interpolate(conf,scale_factor=2)
         return feat,conf
     
     def unfreeze_backbone(self,layers:List[int] = []):
