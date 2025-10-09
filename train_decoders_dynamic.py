@@ -82,6 +82,14 @@ def generate_dynamic_windows(
     返回:
         (torch.Tensor, torch.Tensor): 经过完整增强和预处理的图像和标签张量元组。
     """
+    # --- 代码修复 ---
+    # 错误原因: Kornia的旋转(rotate)等几何变换函数在GPU上执行时需要浮点型输入(如float32),
+    # 因为双线性插值等操作无法在整数类型(torch.uint8, 即Byte)上实现。
+    # 解决方案: 在函数开始时, 就将输入的图像和标签张量从uint8转换为float32。
+    image_tensor = image_tensor.float()
+    label_tensor = label_tensor.float()
+    # --- 修复结束 ---
+
     C, H, W = image_tensor.shape
     device = image_tensor.device
 
@@ -124,7 +132,7 @@ def generate_dynamic_windows(
         if torch.all(rotated_corners >= 0) and torch.all(rotated_corners[:, 0] <= W) and torch.all(rotated_corners[:, 1] <= H):
             num_found += 1
             
-            # 使用Kornia进行高效的旋转和裁切
+            # 使用Kornia进行高效的旋转和裁切 (现在输入已经是float类型, 不会报错)
             rotated_img = KT.rotate(image_tensor.unsqueeze(0), angle_deg, center=torch.tensor([[center_x, center_y]], device=device), mode='bilinear', align_corners=True)
             rotated_lbl = KT.rotate(label_tensor.unsqueeze(0), angle_deg, center=torch.tensor([[center_x, center_y]], device=device), mode='bilinear', align_corners=True)
             
@@ -155,8 +163,9 @@ def generate_dynamic_windows(
     label_windows_rotated = torch.cat([lbl_v0, lbl_v1, lbl_v2, lbl_v3], dim=0)
     
     # 2. 光度增强
-    image_windows_augmented_float = image_windows_augmented.float() / 255.0
-    image_windows_photometric = photometric_aug(image_windows_augmented_float)
+    # 因为输入已是[0, 255]范围的float, 所以先除以255.0归一化到[0, 1]
+    image_windows_normalized_0_1 = image_windows_augmented / 255.0
+    image_windows_photometric = photometric_aug(image_windows_normalized_0_1)
 
     # 3. 标准化和下采样
     norm_transform = K.Normalize(
@@ -418,9 +427,23 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         # 验证 2: 来自静态裁切的一个固定样本，确保验证的一致性
         # 我们需要生成一个固定的窗口用于验证
         top, left = 0, 0 # 例如，取左上角的窗口
-        img_win_val = temp_img_cpu[:, top:top+args.window_size, left:left+args.window_size].unsqueeze(0)
-        lbl_win_val = temp_lbl_cpu[:, top:top+args.window_size, left:left+args.window_size].unsqueeze(0)
         
+        # 确保裁切不会越界
+        h, w = temp_img_cpu.shape[1], temp_img_cpu.shape[2]
+        crop_h = min(args.window_size, h)
+        crop_w = min(args.window_size, w)
+
+        img_win_val = temp_img_cpu[:, top:top+crop_h, left:left+crop_w].unsqueeze(0)
+        lbl_win_val = temp_lbl_cpu[:, top:top+crop_h, left:left+crop_w].unsqueeze(0)
+
+        # 如果裁切尺寸小于目标尺寸，进行填充
+        if crop_h < args.window_size or crop_w < args.window_size:
+            padding_h = args.window_size - crop_h
+            padding_w = args.window_size - crop_w
+            # (左, 右, 上, 下)
+            img_win_val = torch.nn.functional.pad(img_win_val, (0, padding_w, 0, padding_h))
+            lbl_win_val = torch.nn.functional.pad(lbl_win_val, (0, padding_w, 0, padding_h))
+
         val_img_last = norm_transform_cpu(img_win_val.float() / 255.0)
         val_lbl_last_down = downsample(lbl_win_val.permute(0,2,3,1), 16)
         val_lbl_last = val_lbl_last_down.permute(0,3,1,2)
@@ -555,3 +578,4 @@ if __name__ == "__main__":
     )
     
     print("所有训练任务已完成！")
+
