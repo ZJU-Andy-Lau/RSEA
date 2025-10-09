@@ -174,7 +174,7 @@ def generate_dynamic_windows(
     )
     image_windows_normalized = norm_transform(image_windows_photometric)
 
-    label_windows_downsampled = downsample(label_windows_rotated.permute(0, 2, 3, 1), 16)
+    label_windows_downsampled = downsample(label_windows_rotated.permute(0, 2, 3, 1), 16,use_cuda=True)
     label_windows_final = label_windows_downsampled.permute(0, 3, 1, 2)
 
     return image_windows_normalized, label_windows_final
