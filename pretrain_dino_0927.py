@@ -124,6 +124,8 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     feat1,conf1 = encoder(img1)
     feat2,conf2 = encoder(img2)
 
+    size = feat1.shape[2]
+
     # print(feat1.shape,conf1.shape,residual1.shape,obj1.shape,overlap1.shape)
 
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
@@ -192,7 +194,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     else:
         loss = loss + loss_dis * 0.  + loss_obj_sample * 0.
     
-    obj_vis = visualize_obj_error(obj1_P3[:64*64,:2].detach().cpu().numpy(),pred1_P3[:64*64,:2].detach().cpu().numpy(),sample_k=1e9)
+    obj_vis = visualize_obj_error(obj1_P3[:size * size,:2].detach().cpu().numpy(),pred1_P3[:size * size,:2].detach().cpu().numpy(),sample_k=1e9)
 
     vis_data = {
         'feat_vis':feat_vis,
