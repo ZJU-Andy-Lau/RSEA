@@ -64,7 +64,7 @@ def format_time(seconds):
     seconds = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=1024, win_num=3, output_path=None, rank=0, min_crop_size=500, max_crop_size=2000):
+def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=1024, win_num=3, output_path=None, rank=0, min_crop_size=500, max_crop_size=2000, sample_factor = 4):
     """
     将大尺寸图像和标签高效地切分成多个窗口，包括均匀窗口和动态多尺度的随机旋转窗口。
     采用拒绝采样方法确保旋转窗口完全在原图内，不含任何padding。
@@ -211,7 +211,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     image_windows_augmented = transform(image_windows_augmented.float() / 255.0)
 
     label_windows_rotated = label_windows_rotated.permute(0, 2, 3, 1) # (N, H, W, C)
-    label_windows_downsampled = downsample(label_windows_rotated, 16)
+    label_windows_downsampled = downsample(label_windows_rotated, sample_factor)
     label_windows_augmented = label_windows_downsampled.permute(0, 3, 1, 2) # (N, C, H_new, W_new)
 
     return image_windows_augmented, label_windows_augmented
@@ -434,7 +434,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
 
         print(f"[GPU {rank}] 加载数据: Image {image.shape}, Label {label.shape}")
         
-        image_windows, label_windows = crop_to_windows(image, label, image_np, args.window_size, args.win_num, img_vis_dir, rank, args.min_crop_size, args.max_crop_size)
+        image_windows, label_windows = crop_to_windows(image, label, image_np, args.window_size, args.win_num, img_vis_dir, rank, args.min_crop_size, args.max_crop_size, encoder.SAMPLE_FACTOR)
         if image_windows is None:
             print(f"[GPU {rank}] 索引 {data_idx} 的图像尺寸过小，无法裁切，已跳过。")
             continue
@@ -451,7 +451,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         val_lbl_rotated = center_crop(full_lbl_rotated)
         norm_transform = K.Normalize(mean=torch.tensor([0.485, 0.456, 0.406]), std=torch.tensor([0.229, 0.224, 0.225]))
         val_img_center = norm_transform(val_img_unnormalized / 255.0) 
-        val_lbl_downsampled_center = downsample(val_lbl_rotated.permute(0,2,3,1), 16)
+        val_lbl_downsampled_center = downsample(val_lbl_rotated.permute(0,2,3,1), encoder.SAMPLE_FACTOR)
         val_lbl_center = val_lbl_downsampled_center.permute(0,3,1,2)
         
         # --- 准备验证数据 2: 训练集末尾样本 ---
