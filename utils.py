@@ -952,7 +952,7 @@ def visualize_feature_correspondences(
 
     return img_array
 
-def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tuple = (800, 800), sample_k: int = 1000):
+def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tuple = (800, 800), sample_k: int = 1000, ranges = None):
     """
     可视化坐标回归的误差，生成三种分析图像。
 
@@ -991,18 +991,28 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     # 计算每个点的误差大小（欧氏距离）
     error_magnitudes = np.linalg.norm(error_vectors, axis=1)
 
-    # 找到所有点的范围，用于归一化坐标到画布上
-    all_points = np.vstack([obj_P2, pred_P2])
-    min_coords = all_points.min(axis=0)
-    max_coords = all_points.max(axis=0)
-    range_coords = max_coords - min_coords
-    
-    # 防止范围为0
-    range_coords[range_coords == 0] = 1 
+    if ranges is None:
+        # 找到所有点的范围，用于归一化坐标到画布上
+        all_points = np.vstack([obj_P2, pred_P2])
+        min_coords = all_points.min(axis=0)
+        max_coords = all_points.max(axis=0)
+        range_coords = max_coords - min_coords
+        
+        # 防止范围为0
+        range_coords[range_coords == 0] = 1
 
-    # 将坐标缩放到画布尺寸
-    obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
-    pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        # 将坐标缩放到画布尺寸
+        obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        
+    else:
+        range_coords = np.array(ranges) 
+
+        # 将坐标缩放到画布尺寸
+        obj_scaled = obj_P2 / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        pred_scaled = pred_P2 / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    
+
     
     visualizations = {}
 

@@ -104,7 +104,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
     feat = feat.permute(0,2,3,1).reshape(h,w,c).cpu().numpy()
     conf = conf.reshape(h,w).cpu().numpy()
     feat = vis_feat_pca(feat)
-    conf_cont,conf_div = vis_conf(conf,vis_img,16)
+    conf_cont,conf_div = vis_conf(conf,vis_img,encoder.SAMPLE_FACTOR)
     return feat,conf_cont,conf_div
 
 
@@ -202,7 +202,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
         obj_vis = visualize_obj_error(obj1_P3[:size * size,:2].detach().cpu().numpy(),pred1_P3[:size * size,:2].detach().cpu().numpy(),sample_k=1e9)
         obj1_sample_vis = visualize_obj_error(obj1_sample_P3[:1000,:2].detach().cpu().numpy(),pred1_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
         obj2_sample_vis = visualize_obj_error(obj2_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
-        dis_vis = visualize_obj_error(pred1_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
+        dis_vis = visualize_obj_error(pred1_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9,ranges=[2000,2000])
 
         vis_data = {
             'feat_vis':feat_vis,
