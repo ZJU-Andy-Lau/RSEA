@@ -483,8 +483,14 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
                 feature_batch,_ = encoder(image_batch.to(rank))
                 feature_buffer.append(feature_batch.cpu())
         
+
         all_features = torch.cat(feature_buffer, dim=0).permute(0,2,3,1).flatten(0,2)
         all_labels_for_features = label_windows[:-1].permute(0,2,3,1).flatten(0,2)
+
+        if len(all_features > args.max_buffer_size):
+            select_idxs = torch.randperm(len(all_features))[:args.max_buffer_size].to(all_features.device)
+            all_features = all_features[select_idxs]
+            all_labels_for_features = all_labels_for_features[select_idxs]
 
         buffer = {'features': all_features, 'objs': all_labels_for_features}
 
@@ -525,6 +531,7 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='./trained_decoders', help='保存训练好的Decoder权重的目录')
     parser.add_argument('--window_size', type=int, default=1024, help='Encoder的输入窗口大小')
     parser.add_argument('--win_num', type=int, default=3, help='每条边上裁切的窗口数')
+    parser.add_argument('--max_buffer_size',type=int,default=None)
     parser.add_argument('--epochs', type=int, default=200, help='每个Decoder的训练轮数')
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--batch_size', type=int, default=4, help='特征提取时的批量大小')
