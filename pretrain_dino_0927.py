@@ -194,12 +194,21 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     else:
         loss = loss + loss_dis * 0.  + loss_obj_sample * 0.
     
-    obj_vis = visualize_obj_error(obj1_P3[:size * size,:2].detach().cpu().numpy(),pred1_P3[:size * size,:2].detach().cpu().numpy(),sample_k=1e9)
+    if epoch % 5 == 0:
+        obj_vis = visualize_obj_error(obj1_P3[:size * size,:2].detach().cpu().numpy(),pred1_P3[:size * size,:2].detach().cpu().numpy(),sample_k=1e9)
+        obj1_sample_vis = visualize_obj_error(obj1_sample_P3[:1000,:2].detach().cpu().numpy(),pred1_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
+        obj2_sample_vis = visualize_obj_error(obj2_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
+        dis_vis = visualize_obj_error(pred1_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
 
-    vis_data = {
-        'feat_vis':feat_vis,
-        'obj_vis':obj_vis
-    }
+        vis_data = {
+            'feat_vis':feat_vis,
+            'obj_vis':obj_vis,
+            'obj1_sample_vis':obj1_sample_vis,
+            'obj2_sample_vis':obj2_sample_vis,
+            'dis_vis':dis_vis
+        }
+    else:
+        vis_data = {}
 
     return loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,loss_dis,loss_obj_sample,k,conf_mean,feat_dis,sp,sn,vis_data
 
@@ -637,6 +646,9 @@ def pretrain(args):
                 # logger.add_image('vis/obj_vis_heatmap',vis_data['obj_vis']['heatmap'],epoch,dataformats='HWC')
                 # logger.add_image('vis/obj_vis_histogram',vis_data['obj_vis']['histogram'],epoch,dataformats='HWC')
                 logger.add_image('vis/obj_vis_scatter',vis_data['obj_vis']['scatter'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj1_sample_vis_scatter',vis_data['obj1_sample_vis']['scatter'],epoch,dataformats='HWC')
+                logger.add_image('vis/obj2_sample_vis_scatter',vis_data['obj2_sample_vis']['scatter'],epoch,dataformats='HWC')
+                logger.add_image('vis/dis_vis_scatter',vis_data['dis_vis']['scatter'],epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_12',train_img_12.astype(np.uint8),epoch,dataformats='HWC')
                 # logger.add_image('vis/train_img_22',train_img_22.astype(np.uint8),epoch,dataformats='HWC')
 
