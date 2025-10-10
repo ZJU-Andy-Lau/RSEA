@@ -104,7 +104,7 @@ def vis(encoder:EncoderDino,vis_img:np.ndarray):
     feat = feat.permute(0,2,3,1).reshape(h,w,c).cpu().numpy()
     conf = conf.reshape(h,w).cpu().numpy()
     feat = vis_feat_pca(feat)
-    conf_cont,conf_div = vis_conf(conf,vis_img,encoder.SAMPLE_FACTOR)
+    conf_cont,conf_div = vis_conf(conf,vis_img,encoder.module.SAMPLE_FACTOR)
     return feat,conf_cont,conf_div
 
 
