@@ -266,9 +266,9 @@ class CriterionFinetune(nn.Module):
 
 
         if only_decoder:
-            loss = loss_obj + loss_height + loss_relative + loss_conf * 0. + loss_feat * 0.
+            loss = loss_obj + loss_height + loss_conf * 0. + loss_feat * 0. #  + loss_relative
         else:
-            loss = loss_obj + loss_height + loss_relative + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)
+            loss = loss_obj + loss_height + loss_conf + loss_feat * loss_feat_weight #+ loss_dis * max(min(1.,epoch / 5. - 1.),0.)  + loss_relative
 
         return loss,loss_obj,loss_height,loss_relative,loss_conf,loss_feat,residual_threshold,simi_positive.mean(),simi_negative.mean()
         
