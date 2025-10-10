@@ -131,7 +131,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     feat1_sample = sample_features(feat1,overlap1).unsqueeze(-1) # B,D,N,1
     feat2_sample = sample_features(feat2,overlap2).unsqueeze(-1)
     obj1_sample_P3 = sample_features(obj1.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
-    obj2_sample_P3 = sample_features(obj2.permute(0,3,1,2),overlap1).permute(0,2,1).flatten(0,1)
+    obj2_sample_P3 = sample_features(obj2.permute(0,3,1,2),overlap2).permute(0,2,1).flatten(0,1)
 
     # project_feat1 = projector(feat1_sample)
     # project_feat2 = projector(feat2_sample)
@@ -187,7 +187,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
                                                                 only_decoder,
                                                                 H,W)
     
-    loss_dis = torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
+    loss_dis = torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean() * 10
     loss_obj_sample = .5 * torch.norm(pred1_sample_P3 - obj1_sample_P3,dim=-1).mean() + .5 * torch.norm(pred2_sample_P3 - obj2_sample_P3,dim=-1).mean()
     if not only_decoder:
         loss = loss + loss_dis + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
