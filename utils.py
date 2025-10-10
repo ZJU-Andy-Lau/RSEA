@@ -991,17 +991,21 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     # 计算每个点的误差大小（欧氏距离）
     error_magnitudes = np.linalg.norm(error_vectors, axis=1)
 
-    all_points = np.vstack([obj_P2, pred_P2])
-    min_coords = all_points.min(axis=0)
-    max_coords = all_points.max(axis=0)
-    range_coords = max_coords - min_coords
-    
-    # 防止范围为0
-    range_coords[range_coords == 0] = 1
+    if ranges is None:
+        all_points = np.vstack([obj_P2, pred_P2])
+        min_coords = all_points.min(axis=0)
+        max_coords = all_points.max(axis=0)
+        range_coords = max_coords - min_coords
+        
+        # 防止范围为0
+        range_coords[range_coords == 0] = 1
 
-    # 将坐标缩放到画布尺寸
-    obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
-    pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        # 将坐标缩放到画布尺寸
+        obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    else:
+        obj_scaled = obj_P2
+        pred_scaled = pred_P2
         
     
     visualizations = {}
