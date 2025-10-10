@@ -202,7 +202,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
         obj_vis = visualize_obj_error(obj1_P3[:size * size,:2].detach().cpu().numpy(),pred1_P3[:size * size,:2].detach().cpu().numpy(),sample_k=1e9)
         obj1_sample_vis = visualize_obj_error(obj1_sample_P3[:1000,:2].detach().cpu().numpy(),pred1_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
         obj2_sample_vis = visualize_obj_error(obj2_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9)
-        dis_vis = visualize_obj_error(pred1_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9,ranges=[2000,2000])
+        dis_vis = visualize_obj_error(pred1_sample_P3[:1000,:2].detach().cpu().numpy(),pred2_sample_P3[:1000,:2].detach().cpu().numpy(),sample_k=1e9,ranges=[[-1000,1000],[-1000,1000]])
 
         vis_data = {
             'feat_vis':feat_vis,

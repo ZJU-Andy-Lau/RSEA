@@ -991,28 +991,18 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     # 计算每个点的误差大小（欧氏距离）
     error_magnitudes = np.linalg.norm(error_vectors, axis=1)
 
-    if ranges is None:
-        # 找到所有点的范围，用于归一化坐标到画布上
-        all_points = np.vstack([obj_P2, pred_P2])
-        min_coords = all_points.min(axis=0)
-        max_coords = all_points.max(axis=0)
-        range_coords = max_coords - min_coords
-        
-        # 防止范围为0
-        range_coords[range_coords == 0] = 1
-
-        # 将坐标缩放到画布尺寸
-        obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
-        pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
-        
-    else:
-        range_coords = np.array(ranges) 
-
-        # 将坐标缩放到画布尺寸
-        obj_scaled = obj_P2 / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
-        pred_scaled = pred_P2 / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    all_points = np.vstack([obj_P2, pred_P2])
+    min_coords = all_points.min(axis=0)
+    max_coords = all_points.max(axis=0)
+    range_coords = max_coords - min_coords
     
+    # 防止范围为0
+    range_coords[range_coords == 0] = 1
 
+    # 将坐标缩放到画布尺寸
+    obj_scaled = (obj_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+    pred_scaled = (pred_P2 - min_coords) / range_coords * np.array([canvas_size[1], canvas_size[0]]) * 0.9 + 0.05 * np.array([canvas_size[1], canvas_size[0]])
+        
     
     visualizations = {}
 
@@ -1020,6 +1010,11 @@ def visualize_obj_error(obj_P2: np.ndarray, pred_P2: np.ndarray, canvas_size: tu
     ax_scatter.scatter(obj_scaled[:, 0], obj_scaled[:, 1], c='blue', s=10, alpha=0.7, label='Ground Truth')
     ax_scatter.scatter(pred_scaled[:, 0], pred_scaled[:, 1], c='red', s=10, alpha=0.7, label='Prediction')
     ax_scatter.set_title('Ground Truth vs. Prediction Scatter Plot')
+
+    if not ranges is None:
+        ax_scatter.set_xlim(ranges[0][0],ranges[0][1])
+        ax_scatter.set_ylim(ranges[1][0],ranges[1][1])
+
     ax_scatter.set_xlabel('X coordinate')
     ax_scatter.set_ylabel('Y coordinate')
     ax_scatter.set_aspect('equal', adjustable='box')
