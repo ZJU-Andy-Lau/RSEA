@@ -194,7 +194,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     loss_dis = torch.norm(sample_dis_1 - sample_dis_2,dim=-1).mean() #torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
     loss_obj_sample = .5 * torch.norm(pred1_sample_P3 - obj1_sample_P3,dim=-1).mean() + .5 * torch.norm(pred2_sample_P3 - obj2_sample_P3,dim=-1).mean()
     if not only_decoder:
-        loss = loss + loss_dis * 2. + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
+        loss = loss + loss_dis * 3. + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
     else:
         loss = loss + loss_dis * 0.  + loss_obj_sample * 0.
     
