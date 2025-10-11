@@ -187,14 +187,15 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
                                                                 only_decoder,
                                                                 H,W)
     feat_dis = torch.norm(feat1_sample.permute(0,2,3,1).flatten(0,2) - feat2_sample.permute(0,2,3,1).flatten(0,2),dim=1).mean().detach() * 100.
-    sample_dis_1 = pred1_sample_P3 - obj1_sample_P3
-    sample_dis_2 = pred2_sample_P3 - obj2_sample_P3
+    # sample_dis_1 = pred1_sample_P3 - obj1_sample_P3
+    # sample_dis_2 = pred2_sample_P3 - obj2_sample_P3
     # obj_dis = torch.norm(obj1_sample_P3 - obj2_sample_P3,dim=-1).detach()
     # print(f"obj dis: {obj_dis.mean().item()} \t {obj_dis.median().item()} \t {obj_dis.min().item()} \t {obj_dis.max().item()} \n")
-    loss_dis = torch.norm(sample_dis_1 - sample_dis_2,dim=-1).mean() #torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
+    # loss_dis = torch.norm(sample_dis_1 - sample_dis_2,dim=-1).mean() #torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
+    loss_dis = torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
     loss_obj_sample = .5 * torch.norm(pred1_sample_P3 - obj1_sample_P3,dim=-1).mean() + .5 * torch.norm(pred2_sample_P3 - obj2_sample_P3,dim=-1).mean()
     if not only_decoder:
-        loss = loss + loss_dis * 3. + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
+        loss = loss + loss_dis * 2. + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
     else:
         loss = loss + loss_dis * 0.  + loss_obj_sample * 0.
     
