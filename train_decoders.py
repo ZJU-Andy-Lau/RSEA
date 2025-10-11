@@ -68,20 +68,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     """
     将大尺寸图像和标签高效地切分成多个窗口，包括均匀窗口和动态多尺度的随机旋转窗口。
     采用拒绝采样方法确保旋转窗口完全在原图内，不含任何padding。
-
-    参数:
-        image_tensor (torch.Tensor): 形状为 (C, H, W) 的图像张量。
-        label_tensor (torch.Tensor): 形状为 (C_label, H, W) 的标签张量。
-        image_np_for_vis (np.ndarray): 用于可视化的原始Numpy图像 (H, W, C)。
-        window_size (int): 最终输入模型的窗口目标边长。
-        win_num (int): 每条边上裁切的窗口数量。
-        output_path (str): 保存裁切窗口和可视化图像的文件夹路径。
-        rank (int): 当前进程的排名，用于控制文件写入和打印。
-        min_crop_size (int): 随机裁切的最小尺寸。
-        max_crop_size (int): 随机裁切的最大尺寸。
-
-    返回:
-        (torch.Tensor, torch.Tensor): 包含所有窗口的图像和标签张量元组。
+    修改后的版本：对均匀裁切的窗口进行随机两次90度旋转，对随机裁切的窗口不进行额外的90度旋转。
     """
     C, H, W = image_tensor.shape
     
@@ -119,17 +106,15 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
     num_random_windows = win_num * win_num
     num_found = 0
 
-    # 确定合法的裁切尺寸范围
     max_allowed_size = min(max_crop_size, H, W)
     min_allowed_size = min(min_crop_size, max_allowed_size)
         
     if min_allowed_size >= max_allowed_size:
-        print(f"[GPU {rank}] Skipping random crops: image dimensions ({H}x{W}) are too small for the crop size range [{min_crop_size}, {max_crop_size}].")
+        if rank == 0:
+            print(f"Skipping random crops: image dimensions ({H}x{W}) are too small for the crop size range [{min_crop_size}, {max_crop_size}].")
     else:
-        pbar = tqdm(total=num_random_windows, desc=f"[GPU {rank}] Finding {num_random_windows} valid random crops", leave=False, position=rank)
-
+        pbar = tqdm(total=num_random_windows, desc=f"Finding {num_random_windows} valid random crops", leave=False, position=rank, disable=(rank!=0))
         while num_found < num_random_windows:
-            # 在每轮循环中动态随机选择一个裁切尺寸
             crop_size = torch.randint(min_allowed_size, max_allowed_size + 1, (1,)).item()
             ws_half = crop_size / 2.0
             corners = torch.tensor([[-ws_half, -ws_half], [ws_half, -ws_half], [ws_half, ws_half], [-ws_half, ws_half]])
@@ -147,7 +132,7 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                torch.all(rotated_corners[:, 1] >= 0) and torch.all(rotated_corners[:, 1] <= H):
                 
                 num_found += 1
-                pbar.update(1)
+                if rank == 0: pbar.update(1)
 
                 xmin, ymin = rotated_corners.min(dim=0).values.floor().int()
                 xmax, ymax = rotated_corners.max(dim=0).values.ceil().int()
@@ -163,7 +148,6 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                 rotated_temp_img = KT.rotate(temp_img.float().unsqueeze(0), angle_deg, center=torch.tensor([[center_x_new, center_y_new]]), mode='bilinear', align_corners=True)
                 rotated_temp_lbl = KT.rotate(temp_lbl.float().unsqueeze(0), angle_deg, center=torch.tensor([[center_x_new, center_y_new]]), mode='bilinear', align_corners=True)
 
-                # 从旋转后的区域中心裁切出crop_size的窗口，然后缩放到标准window_size
                 final_img_win = KT.resize(K.CenterCrop(crop_size)(rotated_temp_img), (window_size, window_size)).squeeze(0)
                 final_lbl_win = KT.resize(K.CenterCrop(crop_size)(rotated_temp_lbl), (window_size, window_size)).squeeze(0)
 
@@ -172,45 +156,42 @@ def crop_to_windows(image_tensor, label_tensor, image_np_for_vis, window_size=10
                 
                 cv2.drawContours(vis_image, [rotated_corners.int().numpy()], 0, (255, 0, 0), 5) 
         
-        if pbar:
-            pbar.close()
-    
-    # if output_path:
-    #     cv2.imwrite(os.path.join(output_path, f'window_visualization_rank{rank}.png'), vis_image)
+        if pbar: pbar.close()
 
     if not image_windows_list:
         return None, None
 
-    image_windows = torch.stack(image_windows_list, dim=0)
-    label_windows = torch.stack(label_windows_list, dim=0)
+    # --- 3. 数据增强 (Data Augmentation) ---
+    num_uniform_windows = win_num * win_num
+    uniform_image_windows = torch.stack(image_windows_list[:num_uniform_windows], dim=0)
+    uniform_label_windows = torch.stack(label_windows_list[:num_uniform_windows], dim=0)
 
-    # --- 3. 旋转增强 (Rotation Augmentation) ---
-    img_v0 = image_windows
-    img_v1 = torch.rot90(image_windows, 1, [2, 3])
-    img_v2 = torch.rot90(image_windows, 2, [2, 3])
-    img_v3 = torch.rot90(image_windows, 3, [2, 3])
-    image_windows_augmented = torch.cat([img_v0, img_v1, img_v2, img_v3], dim=0)
+    # 对均匀裁切的窗口，从[0, 90, 180, 270]度中随机选择两种旋转
+    rotation_indices = torch.randperm(4)[:2]
+    augmented_uniform_imgs = []
+    augmented_uniform_lbls = []
+    for k in rotation_indices:
+        augmented_uniform_imgs.append(torch.rot90(uniform_image_windows, int(k), [2, 3]))
+        augmented_uniform_lbls.append(torch.rot90(uniform_label_windows, int(k), [2, 3]))
+    
+    final_image_windows = torch.cat(augmented_uniform_imgs, dim=0)
+    final_label_windows = torch.cat(augmented_uniform_lbls, dim=0)
 
-    lbl_v0 = label_windows
-    lbl_v1 = torch.rot90(label_windows, 1, [2, 3])
-    lbl_v2 = torch.rot90(label_windows, 2, [2, 3])
-    lbl_v3 = torch.rot90(label_windows, 3, [2, 3])
-    label_windows_rotated = torch.cat([lbl_v0, lbl_v1, lbl_v2, lbl_v3], dim=0)
-
-    # if output_path:
-    #     for i in range(image_windows_augmented.shape[0]):
-    #         tensor_slice = image_windows_augmented[i]
-    #         img_to_save = tensor_slice.permute(1, 2, 0).cpu().clamp(0, 255).to(torch.uint8).numpy()
-    #         cv2.imwrite(os.path.join(output_path, f'window_{i:04d}_rank{rank}.png'), img_to_save)
+    # 随机裁切的窗口已经自带旋转，不再进行额外的90度旋转
+    if len(image_windows_list) > num_uniform_windows:
+        random_image_windows = torch.stack(image_windows_list[num_uniform_windows:], dim=0)
+        random_label_windows = torch.stack(label_windows_list[num_uniform_windows:], dim=0)
+        final_image_windows = torch.cat([final_image_windows, random_image_windows], dim=0)
+        final_label_windows = torch.cat([final_label_windows, random_label_windows], dim=0)
 
     # --- 4. 标准化和下采样 (Normalization and Downsampling) ---
     transform = K.Normalize(
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
                 std=torch.tensor([0.229, 0.224, 0.225])
             )
-    image_windows_augmented = transform(image_windows_augmented.float() / 255.0)
+    image_windows_augmented = transform(final_image_windows.float() / 255.0)
 
-    label_windows_rotated = label_windows_rotated.permute(0, 2, 3, 1) # (N, H, W, C)
+    label_windows_rotated = final_label_windows.permute(0, 2, 3, 1) # (N, H, W, C)
     label_windows_downsampled = downsample(label_windows_rotated, sample_factor)
     label_windows_augmented = label_windows_downsampled.permute(0, 3, 1, 2) # (N, C, H_new, W_new)
 
@@ -247,8 +228,10 @@ def add_noise_to_features(features, min_cos_sim=0.99):
 
 def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_center, val_lbl_center, val_img_last, val_lbl_last, save_path, vis_save_path, args):
     """
-    在指定的GPU上训练一个Decoder模型, 并在训练中进行验证, 支持断点续训和小批量训练。
-    现在支持两份验证数据。
+    在指定的GPU上训练一个Decoder模型。
+    修改后的版本：
+    1. Buffer为(B, D, H, W)格式，按图像窗口进行批处理。
+    2. 引入空间一致性损失。
     """
     decoder.to(rank)
     
@@ -276,49 +259,80 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
     last_reported_min_loss = min_loss
     best_state_dict = decoder.state_dict()
 
-    print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个样本.")
+    print(f"[GPU {rank}] 开始训练 {os.path.basename(save_path)}. Buffer大小: {len(buffer['features'])} 个图像窗口.")
     all_features = buffer['features'].to(rank)
     all_gt_objs = buffer['objs'].to(rank)
-    num_total_features = all_features.shape[0]
+    num_total_windows = all_features.shape[0]
 
     start_time = time.time() 
     for epoch in range(start_epoch, args.epochs):
         decoder.train()
         
-        epoch_indices = torch.randperm(num_total_features, device=rank)
+        epoch_indices = torch.randperm(num_total_windows, device=rank)
         epoch_loss = 0.0
+        epoch_recon_loss = 0.0
+        epoch_spatial_loss = 0.0
         num_batches = 0
         
-        for i in range(0, num_total_features, args.decoder_batch_size):
+        # decoder_batch_size现在代表每个批次中的图像窗口数量
+        for i in range(0, num_total_windows, args.decoder_batch_size):
             batch_indices = epoch_indices[i : i + args.decoder_batch_size]
             
             feature_batch = all_features[batch_indices]
             gt_objs_batch = all_gt_objs[batch_indices]
 
             if args.add_feature_noise:
-                feature_batch = add_noise_to_features(feature_batch, min_cos_sim=args.noise_level)
+                B, D, H, W = feature_batch.shape
+                feature_batch_flat = feature_batch.permute(0, 2, 3, 1).reshape(-1, D)
+                noisy_features_flat = add_noise_to_features(feature_batch_flat, min_cos_sim=args.noise_level)
+                feature_batch = noisy_features_flat.reshape(B, H, W, D).permute(0, 3, 1, 2)
 
-            feature_batch_reshaped = feature_batch.T.unsqueeze(0).unsqueeze(-1)
-            
             optimizer.zero_grad()
-            output = decoder(feature_batch_reshaped)
-            output = output.permute(0,2,3,1).flatten(0,2)
-            pred_obj = warp_by_poly(output, map_coeffs)
             
-            loss = torch.norm(pred_obj - gt_objs_batch, dim=1).mean()
+            # Decoder直接处理(B,D,H,W)的特征图
+            output = decoder(feature_batch)
+            
+            # --- 损失计算 ---
+            output_permuted = output.permute(0, 2, 3, 1)
+            B, H, W, C = output_permuted.shape
+            output_flat = output_permuted.reshape(-1, C)
+
+            pred_obj_flat = warp_by_poly(output_flat, map_coeffs)
+            pred_obj_map = pred_obj_flat.reshape(B, H, W, C)
+
+            gt_obj_map = gt_objs_batch.permute(0, 2, 3, 1)
+            gt_obj_flat = gt_obj_map.reshape(-1, C)
+
+            # 1. 重建损失
+            loss_recon = torch.norm(pred_obj_flat - gt_obj_flat, dim=1).mean()
+            
+            # 2. 空间一致性损失
+            pred_diff_h = torch.norm(pred_obj_map[:, :, 1:, :] - pred_obj_map[:, :, :-1, :], p=2, dim=-1)
+            gt_diff_h = torch.norm(gt_obj_map[:, :, 1:, :] - gt_obj_map[:, :, :-1, :], p=2, dim=-1)
+            pred_diff_v = torch.norm(pred_obj_map[:, 1:, :, :] - pred_obj_map[:, :-1, :, :], p=2, dim=-1)
+            gt_diff_v = torch.norm(gt_obj_map[:, 1:, :, :] - gt_obj_map[:, :-1, :, :], p=2, dim=-1)
+            
+            loss_spatial = torch.abs(pred_diff_h - gt_diff_h.detach()).mean() + torch.abs(pred_diff_v - gt_diff_v.detach()).mean()
+            
+            # 3. 总损失
+            loss = loss_recon + args.spatial_loss_weight * loss_spatial
+
             loss.backward()
             optimizer.step()
             
             epoch_loss += loss.item()
+            epoch_recon_loss += loss_recon.item()
+            epoch_spatial_loss += loss_spatial.item()
             num_batches += 1
 
         scheduler.step()
         avg_epoch_loss = epoch_loss / num_batches
+        avg_recon_loss = epoch_recon_loss / num_batches
+        avg_spatial_loss = epoch_spatial_loss / num_batches
 
         if (epoch + 1) % 100 == 0 and (epoch + 1) > 0:
             decoder.eval()
             with torch.no_grad():
-                # --- 验证 1: 中心旋转样本 ---
                 val_img_center_gpu = val_img_center.to(rank)
                 val_feat_center, _ = encoder(val_img_center_gpu)
                 val_output_center = decoder(val_feat_center).permute(0,2,3,1).flatten(0,2)
@@ -326,7 +340,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
                 val_gt_obj_center = val_lbl_center.to(rank).permute(0,2,3,1).flatten(0,2)
                 val_loss_center = torch.norm(val_pred_obj_center - val_gt_obj_center, dim=1).mean()
 
-                # --- 验证 2: 训练集末尾样本 ---
                 val_img_last_gpu = val_img_last.to(rank)
                 val_feat_last, _ = encoder(val_img_last_gpu)
                 val_output_last = decoder(val_feat_last).permute(0,2,3,1).flatten(0,2)
@@ -341,14 +354,15 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
             remaining_seconds = time_per_epoch * (total_epochs_in_run - epochs_done)
             min_loss_delta = last_reported_min_loss - min_loss
             min_loss_str = f"min Loss: {min_loss:.4f}"
-            if min_loss_delta > 1e-6:
-                min_loss_str += f" (↓{min_loss_delta:.4f})"
+            if min_loss_delta > 1e-6: min_loss_str += f" (↓{min_loss_delta:.4f})"
             last_reported_min_loss = min_loss
             
-            print(f"[GPU {rank}] 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{args.epochs}] | Train Loss: {avg_epoch_loss:.4f} | Val Loss(Center): {val_loss_center.item():.4f} | Val Loss(Last): {val_loss_last.item():.4f} | {min_loss_str} | Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
+            print(f"[GPU {rank}] 任务: {os.path.basename(save_path)} | Epoch [{epoch+1}/{args.epochs}] | "
+                  f"Total Loss: {avg_epoch_loss:.4f} | Recon Loss: {avg_recon_loss:.4f} | Spatial Loss: {avg_spatial_loss:.4f} | "
+                  f"Val(C): {val_loss_center.item():.4f} | Val(L): {val_loss_last.item():.4f} | {min_loss_str} | "
+                  f"Elapsed: {format_time(elapsed_seconds)} | ETA: {format_time(remaining_seconds)}")
 
             if (epoch + 1) % 1000 == 0 and (epoch + 1) > 0:
-                # --- 为中心样本生成散点图 ---
                 pred_coords_center = val_pred_obj_center.cpu().numpy()
                 true_coords_center = val_gt_obj_center.cpu().numpy()
                 plt.figure(figsize=(10, 10))
@@ -361,7 +375,6 @@ def train_single_decoder(rank, decoder, encoder, buffer, map_coeffs, val_img_cen
                 epoch_save_path_center = f"{path_parts_center[0]}_center_epoch_{epoch+1}_rank{rank}{path_parts_center[1]}"
                 plt.savefig(epoch_save_path_center); plt.close()
 
-                # --- 为末尾样本生成散点图 ---
                 pred_coords_last = val_pred_obj_last.cpu().numpy()
                 true_coords_last = val_gt_obj_last.cpu().numpy()
                 plt.figure(figsize=(10, 10))
@@ -409,21 +422,14 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         param.requires_grad = False
 
     for data_idx in indices_for_this_gpu:
-        
         is_dummy_task = (data_idx == -1)
-        
         if not is_dummy_task:
             img_vis_dir = os.path.join(vis_output_dir, f'data_{data_idx}')
             os.makedirs(img_vis_dir, exist_ok=True)
-        
         dist.barrier()
-        
-        if is_dummy_task:
-            continue
+        if is_dummy_task: continue
 
         print(f"\n[GPU {rank}] 开始处理数据集索引: {data_idx}")
-        
-        img_vis_dir = os.path.join(vis_output_dir, f'data_{data_idx}')
         
         image_np = all_images[data_idx]
         label_np = all_labels[data_idx]
@@ -441,7 +447,7 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         
         print(f"[GPU {rank}] 图像和标签被切分为 {image_windows.shape[0]} 个窗口.")
         
-        # --- 准备验证数据 1: 中心旋转样本 ---
+        # --- 准备验证数据 ---
         H, W = image.shape[1], image.shape[2]
         val_angle = torch.tensor([45.0])
         center_crop = K.CenterCrop(args.window_size)
@@ -454,41 +460,26 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         val_lbl_downsampled_center = downsample(val_lbl_rotated.permute(0,2,3,1), encoder.SAMPLE_FACTOR)
         val_lbl_center = val_lbl_downsampled_center.permute(0,3,1,2)
         
-        # --- 准备验证数据 2: 训练集末尾样本 ---
-        # image_windows 和 label_windows 已经是处理好的，可以直接用
-        val_img_last = image_windows[24].unsqueeze(0)
-        val_lbl_last = label_windows[24].unsqueeze(0)
+        val_img_last = image_windows[-1].unsqueeze(0) # Use the very last augmented sample for validation
+        val_lbl_last = label_windows[-1].unsqueeze(0)
         
         print(f"[GPU {rank}] 验证数据已创建. 中心样本Shape: {val_img_center.shape}, 末尾样本Shape: {val_img_last.shape}")
 
-        # --- 可视化中心验证样本的位置 ---
-        # val_img_to_save = val_img_unnormalized.squeeze(0).permute(1, 2, 0).cpu().clamp(0,255).to(torch.uint8).numpy()
-        # cv2.imwrite(os.path.join(img_vis_dir, f'validation_sample_center_rank{rank}.png'), val_img_to_save)
-        # vis_val_image_path = os.path.join(img_vis_dir, f'window_visualization_rank{rank}.png')
-        # if os.path.exists(vis_val_image_path):
-        #     vis_val_image = cv2.imread(vis_val_image_path)
-        #     if vis_val_image is not None:
-        #         rect = ((W/2, H/2), (args.window_size, args.window_size), -45.0) 
-        #         box_pts = np.int0(cv2.boxPoints(rect))
-        #         cv2.drawContours(vis_val_image, [box_pts], 0, (0, 255, 255), 5) 
-        #         cv2.imwrite(os.path.join(img_vis_dir, f'window_visualization_with_validation_rank{rank}.png'), vis_val_image)
-
-        # --- 提取特征 ---
+        # --- 提取特征并构建Buffer ---
         feature_buffer = []
-        # 使用不包含最后一个验证样本的列表来提取特征
-        training_image_windows = image_windows[:-1]
+        training_image_windows = image_windows  #[:-1] # Exclude the last sample used for validation
         temp_dataloader = DataLoader(training_image_windows, batch_size=args.batch_size, shuffle=False)
         with torch.no_grad():
             for image_batch in temp_dataloader:
                 feature_batch,_ = encoder(image_batch.to(rank))
                 feature_buffer.append(feature_batch.cpu())
         
+        # Buffer现在保持(B, D, H, W)格式
+        all_features = torch.cat(feature_buffer, dim=0)
+        all_labels_for_features = label_windows #[:-1]
 
-        all_features = torch.cat(feature_buffer, dim=0).permute(0,2,3,1).flatten(0,2)
-        all_labels_for_features = label_windows[:-1].permute(0,2,3,1).flatten(0,2)
-
-        if len(all_features > args.max_buffer_size):
-            select_idxs = torch.randperm(len(all_features))[:args.max_buffer_size].to(all_features.device)
+        if args.max_buffer_size and all_features.shape[0] > args.max_buffer_size:
+            select_idxs = torch.randperm(all_features.shape[0])[:args.max_buffer_size]
             all_features = all_features[select_idxs]
             all_labels_for_features = all_labels_for_features[select_idxs]
 
@@ -498,21 +489,13 @@ def main_worker(rank, world_size, args, all_images, all_labels, all_map_coeffs, 
         
         decoder_name = f"decoder_{data_idx}.pth"
         save_path = os.path.join(args.output_dir, decoder_name)
-        scatter_plot_path = os.path.join(img_vis_dir, 'validation_scatter.png') # 基础路径名
+        scatter_plot_path = os.path.join(img_vis_dir, 'validation_scatter.png')
         
         train_single_decoder(
-            rank=rank,
-            decoder=decoder,
-            encoder=encoder,
-            buffer=buffer,
-            map_coeffs=map_coef,
-            val_img_center=val_img_center,
-            val_lbl_center=val_lbl_center,
-            val_img_last=val_img_last,
-            val_lbl_last=val_lbl_last,
-            save_path=save_path,
-            vis_save_path=scatter_plot_path,
-            args=args
+            rank=rank, decoder=decoder, encoder=encoder, buffer=buffer,
+            map_coeffs=map_coef, val_img_center=val_img_center, val_lbl_center=val_lbl_center,
+            val_img_last=val_img_last, val_lbl_last=val_lbl_last, save_path=save_path,
+            vis_save_path=scatter_plot_path, args=args
         )
 
     cleanup()
@@ -531,19 +514,19 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default='./trained_decoders', help='保存训练好的Decoder权重的目录')
     parser.add_argument('--window_size', type=int, default=1024, help='Encoder的输入窗口大小')
     parser.add_argument('--win_num', type=int, default=3, help='每条边上裁切的窗口数')
-    parser.add_argument('--max_buffer_size',type=int,default=None)
-    parser.add_argument('--epochs', type=int, default=200, help='每个Decoder的训练轮数')
+    parser.add_argument('--max_buffer_size',type=int,default=None, help='每个任务用于训练的最大图像窗口数量')
+    parser.add_argument('--epochs', type=int, default=10000, help='每个Decoder的训练轮数')
     parser.add_argument('--lr', type=float, default=1e-4, help='学习率')
     parser.add_argument('--batch_size', type=int, default=4, help='特征提取时的批量大小')
     parser.add_argument('--resume_training', action='store_true', help='从最新的断点恢复训练')
-    parser.add_argument('--decoder_batch_size', type=int, default=4096, help='训练Decoder时的批量大小')
+    parser.add_argument('--decoder_batch_size', type=int, default=16, help='训练Decoder时每个批次的图像窗口数量')
     parser.add_argument('--add_feature_noise', action='store_true', help='为特征添加噪声以进行数据增强')
     parser.add_argument('--noise_level', type=float, default=0.99, help='噪声级别，与原特征的最小余弦相似度')
     parser.add_argument('--decoder_block_num',type=int, default=1, help='Decoder中的block数量')
     parser.add_argument('--weight_decay', type=float, default=1e-5, help='AdamW优化器的权重衰减')
     parser.add_argument('--min_crop_size', type=int, default=500, help='随机裁切的最小尺寸')
     parser.add_argument('--max_crop_size', type=int, default=2000, help='随机裁切的最大尺寸')
-
+    parser.add_argument('--spatial_loss_weight', type=float, default=0.5, help='空间一致性损失的权重')
     
     args = parser.parse_args()
 
@@ -557,40 +540,29 @@ if __name__ == "__main__":
         all_keys = list(database.keys())
         if args.dataset_select is None:
             dataset_num = args.dataset_num
-            if dataset_num is None:
-                dataset_num = len(all_keys)
+            if dataset_num is None: dataset_num = len(all_keys)
             dataset_indices = torch.randperm(len(all_keys))[:dataset_num].numpy()
         else:
             dataset_indices = [int(i) for i in args.dataset_select.split(',')]
             dataset_num = len(dataset_indices)
 
         keys = [all_keys[i] for i in dataset_indices]
-        all_images = []
-        all_labels = []
-        all_map_coeffs = []
+        all_images, all_labels, all_map_coeffs = [], [], []
         for key in tqdm(keys, desc="Loading data"):
             img = database[key]['images']['image_0'][:]
-            if img.ndim == 2:
-                img = np.stack([img] * 3, axis=-1)
-            elif img.shape[2] == 1:
-                img = np.concatenate([img] * 3, axis=-1)
-
-            obj = database[key]['obj'][:]
-            obj = centerize_obj(obj)
+            if img.ndim == 2: img = np.stack([img] * 3, axis=-1)
+            elif img.shape[2] == 1: img = np.concatenate([img] * 3, axis=-1)
+            obj = centerize_obj(database[key]['obj'][:])
             map_coef = {
-                    'x':np.array([obj[...,0].min(),obj[...,0].max()]),
-                    'y':np.array([obj[...,1].min(),obj[...,1].max()]),
-                    'h':get_map_coef(obj[...,2].reshape(-1))
-                }
+                'x':np.array([obj[...,0].min(),obj[...,0].max()]),
+                'y':np.array([obj[...,1].min(),obj[...,1].max()]),
+                'h':get_map_coef(obj[...,2].reshape(-1))
+            }
             all_images.append(img)
             all_labels.append(obj)
             all_map_coeffs.append(map_coef)
-        
-    except FileNotFoundError as e:
-        print(f"错误: 无法找到数据文件: {e}")
-        exit(1)
     except Exception as e:
-        print(f"加载数据时发生错误: {e}")
+        print(f"加载数据时发生严重错误: {e}")
         exit(1)
         
     num_datasets = len(all_images)
@@ -601,18 +573,14 @@ if __name__ == "__main__":
     if world_size == 0:
         print("错误：没有检测到可用的GPU。")
         exit(1)
-        
     world_size = min(world_size, num_datasets)
-    
-    # --- 修复 2: 动态查找并设置端口 ---
     port = find_free_port()
     print(f"使用空闲端口 {port} 进行分布式训练。")
 
     num_real_tasks = len(all_images)
     padded_task_indices = list(range(num_real_tasks))
     num_to_pad = (world_size - num_real_tasks % world_size) % world_size
-    if num_to_pad > 0:
-        padded_task_indices.extend([-1] * num_to_pad)
+    if num_to_pad > 0: padded_task_indices.extend([-1] * num_to_pad)
     
     print(f"将在 {world_size} 张GPU上启动训练... 总任务数（含虚拟任务）: {len(padded_task_indices)}")
     
@@ -624,4 +592,3 @@ if __name__ == "__main__":
     )
     
     print("所有训练任务已完成！")
-
