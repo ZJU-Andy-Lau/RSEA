@@ -149,7 +149,7 @@ class CriterionTrainGrid(nn.Module):
 
         # --- 6. 组合总损失 ---
         # 将所有损失项按照各自的权重相加
-        total_loss = loss_distribution + loss_obj + loss_height * self.height_weight + loss_photo + self.consistency_weight * loss_consistency + loss_valid * self.valid_score_weight
+        total_loss = loss_distribution + loss_obj + loss_height * self.height_weight + loss_photo * 0. + self.consistency_weight * loss_consistency + loss_valid * self.valid_score_weight
         
         # 构建一个包含各分项损失的字典，用于日志打印
         loss_details = {
