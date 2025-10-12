@@ -14,7 +14,7 @@ from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bili
 
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
-from scheduler import MultiStageOneCycleLR
+from scheduler import MultiStageCycleLR
 from torch.optim import AdamW,lr_scheduler
 from criterion_1012 import CriterionTrainGrid
 import torch.nn.functional as F
@@ -73,11 +73,9 @@ class Element():
         self.mapper = Decoder(in_channels=self.encoder.output_channels,block_num=options.mapper_blocks_num)
         self.output_path = output_path
         
-        self.rpc.to_gpu(self.device)
-        self.encoder.to(self.device)
-        self.mapper.to(self.device)
+        # Models will be moved to device by the to_device method
         
-        # 生成训练和验证数据
+        # Generate training and validation data
         self.crop_imgs_train, self.crop_locals_train, self.crop_dems_train = self.__crop_training_img__(options.crop_size)
         self.crop_imgs_val, self.crop_locals_val, self.crop_dems_val = self.__crop_validation_img__(options.crop_size)
 
@@ -101,7 +99,7 @@ class Element():
         
         crop_imgs, crop_locals, crop_dems = [], [], []
 
-        # Part 1: 高效的均匀裁切，保证最少窗口覆盖全图
+        # Part 1: Efficient uniform cropping to cover the whole image
         self._log("--- Performing uniform cropping for training")
         num_steps_h = int(np.ceil(H / crop_size)) if H > crop_size else 1
         num_steps_w = int(np.ceil(W / crop_size)) if W > crop_size else 1
@@ -115,7 +113,7 @@ class Element():
         n_uniform = len(crop_imgs)
         self._log(f"--- Generated {n_uniform} uniform training crops")
 
-        # Part 2: 高效且安全的随机旋转裁切
+        # Part 2: Efficient and safe random rotated cropping
         n_random = int(n_uniform * random_ratio)
         if n_random > 0:
             self._log(f"--- Performing {n_random} random rotated cropping for training")
@@ -148,7 +146,7 @@ class Element():
             self._log("--- Image too small for validation cropping, skipping.")
             return np.array([]), np.array([]), np.array([])
 
-        # 使用稀疏的随机采样生成验证窗口
+        # Generate validation windows using sparse random sampling
         for _ in range(val_count):
             row = np.random.randint(0, H - crop_size + 1)
             col = np.random.randint(0, W - crop_size + 1)
@@ -163,14 +161,13 @@ class Element():
 
 
     @torch.no_grad()
-    def __extract_features_for_set__(self, crop_imgs_np, crop_locals_np, crop_dems_np):
+    def __extract_features_for_set__(self, crop_imgs_np, crop_locals_np, crop_dems_np) -> Dict[str, torch.Tensor]:
         if crop_imgs_np.size == 0:
             return {'features': torch.empty(0), 'confs': torch.empty(0), 'locals': torch.empty(0), 'objs': torch.empty(0)}
 
         self._log("---Transform input images")
         
         imgs_NCHW = torch.from_numpy(crop_imgs_np).permute(0,3,1,2).float() / 255.0
-        self.transform = self.transform.to(self.device)
         
         transformed_imgs_list = []
         batch_num_transform = int(np.ceil(imgs_NCHW.shape[0] / self.options.batch_size))
@@ -208,9 +205,18 @@ class Element():
 
         self._log("---Calculating geographic coordinates for buffer")
         B, h, w, _ = locals_Bhw2.shape
-        lats, lons = self.rpc.RPC_PHOTO2OBJ(locals_Bhw2[..., 1].flatten(), locals_Bhw2[..., 0].flatten(), dems_Bhw.flatten())
+        
+        # Move tensors to GPU for RPC calculation
+        locals_flat_samp = locals_Bhw2[..., 1].flatten().to(self.device)
+        locals_flat_line = locals_Bhw2[..., 0].flatten().to(self.device)
+        dems_flat = dems_Bhw.flatten().to(self.device)
+        
+        lats, lons = self.rpc.RPC_PHOTO2OBJ(locals_flat_samp, locals_flat_line, dems_flat)
+        
         xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
-        objs_Bhw3 = torch.cat([xy, dems_Bhw.flatten().unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
+        
+        # Reshape and move back to CPU for storage
+        objs_Bhw3 = torch.cat([xy, dems_flat.unsqueeze(-1)], dim=-1).reshape(B, h, w, 3).cpu()
 
         return {
             'features': features_BDhw,
@@ -220,7 +226,8 @@ class Element():
         }
 
     @torch.no_grad()
-    def __extract_features__(self):
+    def __extract_features__(self) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+        self.to_device(self.device) # Ensure models are on the correct device before extraction
         self._log("Extracting features for TRAINING set")
         training_buffer = self.__extract_features_for_set__(self.crop_imgs_train, self.crop_locals_train, self.crop_dems_train)
         
@@ -240,6 +247,8 @@ class Element():
         self.encoder.to(device)
         self.mapper.to(device)
         self.rpc.to_gpu(device)
+        self.transform.to(device) # Move augmentation module to device
+        
         if hasattr(self, 'buffer') and self.buffer is not None and self.buffer['features'].numel() > 0:
             for key in self.buffer.keys():
                 self.buffer[key] = self.buffer[key].to(device)
