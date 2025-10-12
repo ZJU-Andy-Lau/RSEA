@@ -26,7 +26,7 @@ from torchvision import transforms
 import kornia.augmentation as K
 from matplotlib import pyplot as plt
 import random
-from typing import List,Dict
+from typing import List,Dict, Tuple
 
 class Element():
     def __init__(self,options,encoder:Encoder,img_raw:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch,id:int,output_path:str,top_left_linesamp:np.ndarray = None,local_raw:np.ndarray = None,device:str = None,verbose:int = 0):
@@ -77,31 +77,32 @@ class Element():
         self.encoder.to(self.device)
         self.mapper.to(self.device)
         
-        self.crop_imgs_NHWC,self.crop_locals_NHW2,self.crop_dems_NHW = self.__crop_img__(options.crop_size)
-        self.crop_img_num = len(self.crop_imgs_NHWC)
+        # 生成训练和验证数据
+        self.crop_imgs_train, self.crop_locals_train, self.crop_dems_train = self.__crop_training_img__(options.crop_size)
+        self.crop_imgs_val, self.crop_locals_val, self.crop_dems_val = self.__crop_validation_img__(options.crop_size)
+
         self.SAMPLE_FACTOR = self.options.sample_factor
-        self.buffer, self.point_base = self.__extract_features__()
+        self.buffer, self.validation_buffer = self.__extract_features__()
         
         self._log(f"===========================Element {self.id} Initiated===========================")
         self._log(f"img size:{img_raw.shape}")
         self._log(f"top_left_linesamp:{top_left_linesamp}")
         self._log(f"Generated {self.buffer['features'].shape[0]} windows for training.")
+        self._log(f"Generated {self.validation_buffer['features'].shape[0]} windows for validation.")
         self._log("=================================================================================")
     
     def _log(self, *args, **kwargs):
         if self.verbose:
             print("[Element]:", *args, **kwargs)
 
-    def __crop_img__(self, crop_size=1024, random_ratio=1., rotation_angle=10.):
-        self._log("cropping image with new strategy")
+    def __crop_training_img__(self, crop_size=1024, random_ratio=1., rotation_angle=10.):
+        self._log("cropping training images with new strategy")
         H, W = self.img_raw.shape[:2]
         
-        crop_imgs = []
-        crop_locals = []
-        crop_dems = []
+        crop_imgs, crop_locals, crop_dems = [], [], []
 
         # Part 1: 高效的均匀裁切，保证最少窗口覆盖全图
-        self._log("--- Performing uniform cropping")
+        self._log("--- Performing uniform cropping for training")
         num_steps_h = int(np.ceil(H / crop_size)) if H > crop_size else 1
         num_steps_w = int(np.ceil(W / crop_size)) if W > crop_size else 1
         y_starts = np.linspace(0, H - crop_size, num_steps_h, dtype=int)
@@ -112,12 +113,12 @@ class Element():
                 crop_locals.append(self.local_raw[row:row + crop_size, col:col + crop_size])
                 crop_dems.append(self.dem[row:row + crop_size, col:col + crop_size])
         n_uniform = len(crop_imgs)
-        self._log(f"--- Generated {n_uniform} uniform crops")
+        self._log(f"--- Generated {n_uniform} uniform training crops")
 
         # Part 2: 高效且安全的随机旋转裁切
         n_random = int(n_uniform * random_ratio)
         if n_random > 0:
-            self._log(f"--- Performing {n_random} random rotated cropping")
+            self._log(f"--- Performing {n_random} random rotated cropping for training")
             half_diag = int(np.sqrt(2) * crop_size / 2) + 1
             safe_top, safe_left = half_diag, half_diag
             safe_bottom, safe_right = H - half_diag, W - half_diag
@@ -136,18 +137,39 @@ class Element():
                     crop_locals.append(rotated_local[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
                     crop_dems.append(rotated_dem[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
 
-        crop_imgs = np.stack(crop_imgs)
-        crop_locals = np.stack(crop_locals)
-        crop_dems = np.stack(crop_dems)
-        return crop_imgs, crop_locals, crop_dems
+        return np.stack(crop_imgs), np.stack(crop_locals), np.stack(crop_dems)
+
+    def __crop_validation_img__(self, crop_size=1024, val_count=32):
+        self._log("cropping validation images")
+        H, W = self.img_raw.shape[:2]
+        crop_imgs, crop_locals, crop_dems = [], [], []
+
+        if H < crop_size or W < crop_size:
+            self._log("--- Image too small for validation cropping, skipping.")
+            return np.array([]), np.array([]), np.array([])
+
+        # 使用稀疏的随机采样生成验证窗口
+        for _ in range(val_count):
+            row = np.random.randint(0, H - crop_size + 1)
+            col = np.random.randint(0, W - crop_size + 1)
+            crop_imgs.append(self.img_raw[row:row + crop_size, col:col + crop_size])
+            crop_locals.append(self.local_raw[row:row + crop_size, col:col + crop_size])
+            crop_dems.append(self.dem[row:row + crop_size, col:col + crop_size])
+
+        if not crop_imgs:
+            return np.array([]), np.array([]), np.array([])
+            
+        return np.stack(crop_imgs), np.stack(crop_locals), np.stack(crop_dems)
+
 
     @torch.no_grad()
-    def __extract_features__(self):
-        self._log("Extracting features")
-        start_time = time.perf_counter()
+    def __extract_features_for_set__(self, crop_imgs_np, crop_locals_np, crop_dems_np):
+        if crop_imgs_np.size == 0:
+            return {'features': torch.empty(0), 'confs': torch.empty(0), 'locals': torch.empty(0), 'objs': torch.empty(0)}
+
         self._log("---Transform input images")
         
-        imgs_NCHW = torch.from_numpy(self.crop_imgs_NHWC).permute(0,3,1,2).float() / 255.0
+        imgs_NCHW = torch.from_numpy(crop_imgs_np).permute(0,3,1,2).float() / 255.0
         self.transform = self.transform.to(self.device)
         
         transformed_imgs_list = []
@@ -156,16 +178,14 @@ class Element():
              transformed_imgs_list.append(self.transform(imgs_NCHW[b * self.options.batch_size : (b+1) * self.options.batch_size].to(self.device)))
         imgs_NCHW = torch.cat(transformed_imgs_list, dim=0)
 
-        locals_NHW2 = torch.from_numpy(self.crop_locals_NHW2)
+        locals_NHW2 = torch.from_numpy(crop_locals_np)
         self._log("---Downsample locals")
         locals_Nhw2 = downsample(locals_NHW2,self.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg',device=self.device)
-        dems_NHW = torch.from_numpy(self.crop_dems_NHW)
+        dems_NHW = torch.from_numpy(crop_dems_np)
         self._log("---Downsample DEM")
         dems_Nhw = downsample(dems_NHW,self.SAMPLE_FACTOR,use_cuda=True,show_detail=bool(self.verbose),mode='avg',device=self.device)
         
-        self.encoder = self.encoder.eval().to(self.device)
-        
-        batch_num_extract = int(np.ceil(self.crop_img_num / self.options.batch_size))
+        batch_num_extract = int(np.ceil(crop_imgs_np.shape[0] / self.options.batch_size))
         features_list, confs_list, locals_list, dems_list = [], [], [], []
         
         pbar_title = "---Extracting Features"
@@ -178,8 +198,8 @@ class Element():
             confs_list.append(conf_b1hw.cpu())
             locals_list.append(locals_Nhw2[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cpu())
             dems_list.append(dems_Nhw[batch_idx * self.options.batch_size : (batch_idx+1) * self.options.batch_size].cpu())
-            if self.verbose > 0: pbar.update(1)
-        if self.verbose > 0: pbar.close()
+            if isinstance(pbar, tqdm): pbar.update(1)
+        if isinstance(pbar, tqdm): pbar.close()
 
         features_BDhw = torch.cat(features_list, dim=0)
         confs_B1hw = torch.cat(confs_list, dim=0)
@@ -192,25 +212,38 @@ class Element():
         xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
         objs_Bhw3 = torch.cat([xy, dems_Bhw.flatten().unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
 
-        buffer = {
+        return {
             'features': features_BDhw,
             'confs': confs_B1hw,
             'locals': locals_Bhw2,
             'objs': objs_Bhw3
         }
+
+    @torch.no_grad()
+    def __extract_features__(self):
+        self._log("Extracting features for TRAINING set")
+        training_buffer = self.__extract_features_for_set__(self.crop_imgs_train, self.crop_locals_train, self.crop_dems_train)
         
-        self._log(f"Extract features done in {time.perf_counter() - start_time:.2f} seconds")
-        return buffer, None
+        self._log("Extracting features for VALIDATION set")
+        validation_buffer = self.__extract_features_for_set__(self.crop_imgs_val, self.crop_locals_val, self.crop_dems_val)
+        
+        return training_buffer, validation_buffer
 
     def clear_buffer(self):
         del self.buffer
         self.buffer = None
+        del self.validation_buffer
+        self.validation_buffer = None
     
     def to_device(self,device):
         self.device = device
         self.encoder.to(device)
         self.mapper.to(device)
         self.rpc.to_gpu(device)
-        if hasattr(self, 'buffer') and self.buffer is not None:
+        if hasattr(self, 'buffer') and self.buffer is not None and self.buffer['features'].numel() > 0:
             for key in self.buffer.keys():
                 self.buffer[key] = self.buffer[key].to(device)
+        if hasattr(self, 'validation_buffer') and self.validation_buffer is not None and self.validation_buffer['features'].numel() > 0:
+            for key in self.validation_buffer.keys():
+                self.validation_buffer[key] = self.validation_buffer[key].to(device)
+

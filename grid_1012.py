@@ -32,7 +32,7 @@ from torchvision import transforms
 import kornia.augmentation as K
 from matplotlib import pyplot as plt
 import random
-from typing import List,Dict
+from typing import List,Dict, Tuple
 
 from rs_image import RSImage
 from element_1012 import Element
@@ -180,8 +180,58 @@ class Grid():
             self.elements.append(new_element)
             if not task_info is None: self.update_task_state(task_info,{'progress':idx+1})
 
+    def visualize_block_assignment(self):
+        self.fprint("Visualizing block assignments...")
+        
+        # Collect all points from training buffers
+        all_points = []
+        for element in self.elements:
+            # Reshape to (num_windows * h * w, 3)
+            points = element.buffer['objs'].reshape(-1, 3).cpu().numpy()
+            all_points.append(points)
+        all_points = np.concatenate(all_points, axis=0)
+
+        # Sample points for efficiency
+        sample_size = min(50000, len(all_points))
+        sampled_points = all_points[np.random.choice(len(all_points), sample_size, replace=False)]
+
+        # Setup plot
+        plt.figure(figsize=(12, 12))
+        ax = plt.gca()
+        ax.set_aspect('equal', adjustable='box')
+        
+        # Generate distinct colors for blocks
+        colors = plt.cm.get_cmap('hsv', len(self.blocks))
+
+        for i, block in enumerate(self.blocks):
+            # Draw block rectangle
+            min_x, max_x = block.diag[0, 0], block.diag[1, 0]
+            min_y, max_y = block.diag[1, 1], block.diag[0, 1]
+            rect = plt.Rectangle((min_x, min_y), max_x - min_x, max_y - min_y,
+                                 linewidth=2, edgecolor=colors(i), facecolor='none', label=f'Block {i}')
+            ax.add_patch(rect)
+
+            # Filter points within this block
+            mask = (sampled_points[:, 0] >= min_x) & (sampled_points[:, 0] < max_x) & \
+                   (sampled_points[:, 1] >= min_y) & (sampled_points[:, 1] < max_y)
+            block_points = sampled_points[mask]
+
+            # Plot points
+            ax.scatter(block_points[:, 0], block_points[:, 1], color=colors(i), s=1, alpha=0.5)
+        
+        plt.title('Grid Block Assignments and Data Distribution')
+        plt.xlabel('Mercator X')
+        plt.ylabel('Mercator Y')
+        plt.legend()
+        plt.grid(True)
+        save_path = os.path.join(self.output_path, 'block_assignment_visualization.png')
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+        self.fprint(f"Block assignment visualization saved to {save_path}")
+
     def train(self,task_info = None):
         self.get_height_map_coeffs()
+        self.visualize_block_assignment() # Call visualization
         for block_idx in range(len(self.blocks)):
             self.train_mapper(block_idx,task_info)
         for element in self.elements:
@@ -189,6 +239,65 @@ class Grid():
         self.elements = None
         if not task_info is None:
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:训练完成"})
+
+    @torch.no_grad()
+    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_indices: List[Tuple[int, int]]):
+        if not val_indices:
+            return float('nan'), None, None
+
+        mapper.eval()
+        
+        patch_h, patch_w = 16, 16
+        val_batch_size = self.options.patches_per_batch // 2
+
+        # Sample a validation batch
+        val_patches = {'features': [], 'objs': []}
+        for _ in range(val_batch_size):
+            element_idx, window_idx = random.choice(val_indices)
+            element = self.elements[element_idx]
+            # Ensure buffer is on the correct device for validation
+            element.to_device(self.device)
+            _, _, H, W = element.validation_buffer['features'].shape
+            y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
+            for key in val_patches:
+                val_patches[key].append(element.validation_buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
+
+        feature_batch = torch.stack(val_patches['features'])
+        obj_batch = torch.stack(val_patches['objs']).permute(0, 3, 1, 2)
+
+        output, _ = mapper(feature_batch)
+        pred_mu = self.warp_by_poly(output[:, :3, :, :], block.map_coeffs)
+
+        # Calculate validation error (RMSE in meters for XY)
+        error = torch.sqrt(torch.sum((pred_mu[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
+        val_rmse = error.mean().item()
+
+        # Prepare data for plotting
+        pred_coords = pred_mu.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+        true_coords = obj_batch.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+        
+        # Create and save plot
+        plt.figure(figsize=(10, 10))
+        plt.scatter(true_coords[:, 0], true_coords[:, 1], s=5, c='blue', alpha=0.6, label='True Coords')
+        plt.scatter(pred_coords[:, 0], pred_coords[:, 1], s=5, c='red', marker='x', alpha=0.6, label='Pred Coords')
+        for i in range(len(true_coords)):
+            plt.plot([true_coords[i, 0], pred_coords[i, 0]], [true_coords[i, 1], pred_coords[i, 1]], 'gray', linewidth=0.5, alpha=0.5)
+        plt.title(f'Validation Scatter Plot - Block {block_idx}, Iter {iter_idx}')
+        plt.xlabel('Mercator X')
+        plt.ylabel('Mercator Y')
+        plt.legend()
+        plt.grid(True)
+        ax = plt.gca()
+        ax.set_aspect('equal', adjustable='box')
+        
+        plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'validation')
+        os.makedirs(plot_dir, exist_ok=True)
+        save_path = os.path.join(plot_dir, f'val_scatter_iter_{iter_idx}.png')
+        plt.savefig(save_path, dpi=150)
+        plt.close()
+        
+        mapper.train()
+        return val_rmse, pred_coords, true_coords
 
     def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
         block = self.blocks[block_idx]
@@ -202,6 +311,33 @@ class Grid():
         
         patch_h, patch_w = 16, 16
         patches_per_batch = self.options.patches_per_batch
+        num_positive_samples = patches_per_batch // 2
+        num_negative_samples = patches_per_batch - num_positive_samples
+
+        # Pre-calculate positive/negative indices for training and validation
+        train_pos_indices, train_neg_indices, val_pos_indices = [], [], []
+        
+        for element_idx, element in enumerate(self.elements):
+            # Training indices
+            if element.buffer['features'].numel() > 0:
+                window_centers = element.buffer['objs'].mean(dim=(1, 2))
+                in_mask = (window_centers[:, 0] >= block.diag[0, 0]) & (window_centers[:, 1] <= block.diag[0, 1]) & \
+                          (window_centers[:, 0] < block.diag[1, 0]) & (window_centers[:, 1] > block.diag[1, 1])
+                for window_idx in torch.where(in_mask)[0]: train_pos_indices.append((element_idx, window_idx.item()))
+                for window_idx in torch.where(~in_mask)[0]: train_neg_indices.append((element_idx, window_idx.item()))
+            
+            # Validation indices
+            if element.validation_buffer['features'].numel() > 0:
+                val_window_centers = element.validation_buffer['objs'].mean(dim=(1, 2))
+                val_in_mask = (val_window_centers[:, 0] >= block.diag[0, 0]) & (val_window_centers[:, 1] <= block.diag[0, 1]) & \
+                              (val_window_centers[:, 0] < block.diag[1, 0]) & (val_window_centers[:, 1] > block.diag[1, 1])
+                for window_idx in torch.where(val_in_mask)[0]: val_pos_indices.append((element_idx, window_idx.item()))
+
+        if not train_pos_indices or not train_neg_indices:
+            print(f"Warning: Block {block_idx} lacks positive or negative training samples. Skipping training.")
+            return
+
+        vis_interval, val_interval = 500, 500
 
         if not task_info is None:
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':self.options.grid_training_iters})
@@ -211,34 +347,40 @@ class Grid():
         for iter_idx in range(self.options.grid_training_iters):
             optimizer.zero_grad()
             
-            # Efficient Patch Sampling
-            element = random.choice(self.elements)
-            element.to_device(self.device) # Ensure buffer is on correct device
+            # Efficient Patch Sampling for Positive and Negative Samples
+            all_patches = {'features': [], 'objs': [], 'confs': [], 'locals': []}
             
-            num_windows, D, H, W = element.buffer['features'].shape
-            
-            rand_win_idx = torch.randint(0, num_windows, (patches_per_batch,), device=self.device)
-            rand_top_idx = torch.randint(0, H - patch_h + 1, (patches_per_batch,), device=self.device)
-            rand_left_idx = torch.randint(0, W - patch_w + 1, (patches_per_batch,), device=self.device)
+            for _ in range(num_positive_samples):
+                element_idx, window_idx = random.choice(train_pos_indices)
+                element = self.elements[element_idx]
+                element.to_device(self.device)
+                _, _, H, W = element.buffer['features'].shape
+                y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
+                for key in all_patches: all_patches[key].append(element.buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
 
-            feature_patches, obj_patches, conf_patches, local_patches = [], [], [], []
-            for i in range(patches_per_batch):
-                b, y, x = rand_win_idx[i], rand_top_idx[i], rand_left_idx[i]
-                feature_patches.append(element.buffer['features'][b, :, y:y+patch_h, x:x+patch_w])
-                obj_patches.append(element.buffer['objs'][b, y:y+patch_h, x:x+patch_w])
-                conf_patches.append(element.buffer['confs'][b, :, y:y+patch_h, x:x+patch_w])
-                local_patches.append(element.buffer['locals'][b, y:y+patch_h, x:x+patch_w])
+            for _ in range(num_negative_samples):
+                element_idx, window_idx = random.choice(train_neg_indices)
+                element = self.elements[element_idx]
+                element.to_device(self.device)
+                _, _, H, W = element.buffer['features'].shape
+                y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
+                for key in all_patches: all_patches[key].append(element.buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
             
-            feature_batch = torch.stack(feature_patches)
-            obj_batch = torch.stack(obj_patches).permute(0, 3, 1, 2) # to N, C, H, W
-            conf_batch = torch.stack(conf_patches)
-            local_batch = torch.stack(local_patches)
+            feature_batch = torch.stack(all_patches['features'])
+            obj_batch = torch.stack(all_patches['objs']).permute(0, 3, 1, 2)
+            conf_batch = torch.stack(all_patches['confs'])
+            local_batch = torch.stack(all_patches['locals'])
 
-            # Forward pass
-            output_16p1, valid_score = mapper(feature_batch)
-            pred_obj_batch = self.warp_by_poly(output_16p1[:, :3, :, :], block.map_coeffs)
+            positive_labels = torch.ones(num_positive_samples, 1, patch_h, patch_w, device=self.device)
+            negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
+            valid_labels = torch.cat([positive_labels, negative_labels], dim=0)
             
-            loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_obj_batch, obj_batch, conf_batch, local_batch, element.rpc)
+            output_16p1, valid_score_batch = mapper(feature_batch)
+            
+            pred_mu_raw = self.warp_by_poly(output_16p1[:, :3, :, :], block.map_coeffs)
+            pred_log_sigma_batch = output_16p1[:, 3:, :, :]
+            
+            loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_raw, pred_log_sigma_batch, obj_batch, conf_batch, local_batch, element.rpc, valid_score_batch, valid_labels, num_positive_samples)
             
             loss.backward()
             optimizer.step()
@@ -249,6 +391,27 @@ class Grid():
                 best_mapper_state_dict = deepcopy(mapper.state_dict())
             
             info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.4f}', **loss_details }
+            
+            # Validation and Visualization
+            if (iter_idx + 1) % val_interval == 0:
+                val_rmse, _, _ = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_pos_indices)
+                info['val_err'] = f'{val_rmse:.2f}m'
+            
+            if (iter_idx + 1) % vis_interval == 0:
+                true_coords_train = obj_batch[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+                pred_coords_train = pred_mu_raw[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
+                
+                plt.figure(figsize=(10, 10))
+                plt.scatter(true_coords_train[:, 0], true_coords_train[:, 1], s=5, c='blue', alpha=0.6, label='True Coords')
+                plt.scatter(pred_coords_train[:, 0], pred_coords_train[:, 1], s=5, c='red', marker='x', alpha=0.6, label='Pred Coords')
+                plt.title(f'Training Scatter Plot - Block {block_idx}, Iter {iter_idx + 1}')
+                plt.xlabel('Mercator X'); plt.ylabel('Mercator Y'); plt.legend(); plt.grid(True)
+                ax = plt.gca(); ax.set_aspect('equal', adjustable='box')
+                plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'training')
+                os.makedirs(plot_dir, exist_ok=True)
+                plt.savefig(os.path.join(plot_dir, f'train_scatter_iter_{iter_idx + 1}.png'), dpi=150)
+                plt.close()
+
             if task_info:
                 self.update_task_state(task_info, {'progress': iter_idx + 1, 'info': info})
             else:
@@ -373,3 +536,4 @@ class Grid():
         }
 
         return res
+
