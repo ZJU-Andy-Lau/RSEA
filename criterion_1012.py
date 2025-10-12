@@ -119,9 +119,10 @@ class CriterionTrainGrid(nn.Module):
             reprojection_error_pixels = torch.norm(linesamp_pred_flat - linesamp_gt_flat, dim=1)
             
             # 使用tanh_clamp函数来限制损失值
-            w = np.sqrt(1 - progress**2)
-            t = w * self.clamp_max + 1
-            loss_photo_group = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
+            # w = np.sqrt(1 - progress**2)
+            # t = w * self.clamp_max + 1
+            # loss_photo_group = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
+            loss_photo_group = reprojection_error_pixels.mean()
             loss_photo_total += loss_photo_group
 
         loss_photo = loss_photo_total / len(unique_element_indices) if len(unique_element_indices) > 0 else torch.tensor(0.0, device=pred_mu_absolute_pos.device)
