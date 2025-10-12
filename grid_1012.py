@@ -283,25 +283,23 @@ class Grid():
         return warped
 
     @torch.no_grad()
-    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_indices: List[Tuple[int, int]]):
+    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]]):
         """在验证集上评估模型，并生成散点图"""
-        if not val_indices:
+        if not val_patch_indices:
             return float('nan'), None, None
 
         mapper.eval() # 切换到评估模式
         
         patch_h, patch_w = 16, 16
-        val_batch_size = self.options.patches_per_batch // 2
+        val_batch_size = min(self.options.patches_per_batch // 2, len(val_patch_indices))
 
         all_features, all_objs = [], []
 
-        # 从验证集中随机采样一个批次
-        for _ in range(val_batch_size):
-            element_idx, window_idx = random.choice(val_indices)
+        # 从验证集的精确patch索引中随机采样一个批次
+        sample_indices = torch.randint(0, len(val_patch_indices), (val_batch_size,))
+        for i in sample_indices:
+            element_idx, window_idx, y, x = val_patch_indices[i]
             element = self.elements[element_idx]
-            if element.validation_buffer['features'].numel() == 0: continue
-            _, _, H, W = element.validation_buffer['features'].shape
-            y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
             
             all_features.append(element.validation_buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
             all_objs.append(element.validation_buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
@@ -368,29 +366,45 @@ class Grid():
         for el in self.elements:
             el.to_device(self.device)
 
-        # --- 3. 划分正/负/验证样本索引 ---
-        # 这个操作在CPU上完成，因为它是一次性的
-        train_pos_indices, train_neg_indices, val_pos_indices = [], [], []
+        # --- 3. [核心修正] 构建精确到Patch级别的正/负/验证样本索引 ---
+        self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
+        positive_patches, negative_patches, val_patch_indices = [], [], []
         
+        # 定义Block的地理边界
+        min_x, max_x = block.diag[0, 0], block.diag[1, 0]
+        min_y, max_y = block.diag[1, 1], block.diag[0, 1]
+
         for element_idx, element in enumerate(self.elements):
             # 处理训练buffer
             if element.buffer['features'].numel() > 0:
-                window_centers = element.buffer['objs'].mean(dim=(1, 2)).cpu()
-                in_mask = (window_centers[:, 0] >= block.diag[0, 0]) & (window_centers[:, 1] <= block.diag[0, 1]) & \
-                          (window_centers[:, 0] < block.diag[1, 0]) & (window_centers[:, 1] > block.diag[1, 1])
-                # 属于当前Block的为正样本
-                for window_idx in torch.where(in_mask)[0]: train_pos_indices.append((element_idx, window_idx.item()))
-                # 不属于的为负样本
-                for window_idx in torch.where(~in_mask)[0]: train_neg_indices.append((element_idx, window_idx.item()))
+                num_windows, _, H, W = element.buffer['features'].shape
+                for window_idx in range(num_windows):
+                    obj_window = element.buffer['objs'][window_idx] # (h, w, 3)
+                    # 遍历窗口内的所有可能的patch左上角
+                    for y in range(H - patch_h + 1):
+                        for x in range(W - patch_w + 1):
+                            # 计算当前patch的中心地理坐标
+                            patch_center = obj_window[y:y+patch_h, x:x+patch_w, :].mean(dim=(0,1))
+                            # 判断该patch是正样本还是负样本
+                            if (min_x <= patch_center[0] < max_x) and (min_y <= patch_center[1] < max_y):
+                                positive_patches.append((element_idx, window_idx, y, x))
+                            else:
+                                negative_patches.append((element_idx, window_idx, y, x))
             
             # 处理验证buffer
             if element.validation_buffer['features'].numel() > 0:
-                val_window_centers = element.validation_buffer['objs'].mean(dim=(1, 2)).cpu()
-                val_in_mask = (val_window_centers[:, 0] >= block.diag[0, 0]) & (val_window_centers[:, 1] <= block.diag[0, 1]) & \
-                              (val_window_centers[:, 0] < block.diag[1, 0]) & (val_window_centers[:, 1] > block.diag[1, 1])
-                for window_idx in torch.where(val_in_mask)[0]: val_pos_indices.append((element_idx, window_idx.item()))
+                num_val_windows, _, val_H, val_W = element.validation_buffer['features'].shape
+                for window_idx in range(num_val_windows):
+                    val_obj_window = element.validation_buffer['objs'][window_idx]
+                    for y in range(val_H - patch_h + 1):
+                        for x in range(val_W - patch_w + 1):
+                            patch_center = val_obj_window[y:y+patch_h, x:x+patch_w, :].mean(dim=(0,1))
+                            if (min_x <= patch_center[0] < max_x) and (min_y <= patch_center[1] < max_y):
+                                val_patch_indices.append((element_idx, window_idx, y, x))
 
-        if not train_pos_indices or not train_neg_indices:
+        self.fprint(f"Block {block_idx} 索引构建完成: {len(positive_patches)} 个正样本, {len(negative_patches)} 个负样本, {len(val_patch_indices)} 个验证样本。")
+
+        if not positive_patches or not negative_patches:
             print(f"警告: Block {block_idx} 缺少正样本或负样本，跳过训练。")
             return
         
@@ -405,28 +419,24 @@ class Grid():
         for iter_idx in range(self.options.grid_training_iters):
             optimizer.zero_grad()
             
-            # --- 4a. 高效采样批次数据 (在GPU上进行) ---
+            # --- 4a. 高效采样批次数据 (从精确索引中采样) ---
             all_features, all_objs, all_confs, all_locals = [], [], [], []
             
             # 采样正样本
-            pos_sample_indices = torch.randint(0, len(train_pos_indices), (num_positive_samples,))
+            pos_sample_indices = torch.randint(0, len(positive_patches), (num_positive_samples,))
             for i in pos_sample_indices:
-                element_idx, window_idx = train_pos_indices[i]
+                element_idx, window_idx, y, x = positive_patches[i]
                 element = self.elements[element_idx]
-                _, _, H, W = element.buffer['features'].shape
-                y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
                 all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
                 all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
                 all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
 
             # 采样负样本
-            neg_sample_indices = torch.randint(0, len(train_neg_indices), (num_negative_samples,))
+            neg_sample_indices = torch.randint(0, len(negative_patches), (num_negative_samples,))
             for i in neg_sample_indices:
-                element_idx, window_idx = train_neg_indices[i]
+                element_idx, window_idx, y, x = negative_patches[i]
                 element = self.elements[element_idx]
-                _, _, H, W = element.buffer['features'].shape
-                y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
                 all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
                 all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
                 all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
@@ -467,7 +477,7 @@ class Grid():
             
             # --- 4f. 周期性验证 ---
             if (iter_idx + 1) % val_interval == 0:
-                val_rmse, _, _ = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_pos_indices)
+                val_rmse, _, _ = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices)
                 if not np.isnan(val_rmse):
                     info['val_err'] = f'{val_rmse:.2f}m'
             

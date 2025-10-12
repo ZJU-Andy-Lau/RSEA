@@ -141,7 +141,7 @@ class CriterionTrainGrid(nn.Module):
         w = np.sqrt(1 - progress**2)
         t = w * self.clamp_max + 1
         # loss_photo = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
-        loss_photo = reprojection_error_pixels
+        loss_photo = reprojection_error_pixels.mean()
 
         # --- 5. 辅助损失: 坐标一致性损失 ---
         # 计算patch内部的局部几何一致性损失
