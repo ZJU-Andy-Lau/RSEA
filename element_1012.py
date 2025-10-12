@@ -8,24 +8,14 @@ import pandas as pd
 from model_new import Encoder,Decoder
 import os
 import cv2
-from datetime import datetime,timedelta
-import time
+
 from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef
 
 from rpc import RPCModelParameterTorch
-from tqdm import tqdm,trange
-from scheduler import MultiStageCycleLR
-from torch.optim import AdamW,lr_scheduler
-from criterion_1012 import CriterionTrainGrid
-import torch.nn.functional as F
-from orthorectify import orthorectify_image
-import rasterio
-from scipy.interpolate import RegularGridInterpolator
-from copy import deepcopy
-from torchvision import transforms
+
 import kornia.augmentation as K
-from matplotlib import pyplot as plt
-import random
+from tqdm import tqdm
+
 from typing import List,Dict, Tuple
 
 class Element():
