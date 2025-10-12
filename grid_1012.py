@@ -157,7 +157,11 @@ class Grid():
 
     def get_height_map_coeffs(self):
         """根据所有Element Buffer中的数据，为每个Block估计高度多项式的系数"""
-        heights = torch.cat([el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer]).cpu().numpy()
+        # [修改] 直接在GPU上进行计算，然后将结果移回CPU
+        heights_list = [el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer]
+        if not heights_list: return
+        
+        heights = torch.cat(heights_list).cpu().numpy()
         xys = torch.cat([el.buffer['objs'][..., :2].reshape(-1, 2) for el in self.elements if el.buffer]).cpu().numpy()
         
         for block in self.blocks:
@@ -165,9 +169,9 @@ class Grid():
                    (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
             if np.any(mask):
                 block.map_coeffs['h'] = get_map_coef(heights[mask])
-            elif len(heights) > 0: # 如果Block内没有点，则用整个Grid的点来估计
+            elif len(heights) > 0:
                 block.map_coeffs['h'] = get_map_coef(heights)
-            else: # 极端情况，没有任何点
+            else:
                 block.map_coeffs['h'] = np.array([0., 0.])
 
 
@@ -199,17 +203,18 @@ class Grid():
         """可视化函数：绘制Block划分及数据点分布"""
         self.fprint("正在可视化Block的数据分配情况...")
         
-        all_points = []
+        all_points_list = []
         for element in self.elements:
             if not element.buffer or element.buffer['objs'].numel() == 0: continue
-            points = element.buffer['objs'].reshape(-1, 3).cpu().numpy()
-            all_points.append(points)
+            # [修改] 直接在GPU上操作，最后才移回CPU
+            points = element.buffer['objs'].reshape(-1, 3)
+            all_points_list.append(points)
         
-        if not all_points:
+        if not all_points_list:
             self.fprint("没有可用于可视化的数据点。")
             return
 
-        all_points = np.concatenate(all_points, axis=0)
+        all_points = torch.cat(all_points_list, dim=0).cpu().numpy()
 
         sample_size = min(50000, len(all_points))
         sampled_points = all_points[np.random.choice(len(all_points), sample_size, replace=False)]
@@ -243,6 +248,8 @@ class Grid():
 
     def train(self,task_info = None):
         """Grid的训练总控函数"""
+        # [修改] 训练开始前，将所有Element数据移动到目标设备
+        self.to_device(self.device)
         self.get_height_map_coeffs()
         self.visualize_block_assignment()
         for block_idx in range(len(self.blocks)):
@@ -269,7 +276,7 @@ class Grid():
 
     @torch.no_grad()
     def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]], criterion: nn.Module):
-        """[修改] 在验证集上评估模型，计算RMSE和loss_obj，并生成散点图"""
+        """在验证集上评估模型，计算RMSE和loss_obj，并生成散点图"""
         if not val_patch_indices:
             return float('nan'), float('nan')
 
@@ -289,22 +296,20 @@ class Grid():
         if not all_features:
             mapper.train()
             return float('nan'), float('nan')
-            
+        
+        # [修正] 现在 all_features 和 all_objs 已经是GPU张量列表，stack后无需再.to(device)
         feature_batch = torch.stack(all_features)
         obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2)
         
         output_raw, _ = mapper(feature_batch)
         pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
         
-        # 1. 计算RMSE
         error_rmse = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
         val_rmse = error_rmse.mean().item()
         
-        # 2. [新增] 计算验证集上的 loss_obj (均方误差)
         error_squared = (pred_mu_absolute - obj_batch) ** 2
         val_loss_obj = error_squared[:, :2, ...].sum(dim=1).mean().item()
         
-        # --- 准备绘图数据 ---
         pred_coords_all = pred_mu_absolute.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
         true_coords_all = obj_batch.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
         
@@ -312,11 +317,9 @@ class Grid():
         pred_coords_single = pred_mu_absolute[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
         true_coords_single = obj_batch[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
 
-        # --- 绘图 ---
         plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'validation')
         os.makedirs(plot_dir, exist_ok=True)
         
-        # 绘制总体散点图
         plt.figure(figsize=(10, 10))
         plt.scatter(true_coords_all[:, 0], true_coords_all[:, 1], s=5, c='blue', alpha=0.6, label='真实坐标')
         plt.scatter(pred_coords_all[:, 0], pred_coords_all[:, 1], s=5, c='red', marker='x', alpha=0.6, label='预测坐标')
@@ -327,7 +330,6 @@ class Grid():
         plt.savefig(save_path_all, dpi=150)
         plt.close()
 
-        # 绘制单个Patch形状图
         plt.figure(figsize=(10, 10))
         plt.scatter(true_coords_single[:, 0], true_coords_single[:, 1], s=15, c='blue', alpha=0.8, label='真实 Patch 形状')
         plt.scatter(pred_coords_single[:, 0], pred_coords_single[:, 1], s=15, c='red', marker='x', alpha=0.8, label='预测 Patch 形状')
@@ -353,7 +355,7 @@ class Grid():
                                      cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         criterion = CriterionTrainGrid()
         
-        mapper.train().to(self.device)
+        mapper.train() # to(device) is handled by grid.to_device
         min_loss = 1e8
         best_mapper_state_dict = None
         
@@ -361,12 +363,8 @@ class Grid():
         patches_per_batch = self.options.patches_per_batch
         num_positive_samples = patches_per_batch // 2
         num_negative_samples = patches_per_batch - num_positive_samples
-
-        # --- 2. 准备数据 (效率优化) ---
-        for el in self.elements:
-            el.to_device(self.device)
-
-        # --- 3. [高效向量化] 构建精确到Patch级别的正/负/验证样本索引 ---
+        
+        # --- 2. [高效向量化] 构建精确到Patch级别的正/负/验证样本索引 ---
         if task_info: self.update_task_state(task_info, {'status': f"Grid {task_info['id']}:Block {block_idx + 1} 索引预处理", 'total': len(self.elements), 'progress': 0})
         self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
         
@@ -377,6 +375,7 @@ class Grid():
         for element_idx, element in enumerate(self.elements):
             # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
+                # [修正] buffer数据已在GPU上，直接在GPU上进行计算
                 objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
                 patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
                 
@@ -417,14 +416,13 @@ class Grid():
         else:
             pbar = tqdm(total=self.options.grid_training_iters, desc=f"训练 Block {block_idx+1}")
             
-        # [新增] 初始化用于在进度条中持久显示验证指标的变量
         latest_val_loss_obj = float('nan')
         
-        # --- 4. 主训练循环 ---
+        # --- 3. 主训练循环 ---
         for iter_idx in range(self.options.grid_training_iters):
             optimizer.zero_grad()
             
-            # --- 4a. 高效采样批次数据 ---
+            # --- 3a. 高效采样批次数据 ---
             all_features, all_objs, all_confs, all_locals, all_element_indices = [], [], [], [], []
             
             pos_sample_indices = torch.randint(0, len(positive_patches), (num_positive_samples,))
@@ -447,6 +445,7 @@ class Grid():
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
                 all_element_indices.append(element_idx)
             
+            # [修正] 现在所有数据都已在GPU上，stack后无需再.to(device)
             feature_batch = torch.stack(all_features)
             obj_batch_absolute = torch.stack(all_objs).permute(0, 3, 1, 2)
             conf_batch = torch.stack(all_confs)
@@ -456,37 +455,35 @@ class Grid():
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
             valid_labels = torch.cat([positive_labels, negative_labels], dim=0)
             
-            # --- 4b. 前向传播 ---
+            # --- 3b. 前向传播 ---
             output_raw, valid_score_batch = mapper(feature_batch)
             
             pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
             pred_log_sigma_batch = output_raw[:, 3:, :, :]
             
-            # --- 4c. 计算损失 ---
+            # --- 3c. 计算损失 ---
             loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_absolute, pred_log_sigma_batch, obj_batch_absolute, conf_batch, local_batch, self.elements, all_element_indices, valid_score_batch, valid_labels, num_positive_samples)
             
-            # --- 4d. 反向传播与优化 ---
+            # --- 3d. 反向传播与优化 ---
             loss.backward()
             optimizer.step()
             scheduler.step()
 
-            # --- 4e. 记录与日志 ---
+            # --- 3e. 记录与日志 ---
             if loss.item() < min_loss:
                 min_loss = loss.item()
                 best_mapper_state_dict = deepcopy(mapper.state_dict())
             
-            # [修改] 持续显示上一次的验证loss_obj
             info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
             
-            # --- 4f. 周期性验证 ---
+            # --- 3f. 周期性验证 ---
             if (iter_idx + 1) % val_interval == 0:
                 val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices, criterion)
                 if not np.isnan(val_rmse):
                     info['val_err'] = f'{val_rmse:.2f}m'
-                    # 更新持久化变量
                     latest_val_loss_obj = val_loss_obj
             
-            # --- 4g. 周期性可视化训练过程 ---
+            # --- 3g. 周期性可视化训练过程 ---
             if (iter_idx + 1) % vis_interval == 0:
                 true_coords_train = obj_batch_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
                 pred_coords_train = pred_mu_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()

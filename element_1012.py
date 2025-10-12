@@ -90,8 +90,10 @@ class Element():
         self._log(f"=========================== Element {self.id} 初始化完成 ===========================")
         self._log(f"影像尺寸: {img_raw.shape}")
         self._log(f"左上角像素坐标: {top_left_linesamp}")
-        self._log(f"训练Buffer尺寸: {self.buffer['features'].shape if self.buffer else '空'}")
-        self._log(f"验证Buffer尺寸: {self.validation_buffer['features'].shape if self.validation_buffer else '空'}")
+        log_buffer_shape = self.buffer['features'].shape if self.buffer and 'features' in self.buffer else '空'
+        log_val_buffer_shape = self.validation_buffer['features'].shape if self.validation_buffer and 'features' in self.validation_buffer else '空'
+        self._log(f"训练Buffer尺寸: {log_buffer_shape}")
+        self._log(f"验证Buffer尺寸: {log_val_buffer_shape}")
         self._log("=================================================================================")
     
     def _log(self, *args, **kwargs):
@@ -168,7 +170,7 @@ class Element():
 
     def __crop_validation_img__(self, crop_size=1024, num_val_windows=16):
         """
-        [新增] 裁切独立的验证窗口。
+        裁切独立的验证窗口。
         采用稀疏、大步长的策略，确保验证数据与训练数据不重叠。
         """
         self._log(f"正在为验证集裁切 {num_val_windows} 个窗口...")
@@ -195,8 +197,9 @@ class Element():
     
     def __extract_features_for_set__(self, crop_imgs_nhwc, crop_locals_nhw2, crop_dems_nhw) -> Dict[str, torch.Tensor]:
         """
-        [新增] 提取特征并构建Buffer的通用函数。
+        提取特征并构建Buffer的通用函数。
         接收裁切好的窗口数据，返回一个包含多维特征和坐标的Buffer字典。
+        [修改] 移除.cpu()调用，使Buffer直接保留在GPU上。
         """
         if crop_imgs_nhwc.size == 0:
             return {} # 如果输入为空，返回空字典
@@ -237,7 +240,6 @@ class Element():
 
         # --- 4. 计算地理坐标并保持多维结构 ---
         B, h, w, _ = locals_nhw2_down.shape
-        # [修正] 确保RPC计算时，所有输入都在同一设备上
         lats, lons = self.rpc.RPC_PHOTO2OBJ(
             locals_nhw2_down[..., 1].flatten().to(self.device), 
             locals_nhw2_down[..., 0].flatten().to(self.device), 
@@ -247,12 +249,12 @@ class Element():
         
         objs_bhw3 = torch.cat([xy, dems_nhw_down.flatten().to(self.device).unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
 
-        # --- 5. 构建Buffer字典 (将所有数据移回CPU存储，节省显存) ---
+        # --- 5. 构建Buffer字典 (直接保留在GPU上) ---
         buffer = {
-            'features': features_bdhw.cpu(),
-            'confs': confs_b1hw.cpu(),
-            'locals': locals_nhw2_down.cpu(),
-            'objs': objs_bhw3.cpu()
+            'features': features_bdhw,
+            'confs': confs_b1hw,
+            'locals': locals_nhw2_down.to(self.device),
+            'objs': objs_bhw3
         }
         self._log("特征提取完成。")
         return buffer
@@ -267,9 +269,20 @@ class Element():
         self.validation_buffer = None
 
     def to_device(self,device):
-        """将Element的核心组件（RPC和增广变换）移动到指定设备"""
+        """
+        [修改] 将Element的核心组件和Buffer数据都移动到指定设备。
+        这是确保所有数据在同一设备上的关键。
+        """
         self.device = device
         self.rpc.to_gpu(device)
         self.transform.to(device)
-        # Buffer数据在使用时按需移动到设备
+        
+        # 显式地移动Buffer字典中的每个张量
+        if hasattr(self, 'buffer') and self.buffer:
+            for key in self.buffer:
+                self.buffer[key] = self.buffer[key].to(device)
+        
+        if hasattr(self, 'validation_buffer') and self.validation_buffer:
+            for key in self.validation_buffer:
+                self.validation_buffer[key] = self.validation_buffer[key].to(device)
 
