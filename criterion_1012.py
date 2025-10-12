@@ -151,7 +151,7 @@ class CriterionTrainGrid(nn.Module):
         # 构建一个包含各分项损失的字典，用于日志打印
         loss_details = {
             'dist': loss_distribution.item(),
-            'obj': loss_obj.item(),
+            'obj': torch.sqrt(loss_obj.item()),
             'height': loss_height.item(),
             'photo': loss_photo.item(),
             'consistency': loss_consistency.item(),

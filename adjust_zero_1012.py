@@ -35,8 +35,12 @@ if __name__ == '__main__':
     parser.add_argument('--crop_size', type=int, default=1024,
                         help='size of input data')
     
-    parser.add_argument('--crop_step', type=int, default=0,
-                        help='step length of sliding window when cropping input data')
+    # [新增] 允许用户指定均匀裁切时，在高度和宽度方向上的窗口数量
+    parser.add_argument('--crop_num_h', type=int, default=8,
+                        help='number of uniform crops along the height')
+    
+    parser.add_argument('--crop_num_w', type=int, default=8,
+                        help='number of uniform crops along the width')
     
     parser.add_argument('--grid_size', type=int, default=3000,
                         help='step length of sliding window when cropping input data')
@@ -52,11 +56,8 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', type=int, default=8,
                         help='number of input images when extracting features')
     
-    parser.add_argument('--patches_per_batch', type=int, default=2 ** 10,
-                        help='number of patches in a batch for training')
-
-    parser.add_argument('--sample_factor', type=int, default=16,
-                        help='Downsampling factor of the encoder feature map.')
+    parser.add_argument('--patches_per_batch', type=int, default=256,
+                        help='number of patches in a batch')
 
     parser.add_argument('--grid_num',type=int,default=-1)
 
@@ -65,6 +66,10 @@ if __name__ == '__main__':
     parser.add_argument('--grid_offset_x',type=float,default=0)
 
     parser.add_argument('--grid_offset_y',type=float,default=0)
+    
+    # [新增] Encoder的下采样因子，必须与模型结构匹配
+    parser.add_argument('--sample_factor', type=int, default=16,
+                        help='Downsampling factor of the encoder feature map.')
     
 
     #=============================Element Training Params=============================
@@ -120,7 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--grid_summit_hold_iters', type=int, default=8800,
                         help='number of epochs for lr staying lr_max after warmup')
     
-    parser.add_argument('--grid_cooldown_iters', type=int, default=10000,
+    parser.add_argument('--grid_cooldown_iters', type=int, default=1000,
                         help='number of epochs for lr staying lr_max after warmup')
     
     parser.add_argument('--resume_training',type=str2bool,default=False)
@@ -193,10 +198,3 @@ if __name__ == '__main__':
     # 基于网格对adjust_images平差
     rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
 
-    # adjust_images = rsea.adjust([os.path.join(options.root,i) for i in image_folders],options)
-    # rsea.check_error(os.path.join(options.root,f'log_{options.log_postfix}.csv'),adjust_images)
-
-
-   
-    
-    
