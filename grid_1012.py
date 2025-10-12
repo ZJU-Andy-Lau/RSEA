@@ -146,7 +146,6 @@ class Grid():
             raise ValueError("mode should either be 'bbox' or 'interpolate'")
 
     def get_height_map_coeffs(self):
-        # Temporarily flatten buffer to calculate map coefficients
         heights = torch.cat([el.buffer['objs'][..., 2].flatten() for el in self.elements]).cpu().numpy()
         xys = torch.cat([el.buffer['objs'][..., :2].reshape(-1, 2) for el in self.elements]).cpu().numpy()
         
@@ -155,7 +154,7 @@ class Grid():
                    (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
             if np.any(mask):
                 block.map_coeffs['h'] = get_map_coef(heights[mask])
-            else: # Handle case with no points in block
+            else:
                 block.map_coeffs['h'] = get_map_coef(heights)
 
     def add_img(self,img:RSImage):
@@ -183,7 +182,6 @@ class Grid():
     def visualize_block_assignment(self):
         self.fprint("Visualizing block assignments...")
         
-        # Collect all points from training buffers
         all_points = []
         for element in self.elements:
             if element.buffer['objs'].numel() == 0: continue
@@ -249,7 +247,8 @@ class Grid():
         patch_h, patch_w = 16, 16
         val_batch_size = self.options.patches_per_batch // 2
 
-        val_patches = {'features': [], 'objs': []}
+        all_features, all_objs = [], []
+
         for _ in range(val_batch_size):
             element_idx, window_idx = random.choice(val_indices)
             element = self.elements[element_idx]
@@ -257,15 +256,16 @@ class Grid():
             if element.validation_buffer['features'].numel() == 0: continue
             _, _, H, W = element.validation_buffer['features'].shape
             y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
-            for key in val_patches:
-                val_patches[key].append(element.validation_buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
+            
+            all_features.append(element.validation_buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+            all_objs.append(element.validation_buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
 
-        if not val_patches['features']:
+        if not all_features:
             mapper.train()
             return float('nan'), None, None
             
-        feature_batch = torch.stack(val_patches['features']).to(self.device)
-        obj_batch = torch.stack(val_patches['objs']).permute(0, 3, 1, 2).to(self.device)
+        feature_batch = torch.stack(all_features).to(self.device)
+        obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(self.device)
 
         output, _ = mapper(feature_batch)
         pred_mu = self.warp_by_poly(output[:, :3, :, :], block.map_coeffs)
@@ -298,10 +298,7 @@ class Grid():
         block = self.blocks[block_idx]
         mapper = block.mapper
         optimizer = AdamW(mapper.parameters(),lr=self.options.grid_train_lr_max)
-        scheduler = MultiStageOneCycleLR(optimizer=optimizer, 
-                                         total_steps=self.options.grid_training_iters, 
-                                         warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters, 
-                                         cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        scheduler = MultiStageOneCycleLR(optimizer=optimizer, total_steps=self.options.grid_training_iters, warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters, cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         criterion = CriterionTrainGrid()
         
         mapper.train().to(self.device)
@@ -342,7 +339,7 @@ class Grid():
         for iter_idx in range(self.options.grid_training_iters):
             optimizer.zero_grad()
             
-            all_patches = {'features': [], 'objs': [], 'confs': [], 'locals': []}
+            all_features, all_objs, all_confs, all_locals = [], [], [], []
             
             for _ in range(num_positive_samples):
                 element_idx, window_idx = random.choice(train_pos_indices)
@@ -350,7 +347,10 @@ class Grid():
                 element.to_device(self.device)
                 _, _, H, W = element.buffer['features'].shape
                 y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
-                for key in all_patches: all_patches[key].append(element.buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
+                all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
 
             for _ in range(num_negative_samples):
                 element_idx, window_idx = random.choice(train_neg_indices)
@@ -358,12 +358,15 @@ class Grid():
                 element.to_device(self.device)
                 _, _, H, W = element.buffer['features'].shape
                 y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
-                for key in all_patches: all_patches[key].append(element.buffer[key][window_idx, ..., y:y+patch_h, x:x+patch_w])
+                all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
             
-            feature_batch = torch.stack(all_patches['features']).to(self.device)
-            obj_batch = torch.stack(all_patches['objs']).permute(0, 3, 1, 2).to(self.device)
-            conf_batch = torch.stack(all_patches['confs']).to(self.device)
-            local_batch = torch.stack(all_patches['locals']).permute(0, 3, 1, 2).to(self.device)
+            feature_batch = torch.stack(all_features).to(self.device)
+            obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(self.device)
+            conf_batch = torch.stack(all_confs).to(self.device)
+            local_batch = torch.stack(all_locals).permute(0, 3, 1, 2).to(self.device)
 
             positive_labels = torch.ones(num_positive_samples, 1, patch_h, patch_w, device=self.device)
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
@@ -448,7 +451,6 @@ class Grid():
         print(f"Grid '{name} loaded succesfully'")
     
     def warp_by_poly(self,raw,coefs):
-        # Convert numpy coefficients to tensors on the correct device
         coefs_x = torch.from_numpy(coefs['x']).to(raw.device, dtype=raw.dtype)
         coefs_y = torch.from_numpy(coefs['y']).to(raw.device, dtype=raw.dtype)
         coefs_h = torch.from_numpy(coefs['h']).to(raw.device, dtype=raw.dtype)
@@ -456,7 +458,6 @@ class Grid():
         x = (raw[:,0] + 1.) * .5 * (coefs_x[1] - coefs_x[0]) + coefs_x[0]
         y = (raw[:,1] + 1.) * .5 * (coefs_y[1] - coefs_y[0]) + coefs_y[0]
         
-        # apply_polynomial equivalent in torch for polyval
         h_poly = raw[:,2]
         h = torch.zeros_like(h_poly)
         for i in range(len(coefs_h)):
@@ -510,15 +511,12 @@ class Grid():
         confs_P1 = torch.cat(all_confs, dim=0)
         valid_score_P1 = torch.cat(all_valid_scores, dim=0)
         
-        # A simple averaging for overlapping predictions
         unique_locals, inverse_indices = torch.unique(torch.round(locals_P2), dim=0, return_inverse=True)
         
         mu_xyh_P3_unique = torch.zeros((unique_locals.shape[0], 3), device=self.device, dtype=torch.float32).scatter_add_(0, inverse_indices.unsqueeze(1).expand(-1, 3), mu_xyh_P3)
         counts = torch.zeros((unique_locals.shape[0],), device=self.device, dtype=torch.float32).scatter_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float32))
         mu_xyh_P3_unique /= counts.unsqueeze(1)
         
-        # Simplification: we don't average sigma, confs, valid_scores as it's more complex. We just keep the values corresponding to the unique locals.
-        # A proper implementation might need weighted averaging based on confidence.
         unique_indices = [torch.where(inverse_indices == i)[0][0] for i in range(len(unique_locals))]
         
         res = {
