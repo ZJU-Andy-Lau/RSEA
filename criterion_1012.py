@@ -140,7 +140,8 @@ class CriterionTrainGrid(nn.Module):
         # 使用tanh_clamp函数来限制损失值，防止因个别离谱的预测点导致梯度爆炸
         w = np.sqrt(1 - progress**2)
         t = w * self.clamp_max + 1
-        loss_photo = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
+        # loss_photo = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
+        loss_photo = reprojection_error_pixels
 
         # --- 5. 辅助损失: 坐标一致性损失 ---
         # 计算patch内部的局部几何一致性损失
