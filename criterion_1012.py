@@ -26,9 +26,9 @@ def calculate_consistency_loss(pred_patch, gt_patch):
     delta_pred_v = pred_patch[..., 1:, :] - pred_patch[..., :-1, :]
     delta_gt_v = gt_patch[..., 1:, :] - gt_patch[..., :-1, :]
     
-    # --- 计算L1损失 ---
-    loss_h = torch.nn.functional.l1_loss(delta_pred_h, delta_gt_h)
-    loss_v = torch.nn.functional.l1_loss(delta_pred_v, delta_gt_v)
+    # --- [修改] 计算L2损失 (均方误差) ---
+    loss_h = torch.nn.functional.mse_loss(delta_pred_h, delta_gt_h)
+    loss_v = torch.nn.functional.mse_loss(delta_pred_v, delta_gt_v)
     
     # 返回水平和垂直方向损失之和
     return loss_h + loss_v
@@ -43,11 +43,11 @@ class CriterionTrainGrid(nn.Module):
         # --- 初始化各项损失的权重和参数 ---
         self.consistency_weight = 0.5      # 坐标一致性损失的权重
         self.height_weight = 10.0          # 高程损失的权重
-        self.photo_weight = 0.1            # [新增] 重投影损失的权重，初始可以设小一点
+        self.photo_weight = 1.0            # 重投影损失的权重
         self.clamp_max = 1000              # 用于tanh_clamp函数，限制重投影损失的最大值
         self.bce = nn.BCEWithLogitsLoss()  # 用于计算valid_score的二元交叉熵损失
         self.valid_score_weight = 10.0     # valid_score损失的权重
-        self.warmup_iters = 2000           # [新增] 训练预热期，在此期间只使用L1损失
+        self.warmup_iters = 5           # 训练预热期，在此期间只使用L2损失
 
     def forward(self, epoch, max_epoch, pred_mu_absolute_patch, pred_log_sigma_patch, gt_absolute_patch, conf_patch, linesamp_patch, elements: list, element_indices: list, valid_score_patch, valid_labels, num_positive_samples):
         """
@@ -83,10 +83,12 @@ class CriterionTrainGrid(nn.Module):
         conf_weights[conf_weights < 0.5] = 0.5 - progress * 0.4
         conf_weights = torch.clip(conf_weights - conf_weights.mean() + 1., min=0.)
 
-        # --- 2. 绝对地理坐标L1损失 ---
-        error_absolute = torch.abs(pred_mu_absolute_pos - gt_absolute_pos)
-        loss_obj = (torch.norm(error_absolute[:, :2, ...], dim=1, keepdim=True) * conf_weights).mean()
-        loss_height = (error_absolute[:, 2:3, ...] * conf_weights).mean()
+        # --- [修改] 2. 绝对地理坐标L2损失 (均方误差) ---
+        error_squared = (pred_mu_absolute_pos - gt_absolute_pos) ** 2
+        # loss_obj 计算XY平面上的均方误差
+        loss_obj = (error_squared[:, :2, ...].sum(dim=1, keepdim=True) * conf_weights).mean()
+        # loss_height 计算高程的均方误差
+        loss_height = (error_squared[:, 2:3, ...] * conf_weights).mean()
 
         # --- 3. 像素空间重投影损失 (核心修复) ---
         loss_photo_total = torch.tensor(0.0, device=pred_mu_absolute_pos.device)
@@ -129,7 +131,7 @@ class CriterionTrainGrid(nn.Module):
 
         # --- 5. 组合总损失 (引入预热逻辑) ---
         if epoch < self.warmup_iters:
-            # 在预热期，只使用L1损失强制模型学习均值
+            # 在预热期，只使用L2损失强制模型学习均值
             loss_regression = loss_obj + loss_height * self.height_weight
             # 对sigma施加一个小的正则化，防止其在预热期乱跑
             sigma_regularization = (pred_log_sigma_pos ** 2).mean() * 0.01 
@@ -144,7 +146,7 @@ class CriterionTrainGrid(nn.Module):
             term2 = pred_log_sigma_pos
             loss_distribution = ((term1 + term2) * conf_weights).mean()
             
-            total_loss = loss_distribution + loss_obj + loss_height * self.height_weight + loss_photo * self.photo_weight + self.consistency_weight * loss_consistency + loss_valid * self.valid_score_weight
+            total_loss = loss_distribution + loss_obj + loss_height * self.height_weight + loss_photo * self.photo_weight + self.consistency_weight * self.consistency_weight + loss_valid * self.valid_score_weight
         
         # 构建一个包含各分项损失的字典，用于日志打印
         loss_details = {

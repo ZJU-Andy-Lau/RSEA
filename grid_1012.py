@@ -21,6 +21,8 @@ from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bili
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
 from torch.optim import AdamW,lr_scheduler
+# [修改] 导入您指定的 MultiStageOneCycleLR 调度器
+from scheduler import MultiStageOneCycleLR
 from criterion_1012 import CriterionTrainGrid
 import torch.nn.functional as F
 from orthorectify import orthorectify_image
@@ -366,7 +368,13 @@ class Grid():
         block = self.blocks[block_idx]
         mapper = block.mapper
         optimizer = AdamW(mapper.parameters(),lr=self.options.grid_train_lr_max)
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.options.grid_train_lr_max, total_steps=self.options.grid_training_iters, anneal_strategy='cos')
+        
+        # [修改] 恢复使用 MultiStageOneCycleLR 调度器
+        scheduler = MultiStageOneCycleLR(optimizer=optimizer,
+                                     total_steps=self.options.grid_training_iters,
+                                     warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
+                                     cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        
         criterion = CriterionTrainGrid()
         
         mapper.train().to(self.device)
