@@ -20,7 +20,6 @@ from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bili
 
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
-from scheduler import MultiStageOneCycleLR
 from torch.optim import AdamW,lr_scheduler
 from criterion_1012 import CriterionTrainGrid
 import torch.nn.functional as F
@@ -238,7 +237,7 @@ class Grid():
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:训练完成"})
 
     @torch.no_grad()
-    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_indices: List[Tuple[int, int]]):
+    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_indices: List[Tuple[int, int]], block_center: torch.Tensor, block_scale: torch.Tensor):
         if not val_indices:
             return float('nan'), None, None
 
@@ -252,7 +251,6 @@ class Grid():
         for _ in range(val_batch_size):
             element_idx, window_idx = random.choice(val_indices)
             element = self.elements[element_idx]
-            element.to_device(self.device)
             if element.validation_buffer['features'].numel() == 0: continue
             _, _, H, W = element.validation_buffer['features'].shape
             y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
@@ -265,16 +263,20 @@ class Grid():
             return float('nan'), None, None
             
         feature_batch = torch.stack(all_features).to(self.device)
-        obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(self.device)
+        obj_batch = torch.stack(all_objs).to(self.device)
 
         output, _ = mapper(feature_batch)
-        pred_mu = self.warp_by_poly(output[:, :3, :, :], block.map_coeffs)
+        pred_mu_normalized = output[:, :3, :, :]
+        
+        # De-normalize for error calculation in meters
+        pred_mu_absolute = self.denormalize_coords(pred_mu_normalized, block_center, block_scale)
+        true_absolute = obj_batch.permute(0, 3, 1, 2) # obj_batch is already absolute
 
-        error = torch.sqrt(torch.sum((pred_mu[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
+        error = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - true_absolute[:, :2, ...])**2, dim=1))
         val_rmse = error.mean().item()
 
-        pred_coords = pred_mu.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
-        true_coords = obj_batch.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+        pred_coords = pred_mu_absolute.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+        true_coords = true_absolute.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
         
         plt.figure(figsize=(10, 10))
         plt.scatter(true_coords[:, 0], true_coords[:, 1], s=5, c='blue', alpha=0.6, label='True Coords')
@@ -298,7 +300,7 @@ class Grid():
         block = self.blocks[block_idx]
         mapper = block.mapper
         optimizer = AdamW(mapper.parameters(),lr=self.options.grid_train_lr_max)
-        scheduler = MultiStageOneCycleLR(optimizer=optimizer, total_steps=self.options.grid_training_iters, warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters, cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=self.options.grid_train_lr_max, total_steps=self.options.grid_training_iters)
         criterion = CriterionTrainGrid()
         
         mapper.train().to(self.device)
@@ -309,18 +311,24 @@ class Grid():
         num_positive_samples = patches_per_batch // 2
         num_negative_samples = patches_per_batch - num_positive_samples
 
+        # Move all relevant element buffers to GPU once
+        for el in self.elements:
+            el.to_device(self.device)
+
+        # Pre-calculate positive/negative indices
         train_pos_indices, train_neg_indices, val_pos_indices = [], [], []
         
         for element_idx, element in enumerate(self.elements):
             if element.buffer['features'].numel() > 0:
-                window_centers = element.buffer['objs'].mean(dim=(1, 2))
+                # Use CPU for index calculation, it's a one-time operation
+                window_centers = element.buffer['objs'].mean(dim=(1, 2)).cpu()
                 in_mask = (window_centers[:, 0] >= block.diag[0, 0]) & (window_centers[:, 1] <= block.diag[0, 1]) & \
                           (window_centers[:, 0] < block.diag[1, 0]) & (window_centers[:, 1] > block.diag[1, 1])
                 for window_idx in torch.where(in_mask)[0]: train_pos_indices.append((element_idx, window_idx.item()))
                 for window_idx in torch.where(~in_mask)[0]: train_neg_indices.append((element_idx, window_idx.item()))
             
             if element.validation_buffer['features'].numel() > 0:
-                val_window_centers = element.validation_buffer['objs'].mean(dim=(1, 2))
+                val_window_centers = element.validation_buffer['objs'].mean(dim=(1, 2)).cpu()
                 val_in_mask = (val_window_centers[:, 0] >= block.diag[0, 0]) & (val_window_centers[:, 1] <= block.diag[0, 1]) & \
                               (val_window_centers[:, 0] < block.diag[1, 0]) & (val_window_centers[:, 1] > block.diag[1, 1])
                 for window_idx in torch.where(val_in_mask)[0]: val_pos_indices.append((element_idx, window_idx.item()))
@@ -329,6 +337,12 @@ class Grid():
             print(f"Warning: Block {block_idx} lacks positive or negative training samples. Skipping training.")
             return
 
+        # Define normalization parameters for this block
+        min_coords = torch.tensor([block.diag[0, 0], block.diag[1, 1], block.map_coeffs['h'][1] - 500], device=self.device)
+        max_coords = torch.tensor([block.diag[1, 0], block.diag[0, 1], block.map_coeffs['h'][1] + 500], device=self.device)
+        block_center = (min_coords + max_coords) / 2.0
+        block_scale = (max_coords - min_coords) / 2.0
+        
         vis_interval, val_interval = 500, 500
 
         if not task_info is None:
@@ -341,10 +355,11 @@ class Grid():
             
             all_features, all_objs, all_confs, all_locals = [], [], [], []
             
-            for _ in range(num_positive_samples):
-                element_idx, window_idx = random.choice(train_pos_indices)
+            # Vectorized sampling for positive samples
+            pos_sample_indices = torch.randint(0, len(train_pos_indices), (num_positive_samples,))
+            for i in pos_sample_indices:
+                element_idx, window_idx = train_pos_indices[i]
                 element = self.elements[element_idx]
-                element.to_device(self.device)
                 _, _, H, W = element.buffer['features'].shape
                 y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
                 all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
@@ -352,10 +367,11 @@ class Grid():
                 all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
 
-            for _ in range(num_negative_samples):
-                element_idx, window_idx = random.choice(train_neg_indices)
+            # Vectorized sampling for negative samples
+            neg_sample_indices = torch.randint(0, len(train_neg_indices), (num_negative_samples,))
+            for i in neg_sample_indices:
+                element_idx, window_idx = train_neg_indices[i]
                 element = self.elements[element_idx]
-                element.to_device(self.device)
                 _, _, H, W = element.buffer['features'].shape
                 y, x = random.randint(0, H - patch_h), random.randint(0, W - patch_w)
                 all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
@@ -363,21 +379,24 @@ class Grid():
                 all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
             
-            feature_batch = torch.stack(all_features).to(self.device)
-            obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(self.device)
-            conf_batch = torch.stack(all_confs).to(self.device)
-            local_batch = torch.stack(all_locals).permute(0, 3, 1, 2).to(self.device)
+            feature_batch = torch.stack(all_features)
+            obj_batch_absolute = torch.stack(all_objs)
+            conf_batch = torch.stack(all_confs)
+            local_batch = torch.stack(all_locals)
 
+            # Normalize targets
+            obj_batch_normalized = self.normalize_coords(obj_batch_absolute, block_center, block_scale)
+            
             positive_labels = torch.ones(num_positive_samples, 1, patch_h, patch_w, device=self.device)
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
             valid_labels = torch.cat([positive_labels, negative_labels], dim=0)
             
             output_16p1, valid_score_batch = mapper(feature_batch)
             
-            pred_mu_raw = self.warp_by_poly(output_16p1[:, :3, :, :], block.map_coeffs)
+            pred_mu_normalized = output_16p1[:, :3, :, :]
             pred_log_sigma_batch = output_16p1[:, 3:, :, :]
             
-            loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_raw, pred_log_sigma_batch, obj_batch, conf_batch, local_batch, element.rpc, valid_score_batch, valid_labels, num_positive_samples)
+            loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_normalized, pred_log_sigma_batch, obj_batch_normalized.permute(0,3,1,2), conf_batch, local_batch.permute(0,3,1,2), element.rpc, valid_score_batch, valid_labels, num_positive_samples, block_center, block_scale)
             
             loss.backward()
             optimizer.step()
@@ -387,15 +406,16 @@ class Grid():
                 min_loss = loss.item()
                 best_mapper_state_dict = deepcopy(mapper.state_dict())
             
-            info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.4f}', **loss_details }
+            info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()} }
             
             if (iter_idx + 1) % val_interval == 0:
-                val_rmse, _, _ = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_pos_indices)
+                val_rmse, _, _ = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_pos_indices, block_center, block_scale)
                 info['val_err'] = f'{val_rmse:.2f}m'
             
             if (iter_idx + 1) % vis_interval == 0:
-                true_coords_train = obj_batch[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
-                pred_coords_train = pred_mu_raw[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
+                pred_mu_absolute = self.denormalize_coords(pred_mu_normalized, block_center, block_scale)
+                true_coords_train = obj_batch_absolute[:num_positive_samples].reshape(-1, 3).cpu().numpy()
+                pred_coords_train = pred_mu_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
                 
                 plt.figure(figsize=(10, 10))
                 plt.scatter(true_coords_train[:, 0], true_coords_train[:, 1], s=5, c='blue', alpha=0.6, label='True Coords')
@@ -416,9 +436,16 @@ class Grid():
                 
         if not task_info: pbar.close()
         
-        mapper.load_state_dict(best_mapper_state_dict)
+        if 'best_mapper_state_dict' in locals():
+             mapper.load_state_dict(best_mapper_state_dict)
         block.status = self.STATES.WELL_TRAINED if min_loss < 25. else self.STATES.BAD_TRAINED
         self.save_grid()
+
+    def normalize_coords(self, coords_absolute, center, scale):
+        return (coords_absolute - center.view(1, 1, 1, 3)) / scale.view(1, 1, 1, 3)
+
+    def denormalize_coords(self, coords_normalized, center, scale):
+        return coords_normalized * scale.view(1, 3, 1, 1) + center.view(1, 3, 1, 1)
 
     def save_grid(self):
         state_dict = {
@@ -496,8 +523,14 @@ class Grid():
                     block.mapper.eval().to(self.device)
                     
                     output_16p1, valid_score = block.mapper(features_b)
-                    mu_xyh_patch = self.warp_by_poly(output_16p1[:, :3, :, :], block.map_coeffs)
-                    sigma_xyh_patch = torch.exp(output_16p1[:, 3:, :, :])
+
+                    min_coords = torch.tensor([block.diag[0, 0], block.diag[1, 1], block.map_coeffs['h'][1] - 500], device=self.device)
+                    max_coords = torch.tensor([block.diag[1, 0], block.diag[0, 1], block.map_coeffs['h'][1] + 500], device=self.device)
+                    block_center = (min_coords + max_coords) / 2.0
+                    block_scale = (max_coords - min_coords) / 2.0
+                    
+                    mu_xyh_patch = self.denormalize_coords(output_16p1[:, :3, :, :], block_center, block_scale)
+                    sigma_xyh_patch = torch.exp(output_16p1[:, 3:, :, :]) # Sigma is not normalized, it's a direct prediction
 
                     all_mu_xyh.append(mu_xyh_patch.permute(0,2,3,1).reshape(-1, 3))
                     all_sigma_xyh.append(sigma_xyh_patch.permute(0,2,3,1).reshape(-1, 3))
