@@ -58,7 +58,6 @@ class Grid():
         if diag is None and grid_path is None:
             raise ValueError("Grid初始化错误: 必须提供diag或grid_path")
         self.options.mapper_input_channel = self.encoder.output_channels
-        self.device = device if device is not None else 'cuda'
         
         # 根据是新建还是加载来初始化Grid
         if grid_path is None :
@@ -80,7 +79,7 @@ class Grid():
         self.SAMPLE_FACTOR = options.sample_factor
         self.pred_resolution = .7
         self.vis_points_latlon = None
-        
+        self.device = device if device is not None else 'cuda'
     
     def to_device(self,device):
         """将Grid及其所有子组件移动到指定设备"""
@@ -142,7 +141,7 @@ class Grid():
             right = min(max(corner_samplines[1,0],corner_samplines[2,0]),img.W-1)
             img_raw = img.get_image_by_sampline(np.array([left,top]),np.array([right,bottom]))
             dem = img.get_dem_by_sampline(np.array([left,top]),np.array([right,bottom]))
-            return img_raw,dem,np.array([top,left]),np.array([bottom,right])
+            return img_raw,dem,np.array([top,left]),np.array([right,bottom])
         elif mode == 'interpolate':
             # 'interpolate'模式会将四边形区域重采样为矩形
             img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines,
@@ -158,7 +157,6 @@ class Grid():
 
     def get_height_map_coeffs(self):
         """根据所有Element Buffer中的数据，为每个Block估计高度多项式的系数"""
-        # [修改] 直接在GPU上进行计算，然后将结果移回CPU
         heights_list = [el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer]
         if not heights_list: return
         
@@ -207,7 +205,6 @@ class Grid():
         all_points_list = []
         for element in self.elements:
             if not element.buffer or element.buffer['objs'].numel() == 0: continue
-            # [修改] 直接在GPU上操作，最后才移回CPU
             points = element.buffer['objs'].reshape(-1, 3)
             all_points_list.append(points)
         
@@ -249,7 +246,6 @@ class Grid():
 
     def train(self,task_info = None):
         """Grid的训练总控函数"""
-        # [修改] 训练开始前，将所有Element数据移动到目标设备
         self.to_device(self.device)
         self.get_height_map_coeffs()
         self.visualize_block_assignment()
@@ -298,7 +294,6 @@ class Grid():
             mapper.train()
             return float('nan'), float('nan')
         
-        # [修正] 现在 all_features 和 all_objs 已经是GPU张量列表，stack后无需再.to(device)
         feature_batch = torch.stack(all_features)
         obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2)
         
@@ -356,7 +351,7 @@ class Grid():
                                      cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
         criterion = CriterionTrainGrid()
         
-        mapper.train() # to(device) is handled by grid.to_device
+        mapper.train()
         min_loss = 1e8
         best_mapper_state_dict = None
         
@@ -376,7 +371,6 @@ class Grid():
         for element_idx, element in enumerate(self.elements):
             # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
-                # [修正] buffer数据已在GPU上，直接在GPU上进行计算
                 objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
                 patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
                 
@@ -446,7 +440,6 @@ class Grid():
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
                 all_element_indices.append(element_idx)
             
-            # [修正] 现在所有数据都已在GPU上，stack后无需再.to(device)
             feature_batch = torch.stack(all_features)
             obj_batch_absolute = torch.stack(all_objs).permute(0, 3, 1, 2)
             conf_batch = torch.stack(all_confs)
@@ -547,82 +540,116 @@ class Grid():
         print(f"Grid '{name}' 加载成功")
 
     @torch.no_grad()
-    def pred_xyh(self,img_raw:np.ndarray,local_hw2:np.ndarray) -> Dict[str,np.ndarray]:
-        """对新的影像进行密集地理坐标预测"""
-        H,W = img_raw.shape[:2]
+    def pred_xyh(self, img_raw: np.ndarray, local_hw2: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        [修改] 对新的影像进行密集地理坐标预测。
+        采用“一次提取，按需分发”的高效策略，并移除结果去重。
+        """
+        H, W = img_raw.shape[:2]
         self.encoder.eval().to(self.device)
         self.transform.to(self.device)
 
+        # --- 1. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
+        self.fprint("正在为预测影像提取全局特征...")
         crop_size = self.options.crop_size
-        step = crop_size // 2
-        
+        step = crop_size // 2  # 使用重叠窗口以避免边缘效应
         y_starts = np.unique(np.append(np.arange(0, H - crop_size, step), H - crop_size)).astype(int)
         x_starts = np.unique(np.append(np.arange(0, W - crop_size, step), W - crop_size)).astype(int)
 
-        all_mu_xyh, all_sigma_xyh, all_locals, all_confs, all_valid_scores = [], [], [], [], []
-        
-        for row in tqdm(y_starts, desc="正在预测"):
+        index = get_coord_mat(H,W)
+
+        full_buffer = {'features': [], 'locals': [], 'confs': [], 'indexes':[]}
+
+        for row in tqdm(y_starts, desc="提取特征"):
             for col in x_starts:
                 img_crop = img_raw[row:row + crop_size, col:col + crop_size]
                 local_crop = local_hw2[row:row + crop_size, col:col + crop_size]
+                index_crop = index[row:row + crop_size, col:col + crop_size]
 
                 img_tensor = torch.from_numpy(img_crop).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(self.device)
                 img_tensor = self.transform(img_tensor)
                 
                 features_b, confs_b = self.encoder(img_tensor)
-                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device)
+                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device).to(self.device)
+                index_down = downsample(torch.from_numpy(index_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device).to(self.device)
+
+                # 将结果展平并添加到全局Buffer
+                full_buffer['features'].append(features_b.permute(0, 2, 3, 1).reshape(-1, self.encoder.output_channels))
+                full_buffer['locals'].append(local_down.reshape(-1, 2))
+                full_buffer['indexes'].append(index_down.reshape(-1, 2))
+                full_buffer['confs'].append(confs_b.permute(0, 2, 3, 1).reshape(-1))
+
+        # 将列表拼接成一个大的Tensor
+        full_buffer_features = torch.cat(full_buffer['features'], dim=0)
+        full_buffer_locals = torch.cat(full_buffer['locals'], dim=0)
+        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)
+        full_buffer_indexes = torch.cat(full_buffer['indexes'], dim=0)
+        self.fprint(f"全局特征提取完成，共 {len(full_buffer_features)} 个特征点。")
+
+        # --- 2. 遍历所有Block，按需筛选并分发数据进行预测 ---
+        all_results = {'mu_xyh_P3': [], 'sigma_xyh_P3': [], 'locals_P2': [], 'confs_P1': [], 'valid_score_P1': []}
+        
+        # 计算全图特征图的尺寸
+        H_feat, W_feat = (H // self.SAMPLE_FACTOR, W // self.SAMPLE_FACTOR)
+
+        for block in tqdm(self.blocks, desc="分区预测"):
+            block.mapper.eval().to(self.device)
+
+            # 根据diag_ratio计算当前Block在全图像素坐标系下的范围
+            y_start_pix = int(H * block.diag_ratio[0, 0])
+            x_start_pix = int(W * block.diag_ratio[0, 1])
+            y_end_pix = int(H * block.diag_ratio[1, 0])
+            x_end_pix = int(W * block.diag_ratio[1, 1])
+
+            # 高效筛选出落入当前Block范围内的所有特征点
+            mask = (full_buffer_indexes[:, 0] >= y_start_pix) & (full_buffer_indexes[:, 0] < y_end_pix) & \
+                   (full_buffer_indexes[:, 1] >= x_start_pix) & (full_buffer_indexes[:, 1] < x_end_pix)
+            
+            if not mask.any():
+                continue
+
+            block_features = full_buffer_features[mask]
+            block_locals = full_buffer_locals[mask]
+            block_confs = full_buffer_confs[mask]
+
+            # --- 3. 对筛选出的特征进行分批预测 ---
+            num_points = len(block_features)
+            batch_size = self.options.patches_per_batch * 16 * 16 # 复用参数，转换为点数
+            
+            for i in range(0, num_points, batch_size):
+                feature_batch = block_features[i:i+batch_size]
                 
-                crop_preds_mu, crop_preds_sigma, crop_valid_scores = [], [], []
-
-                for block in self.blocks:
-                    block.mapper.eval().to(self.device)
-                    output, valid_score = block.mapper(features_b)
-                    pred_mu = self.warp_by_poly(output[:, :3, ...], block.map_coeffs)
-                    valid_prob = torch.sigmoid(valid_score)
-                    crop_preds_mu.append(pred_mu * valid_prob)
-                    crop_preds_sigma.append(torch.exp(output[:, 3:, ...]))
-                    crop_valid_scores.append(valid_prob)
+                # 将点云式的特征 (N, D) 变回伪图像 (N, D, 1, 1) 以适应mapper输入
+                feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
                 
-                sum_valid_scores = torch.stack(crop_valid_scores).sum(dim=0).clamp(min=1e-8)
-                avg_pred_mu = torch.stack(crop_preds_mu).sum(dim=0) / sum_valid_scores
-                avg_pred_sigma = torch.stack(crop_preds_sigma).mean(dim=0)
-                avg_valid_score = sum_valid_scores / len(self.blocks)
+                output, valid_score = block.mapper(feature_batch_img)
+                
+                # 将输出展平回点云式
+                output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
+                valid_score_flat = torch.sigmoid(valid_score).permute(0, 2, 3, 1).reshape(-1)
 
-                all_mu_xyh.append(avg_pred_mu.permute(0,2,3,1).reshape(-1, 3))
-                all_sigma_xyh.append(avg_pred_sigma.permute(0,2,3,1).reshape(-1, 3))
-                all_locals.append(local_down.reshape(-1, 2))
-                all_confs.append(confs_b.permute(0,2,3,1).reshape(-1))
-                all_valid_scores.append(avg_valid_score.permute(0,2,3,1).reshape(-1))
+                pred_mu_flat = self.warp_by_poly(output_flat[:, :3].unsqueeze(-1).unsqueeze(-1), block.map_coeffs).squeeze()
+                pred_sigma_flat = torch.exp(output_flat[:, 3:])
 
-        mu_xyh_P3 = torch.cat(all_mu_xyh, dim=0)
-        sigma_xyh_P3 = torch.cat(all_sigma_xyh, dim=0)
-        locals_P2 = torch.cat(all_locals, dim=0)
-        confs_P1 = torch.cat(all_confs, dim=0)
-        valid_score_P1 = torch.cat(all_valid_scores, dim=0)
-        
-        valid_mask = valid_score_P1 > 0.5
-        
-        unique_locals, inverse_indices = torch.unique(torch.round(locals_P2[valid_mask]), dim=0, return_inverse=True)
-        
-        mu_xyh_filtered = mu_xyh_P3[valid_mask]
-        
-        mu_xyh_aggregated = torch.zeros((unique_locals.shape[0], 3), device=self.device, dtype=torch.float32)
-        mu_xyh_aggregated.scatter_add_(0, inverse_indices.unsqueeze(1).expand(-1, 3), mu_xyh_filtered)
-        
-        counts = torch.zeros((unique_locals.shape[0],), device=self.device, dtype=torch.float32)
-        counts.scatter_add_(0, inverse_indices, torch.ones_like(inverse_indices, dtype=torch.float32))
-        
-        mu_xyh_P3_unique = mu_xyh_aggregated / counts.unsqueeze(1).clamp(min=1)
-        
-        _, unique_indices_for_others = np.unique(inverse_indices.cpu().numpy(), return_index=True)
+                # 收集结果
+                all_results['mu_xyh_P3'].append(pred_mu_flat)
+                all_results['sigma_xyh_P3'].append(pred_sigma_flat)
+                all_results['locals_P2'].append(block_locals[i:i+batch_size])
+                all_results['confs_P1'].append(block_confs[i:i+batch_size])
+                all_results['valid_score_P1'].append(valid_score_flat)
 
-        res = {
-            'mu_xyh_P3': mu_xyh_P3_unique,
-            'sigma_xyh_P3': sigma_xyh_P3[valid_mask][unique_indices_for_others],
-            'locals_P2': unique_locals,
-            'confs_P1': confs_P1[valid_mask][unique_indices_for_others],
-            'valid_score_P1': valid_score_P1[valid_mask][unique_indices_for_others]
+        # --- 4. 整合所有结果 ---
+        if not all_results['mu_xyh_P3']:
+            return {k: torch.empty(0, v) for k, v in {'mu_xyh_P3': 3, 'sigma_xyh_P3': 3, 'locals_P2': 2, 'confs_P1': 1, 'valid_score_P1': 1}.items()}
+
+        # 拼接所有Block和批次的结果，不进行去重
+        final_res = {
+            'mu_xyh_P3': torch.cat(all_results['mu_xyh_P3'], dim=0),
+            'sigma_xyh_P3': torch.cat(all_results['sigma_xyh_P3'], dim=0),
+            'locals_P2': torch.cat(all_results['locals_P2'], dim=0),
+            'confs_P1': torch.cat(all_results['confs_P1'], dim=0),
+            'valid_score_P1': torch.cat(all_results['valid_score_P1'], dim=0)
         }
 
-        return res
+        return final_res
 
