@@ -303,6 +303,7 @@ class RSEA():
         fitter = AffineFitter()
 
         valid_mask = valid_scores > .5
+        print(src.shape,valid_mask.shape)
         src = src[valid_mask]
         tgt_mu = tgt_mu[valid_mask]
         tgt_sigma = tgt_sigma[valid_mask]
