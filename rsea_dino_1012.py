@@ -459,8 +459,8 @@ class RSEA():
 
             # 新增调用
             if all_pred_xyh_for_vis:
-                pred_xyh_vis = torch.cat(all_pred_xyh_for_vis, dim=0)
-                locals_vis = torch.cat(all_locals_for_vis, dim=0)
+                pred_xyh_vis = torch.cat(all_pred_xyh_for_vis, dim=0).detach()
+                locals_vis = torch.cat(all_locals_for_vis, dim=0).detach()
                 vis_save_path = os.path.join(self.root, f'adjust_img_{img_idx}_error_vectors.png')
                 self._visualize_error_vectors(pred_xyh_vis, locals_vis, image, vis_save_path)
 
