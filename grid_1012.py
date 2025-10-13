@@ -331,7 +331,7 @@ class Grid():
 
     @torch.no_grad()
     def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]], criterion: nn.Module):
-        """在验证集上评估模型，计算RMSE和loss_obj，并生成散点图"""
+        """[核心修改] 在验证集上评估模型，对齐训练和验证任务"""
         if not val_patch_indices:
             return float('nan'), float('nan')
 
@@ -355,15 +355,20 @@ class Grid():
         feature_batch = torch.stack(all_features).to(torch.float32)
         obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(torch.float32)
 
-        # [修改] 验证时也需要输入坐标先验（这里用真实坐标模拟无偏先验）
-        obj_batch_nhw3 = obj_batch.permute(0, 2, 3, 1)
-        normalized_prior_nhw3 = self._normalize_coords(obj_batch_nhw3, block)
+        # --- [核心修改] 为验证集的坐标先验注入同分布的噪声，确保任务一致性 ---
+        noise = torch.randn_like(obj_batch) * self.options.prior_noise_std
+        noisy_prior_absolute_val = obj_batch + noise
+        
+        noisy_prior_nhw3_val = noisy_prior_absolute_val.permute(0, 2, 3, 1)
+        normalized_prior_nhw3 = self._normalize_coords(noisy_prior_nhw3_val, block)
         normalized_prior_n3hw = normalized_prior_nhw3.permute(0, 3, 1, 2)
+        
         mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
         
         output_raw, _ = mapper(mapper_input)
         pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
         
+        # 验证误差仍然用预测值和“无噪声的真实坐标”进行比较
         error_rmse = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
         val_rmse = error_rmse.mean().item()
         
@@ -373,38 +378,41 @@ class Grid():
         pred_coords_all = pred_mu_absolute.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
         true_coords_all = obj_batch.permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
         
-        patch_to_vis_idx = random.randint(0, val_batch_size - 1)
-        pred_coords_single = pred_mu_absolute[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
-        true_coords_single = obj_batch[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
+        # 可视化时，可以选择一个样本进行对比
+        if val_batch_size > 0:
+            patch_to_vis_idx = random.randint(0, val_batch_size - 1)
+            pred_coords_single = pred_mu_absolute[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
+            true_coords_single = obj_batch[patch_to_vis_idx].permute(1, 2, 0).reshape(-1, 3).cpu().numpy()
 
-        plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'validation')
-        os.makedirs(plot_dir, exist_ok=True)
-        
-        plt.figure(figsize=(10, 10))
-        plt.scatter(true_coords_all[:, 0], true_coords_all[:, 1], s=5, c='blue', alpha=0.6, label='真实坐标')
-        plt.scatter(pred_coords_all[:, 0], pred_coords_all[:, 1], s=5, c='red', marker='x', alpha=0.6, label='预测坐标')
-        plt.title(f'验证集总体散点图 - Block {block_idx}, 迭代 {iter_idx}')
-        plt.xlabel('墨卡托坐标X (m)'); plt.ylabel('墨卡托坐标Y (m)'); plt.legend(); plt.grid(True)
-        ax = plt.gca(); ax.set_aspect('equal', adjustable='box')
-        save_path_all = os.path.join(plot_dir, f'val_scatter_iter_{iter_idx}.png')
-        plt.savefig(save_path_all, dpi=150)
-        plt.close()
+            plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'validation')
+            os.makedirs(plot_dir, exist_ok=True)
+            
+            # ... (可视化代码保持不变)
+            plt.figure(figsize=(10, 10))
+            plt.scatter(true_coords_all[:, 0], true_coords_all[:, 1], s=5, c='blue', alpha=0.6, label='真实坐标')
+            plt.scatter(pred_coords_all[:, 0], pred_coords_all[:, 1], s=5, c='red', marker='x', alpha=0.6, label='预测坐标')
+            plt.title(f'验证集总体散点图 - Block {block_idx}, 迭代 {iter_idx}')
+            plt.xlabel('墨卡托坐标X (m)'); plt.ylabel('墨卡托坐标Y (m)'); plt.legend(); plt.grid(True)
+            ax = plt.gca(); ax.set_aspect('equal', adjustable='box')
+            save_path_all = os.path.join(plot_dir, f'val_scatter_iter_{iter_idx}.png')
+            plt.savefig(save_path_all, dpi=150)
+            plt.close()
 
-        plt.figure(figsize=(10, 10))
-        plt.scatter(true_coords_single[:, 0], true_coords_single[:, 1], s=15, c='blue', alpha=0.8, label='真实 Patch 形状')
-        plt.scatter(pred_coords_single[:, 0], pred_coords_single[:, 1], s=15, c='red', marker='x', alpha=0.8, label='预测 Patch 形状')
-        plt.title(f'单个Patch形状对比 - Block {block_idx}, 迭代 {iter_idx}')
-        plt.xlabel('墨卡托坐标X (m)'); plt.ylabel('墨卡托坐标Y (m)'); plt.legend(); plt.grid(True)
-        ax = plt.gca(); ax.set_aspect('equal', adjustable='box')
-        save_path_single = os.path.join(plot_dir, f'val_single_patch_iter_{iter_idx}.png')
-        plt.savefig(save_path_single, dpi=150)
-        plt.close()
+            plt.figure(figsize=(10, 10))
+            plt.scatter(true_coords_single[:, 0], true_coords_single[:, 1], s=15, c='blue', alpha=0.8, label='真实 Patch 形状')
+            plt.scatter(pred_coords_single[:, 0], pred_coords_single[:, 1], s=15, c='red', marker='x', alpha=0.8, label='预测 Patch 形状')
+            plt.title(f'单个Patch形状对比 - Block {block_idx}, 迭代 {iter_idx}')
+            plt.xlabel('墨卡托坐标X (m)'); plt.ylabel('墨卡托坐标Y (m)'); plt.legend(); plt.grid(True)
+            ax = plt.gca(); ax.set_aspect('equal', adjustable='box')
+            save_path_single = os.path.join(plot_dir, f'val_single_patch_iter_{iter_idx}.png')
+            plt.savefig(save_path_single, dpi=150)
+            plt.close()
         
         mapper.train()
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
-        """ [核心修改] 为指定的Block训练mapper模型 (引入坐标先验) """
+        """ 核心训练函数 """
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
         mapper = block.mapper
@@ -429,8 +437,8 @@ class Grid():
         self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
         
         positive_patches, negative_patches, val_patch_indices = [], [], []
-        block_min_x, block_max_x = block.diag[0, 0], block.diag[1, 0]
-        block_min_y, block_max_y = block.diag[1, 1], block.diag[0, 1]
+        block_min_x, block_max_x = min(block.diag[:,0]),max(block.diag[:,0])
+        block_min_y, block_max_y = min(block.diag[:,1]),max(block.diag[:,1])
 
         for element_idx, element in enumerate(self.elements):
             # --- [核心修改] 使用池化操作进行高效的“完全包含”判断 ---
@@ -528,7 +536,7 @@ class Grid():
             conf_batch = torch.stack(all_confs)
             local_batch = torch.stack(all_locals).permute(0, 3, 1, 2)
 
-            # --- [代码修复] 显式转换所有批处理张量为 float32 ---
+            # --- 显式转换所有批处理张量为 float32 ---
             feature_batch = feature_batch.to(torch.float32)
             obj_batch_absolute = obj_batch_absolute.to(torch.float32)
             conf_batch = conf_batch.to(torch.float32)
@@ -538,22 +546,16 @@ class Grid():
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
             valid_labels = torch.cat([positive_labels, negative_labels], dim=0).to(torch.float32)
             
-            # --- 3b. [核心修改] 生成并融合含噪坐标先验 ---
-            # 1. 生成高斯噪声
+            # --- 3b. 生成并融合含噪坐标先验 ---
             noise = torch.randn_like(obj_batch_absolute) * self.options.prior_noise_std
             noisy_prior_absolute = obj_batch_absolute + noise
-
-            # 2. 归一化坐标先验
             noisy_prior_absolute_nhw3 = noisy_prior_absolute.permute(0, 2, 3, 1)
             normalized_prior_nhw3 = self._normalize_coords(noisy_prior_absolute_nhw3, block)
             normalized_prior_n3hw = normalized_prior_nhw3.permute(0, 3, 1, 2)
-
-            # 3. 拼接特征
             mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
 
             # --- 3c. 前向传播 ---
             output_raw, valid_score_batch = mapper(mapper_input)
-            
             pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
             pred_log_sigma_batch = output_raw[:, 3:, :, :]
             
