@@ -437,25 +437,19 @@ class Grid():
         self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
         
         positive_patches, negative_patches, val_patch_indices = [], [], []
-        block_min_x, block_max_x = min(block.diag[:,0]),max(block.diag[:,0])
-        block_min_y, block_max_y = min(block.diag[:,1]),max(block.diag[:,1])
+        block_min_x, block_max_x = block.diag[0, 0], block.diag[1, 0]
+        block_min_y, block_max_y = block.diag[1, 1], block.diag[0, 1]
 
         for element_idx, element in enumerate(self.elements):
-            # --- [核心修改] 使用池化操作进行高效的“完全包含”判断 ---
+            # --- [核心修改] 恢复为基于Patch中心点的筛选方法 ---
             
             # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
-                objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2).to(torch.float32)
-                x_coords = objs_tensor[:, 0:1, :, :]
-                y_coords = objs_tensor[:, 1:2, :, :]
-
-                patch_x_max = F.max_pool2d(x_coords, kernel_size=(patch_h, patch_w), stride=1)
-                patch_y_max = F.max_pool2d(y_coords, kernel_size=(patch_h, patch_w), stride=1)
-                patch_x_min = -F.max_pool2d(-x_coords, kernel_size=(patch_h, patch_w), stride=1)
-                patch_y_min = -F.max_pool2d(-y_coords, kernel_size=(patch_h, patch_w), stride=1)
+                objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
+                patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
                 
-                is_positive_mask = (patch_x_min >= block_min_x) & (patch_x_max < block_max_x) & \
-                                   (patch_y_min >= block_min_y) & (patch_y_max < block_max_y)
+                is_positive_mask = (patch_centers[:, 0] >= block_min_x + 16.) & (patch_centers[:, 0] <= block_max_x - 16.) & \
+                                   (patch_centers[:, 1] >= block_min_y + 16.) & (patch_centers[:, 1] <= block_max_y - 16.)
                 
                 pos_indices = torch.where(is_positive_mask)
                 for i in range(len(pos_indices[0])):
@@ -467,17 +461,11 @@ class Grid():
 
             # 处理验证buffer
             if element.validation_buffer and element.validation_buffer['features'].numel() > 0:
-                val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2).to(torch.float32)
-                val_x_coords = val_objs_tensor[:, 0:1, :, :]
-                val_y_coords = val_objs_tensor[:, 1:2, :, :]
-
-                val_patch_x_max = F.max_pool2d(val_x_coords, kernel_size=(patch_h, patch_w), stride=1)
-                val_patch_y_max = F.max_pool2d(val_y_coords, kernel_size=(patch_h, patch_w), stride=1)
-                val_patch_x_min = -F.max_pool2d(-val_x_coords, kernel_size=(patch_h, patch_w), stride=1)
-                val_patch_y_min = -F.max_pool2d(-val_y_coords, kernel_size=(patch_h, patch_w), stride=1)
-
-                is_val_positive_mask = (val_patch_x_min >= block_min_x) & (val_patch_x_max < block_max_x) & \
-                                       (val_patch_y_min >= block_min_y) & (val_patch_y_max < block_max_y)
+                val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2)
+                val_patch_centers = F.avg_pool2d(val_objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
+                
+                is_val_positive_mask = (val_patch_centers[:, 0] >= block_min_x + 16.) & (val_patch_centers[:, 0] < block_max_x - 16.) & \
+                                       (val_patch_centers[:, 1] >= block_min_y + 16.) & (val_patch_centers[:, 1] < block_max_y - 16.)
                                        
                 val_pos_indices = torch.where(is_val_positive_mask)
                 for i in range(len(val_pos_indices[0])):
@@ -488,7 +476,7 @@ class Grid():
         self.fprint(f"Block {block_idx} 索引构建完成: {len(positive_patches)} 个正样本, {len(negative_patches)} 个负样本, {len(val_patch_indices)} 个验证样本。")
 
         if not positive_patches:
-            print(f"警告: Block {block_idx} 缺少完全位于内部的正样本，跳过训练。")
+            print(f"警告: Block {block_idx} 缺少正样本，跳过训练。")
             return
         if not negative_patches: # 允许没有负样本的情况，但需要调整采样逻辑
              print(f"警告: Block {block_idx} 缺少负样本，将仅使用正样本进行训练。")
