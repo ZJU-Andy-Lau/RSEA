@@ -72,6 +72,10 @@ if __name__ == '__main__':
     parser.add_argument('--sample_factor', type=int, default=16,
                         help='Downsampling factor of the encoder feature map.')
     
+    # ============================= [核心修改] 新增坐标先验噪声参数 =============================
+    parser.add_argument('--prior_noise_std', type=float, default=50.0,
+                        help='Standard deviation of Gaussian noise added to coordinate priors during training (in meters).')
+    
 
     #=============================Element Training Params=============================
 

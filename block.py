@@ -33,7 +33,7 @@ from typing import List,Dict
 from pykeops.torch import LazyTensor
 
 from rs_image import RSImage
-from element import Element
+from element_1012 import Element
 from utils import Status
 
 
@@ -46,17 +46,35 @@ class Block():
         self.options = options
         self.diag = diag
         self.diag_ratio = diag_ratio 
-        self.mapper = Decoder(in_channels=options.mapper_input_channel,block_num=options.mapper_blocks_num)
-        # self.optimizer = AdamW(self.mapper.parameters(),lr=self.options.grid_train_lr_max)
-        # self.scheduler = MultiStageOneCycleLR(optimizer=self.optimizer,
-        #                                         total_steps=self.options.grid_training_iters,
-        #                                         warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
-        #                                         cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
+        
+        # --- [核心修改] 增加Mapper的输入通道数以容纳坐标先验 ---
+        # 坐标先验 (x, y, h) 增加了3个输入通道
+        prior_channels = 3
+        mapper_total_input_channels = options.mapper_input_channel + prior_channels
+        
+        self.mapper = Decoder(in_channels=mapper_total_input_channels, block_num=options.mapper_blocks_num)
+        
         self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()])#[min_x,min_y,max_x,max_y]
-        self.map_coeffs = map_coeffs
+        
+        # --- [核心修改] 初始化map_coeffs以包含高程范围 ---
+        if map_coeffs is None:
+            self.map_coeffs = {
+                'x': None, 'y': None, 'h': None,
+                'h_min': None, 'h_max': None
+            }
+        else:
+            self.map_coeffs = map_coeffs
+            if 'h_min' not in self.map_coeffs:
+                self.map_coeffs['h_min'] = None
+            if 'h_max' not in self.map_coeffs:
+                self.map_coeffs['h_max'] = None
+
         self.status = Status.NOT_INIT
     
     def get_block_state_dict(self):
+        """
+        [核心修改] 在状态字典中增加高程范围的保存
+        """
         state_dict = {
             'mapper':self.mapper.state_dict(),
             'diag':torch.from_numpy(self.diag),
@@ -64,6 +82,8 @@ class Block():
             'map_coeffs_x':torch.from_numpy(self.map_coeffs['x']),
             'map_coeffs_y':torch.from_numpy(self.map_coeffs['y']),
             'map_coeffs_h':torch.from_numpy(self.map_coeffs['h']),
+            'map_coeffs_h_min': torch.tensor(self.map_coeffs['h_min']),
+            'map_coeffs_h_max': torch.tensor(self.map_coeffs['h_max']),
             'status':self.status
         }
         return state_dict

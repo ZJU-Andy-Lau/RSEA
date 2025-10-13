@@ -110,7 +110,9 @@ class Grid():
             map_coeffs = {
                 'x':np.array([diag[:,0].min(),diag[:,0].max()]),
                 'y':np.array([diag[:,1].min(),diag[:,1].max()]),
-                'h':None
+                'h':None,
+                'h_min':None,
+                'h_max':None
             }
             diag_ratio = np.array([
                 [np.abs(diag[0,1] - self.diag[0,1]) / h , np.abs(diag[0,0] - self.diag[0,0]) / w],
@@ -144,39 +146,60 @@ class Grid():
             return img_raw,dem,np.array([top,left]),np.array([right,bottom])
         elif mode == 'interpolate':
             # 'interpolate'模式会将四边形区域重采样为矩形
-            img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines,
-                                                            (int((self.border[3] - self.border[1]) / self.pred_resolution),
-                                                            int((self.border[2] - self.border[0]) / self.pred_resolution)),
-                                                            need_local=True)
-            dem = img.resample_dem_by_sampline(corner_samplines,
-                                                (int((self.border[3] - self.border[1]) / self.pred_resolution),
-                                                int((self.border[2] - self.border[0]) / self.pred_resolution)))
+            target_h = int((self.border[3] - self.border[1]) / self.pred_resolution)
+            target_w = int((self.border[2] - self.border[0]) / self.pred_resolution)
+            
+            # 确保目标尺寸不为0
+            if target_h <= 0 or target_w <= 0:
+                return None, None, None
+
+            img_raw,local_hw2 = img.resample_image_by_sampline(corner_samplines, (target_h, target_w), need_local=True)
+            dem = img.resample_dem_by_sampline(corner_samplines, (target_h, target_w))
             return img_raw,dem,local_hw2
         else:
             raise ValueError("mode should either be 'bbox' or 'interpolate'")
 
     def get_height_map_coeffs(self):
-        """根据所有Element Buffer中的数据，为每个Block估计高度多项式的系数"""
-        heights_list = [el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer]
-        if not heights_list: return
+        """
+        [核心修改] 根据所有Element Buffer中的数据，为每个Block估计高度多项式系数，并计算真实高程范围 (h_min, h_max)。
+        """
+        heights_list = [el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer and 'objs' in el.buffer]
+        if not heights_list: 
+            self.fprint("警告: 没有任何Element Buffer包含高度信息，无法计算高程系数。")
+            return
         
-        heights = torch.cat(heights_list).cpu().numpy()
-        xys = torch.cat([el.buffer['objs'][..., :2].reshape(-1, 2) for el in self.elements if el.buffer]).cpu().numpy()
-        
+        heights_all = torch.cat(heights_list)
+        xys_all = torch.cat([el.buffer['objs'][..., :2].reshape(-1, 2) for el in self.elements if el.buffer and 'objs' in el.buffer])
+
+        global_h_min = heights_all.min().item()
+        global_h_max = heights_all.max().item()
+
         for block in self.blocks:
-            mask = (xys[:,0] >= block.diag[0,0]) & (xys[:,1] <= block.diag[0,1]) & \
-                   (xys[:,0] < block.diag[1,0]) & (xys[:,1] > block.diag[1,1])
-            if np.any(mask):
-                block.map_coeffs['h'] = get_map_coef(heights[mask])
-            elif len(heights) > 0:
-                block.map_coeffs['h'] = get_map_coef(heights)
+            # 使用PyTorch进行高效的掩码操作
+            mask = (xys_all[:,0] >= block.diag[0,0]) & (xys_all[:,1] <= block.diag[0,1]) & \
+                   (xys_all[:,0] < block.diag[1,0]) & (xys_all[:,1] > block.diag[1,1])
+            
+            points_in_block = mask.sum().item()
+            
+            if points_in_block > 10: # 确保有足够的数据点
+                heights_in_block = heights_all[mask]
+                block.map_coeffs['h'] = get_map_coef(heights_in_block.cpu().numpy())
+                block.map_coeffs['h_min'] = heights_in_block.min().item()
+                block.map_coeffs['h_max'] = heights_in_block.max().item()
             else:
-                block.map_coeffs['h'] = np.array([0., 0.])
+                # 如果块内数据太少，使用全局统计作为回退
+                self.fprint(f"警告: Block {self.blocks.index(block)} 内只有 {points_in_block} 个数据点，使用全局高程统计。")
+                block.map_coeffs['h'] = get_map_coef(heights_all.cpu().numpy())
+                block.map_coeffs['h_min'] = global_h_min
+                block.map_coeffs['h_max'] = global_h_max
 
 
     def add_img(self,img:RSImage):
         """添加一张用于训练的影像"""
         img_raw,dem,local_hw2 = self.get_overlap_image(img,mode='interpolate')
+        if img_raw is None:
+            print(f"警告: 影像 {img.id} 与当前Grid无有效重叠，跳过。")
+            return
         self.train_data.append({
             'img':img_raw,
             'dem':dem,
@@ -250,6 +273,9 @@ class Grid():
         self.get_height_map_coeffs()
         self.visualize_block_assignment()
         for block_idx in range(len(self.blocks)):
+            if self.blocks[block_idx].map_coeffs['h_min'] is None:
+                self.fprint(f"错误: Block {block_idx} 未能成功计算高程范围，跳过训练。")
+                continue
             self.train_mapper(block_idx,task_info)
         for element in self.elements:
             element.clear_buffer()
@@ -271,6 +297,38 @@ class Grid():
         warped = torch.stack([x,y,h],dim=1)
         return warped
 
+    def _normalize_coords(self, coords_abs: torch.Tensor, block: Block) -> torch.Tensor:
+        """
+        [核心新增] 辅助函数：将绝对坐标根据Block的边界归一化到[-1, 1]范围。
+        Args:
+            coords_abs (torch.Tensor): 绝对地理坐标张量, shape [..., 3] (X, Y, H)
+            block (Block): 目标Block对象
+        Returns:
+            torch.Tensor: 归一化后的坐标张量, shape [..., 3]
+        """
+        # --- 准备归一化参数 ---
+        min_x, max_x = block.diag[0, 0], block.diag[1, 0]
+        min_y, max_y = block.diag[1, 1], block.diag[0, 1]
+        h_min = block.map_coeffs['h_min']
+        h_max = block.map_coeffs['h_max']
+
+        range_x = max_x - min_x
+        range_y = max_y - min_y
+        range_h = h_max - h_min
+
+        # --- 归一化X, Y ---
+        # 避免除以零
+        norm_x = 2 * (coords_abs[..., 0] - min_x) / (range_x + 1e-8) - 1
+        norm_y = 2 * (coords_abs[..., 1] - min_y) / (range_y + 1e-8) - 1
+        
+        # --- 归一化H (基于真实的物理范围) ---
+        if range_h < 1e-6: # 处理地形平坦的特殊情况
+            norm_h = torch.zeros_like(coords_abs[..., 2])
+        else:
+            norm_h = 2 * (coords_abs[..., 2] - h_min) / range_h - 1
+            
+        return torch.stack([norm_x, norm_y, norm_h], dim=-1)
+
     @torch.no_grad()
     def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]], criterion: nn.Module):
         """在验证集上评估模型，计算RMSE和loss_obj，并生成散点图"""
@@ -282,7 +340,7 @@ class Grid():
         patch_h, patch_w = 16, 16
         val_batch_size = min(self.options.patches_per_batch // 2, len(val_patch_indices))
         
-        all_features, all_objs = [], []
+        all_features, all_objs = [], [],
         sample_indices = torch.randint(0, len(val_patch_indices), (val_batch_size,))
         for i in sample_indices:
             element_idx, window_idx, y, x = val_patch_indices[i]
@@ -296,8 +354,14 @@ class Grid():
         
         feature_batch = torch.stack(all_features)
         obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2)
+
+        # [修改] 验证时也需要输入坐标先验（这里用真实坐标模拟无偏先验）
+        obj_batch_nhw3 = obj_batch.permute(0, 2, 3, 1)
+        normalized_prior_nhw3 = self._normalize_coords(obj_batch_nhw3, block)
+        normalized_prior_n3hw = normalized_prior_nhw3.permute(0, 3, 1, 2)
+        mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
         
-        output_raw, _ = mapper(feature_batch)
+        output_raw, _ = mapper(mapper_input)
         pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
         
         error_rmse = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
@@ -340,7 +404,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
-        """为指定的Block训练mapper模型"""
+        """ [核心修改] 为指定的Block训练mapper模型 (引入坐标先验) """
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
         mapper = block.mapper
@@ -449,35 +513,48 @@ class Grid():
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
             valid_labels = torch.cat([positive_labels, negative_labels], dim=0)
             
-            # --- 3b. 前向传播 ---
-            output_raw, valid_score_batch = mapper(feature_batch)
+            # --- 3b. [核心修改] 生成并融合含噪坐标先验 ---
+            # 1. 生成高斯噪声
+            noise = torch.randn_like(obj_batch_absolute) * self.options.prior_noise_std
+            noisy_prior_absolute = obj_batch_absolute + noise
+
+            # 2. 归一化坐标先验
+            noisy_prior_absolute_nhw3 = noisy_prior_absolute.permute(0, 2, 3, 1)
+            normalized_prior_nhw3 = self._normalize_coords(noisy_prior_absolute_nhw3, block)
+            normalized_prior_n3hw = normalized_prior_nhw3.permute(0, 3, 1, 2)
+
+            # 3. 拼接特征
+            mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
+
+            # --- 3c. 前向传播 ---
+            output_raw, valid_score_batch = mapper(mapper_input)
             
             pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
             pred_log_sigma_batch = output_raw[:, 3:, :, :]
             
-            # --- 3c. 计算损失 ---
+            # --- 3d. 计算损失 ---
             loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_absolute, pred_log_sigma_batch, obj_batch_absolute, conf_batch, local_batch, self.elements, all_element_indices, valid_score_batch, valid_labels, num_positive_samples)
             
-            # --- 3d. 反向传播与优化 ---
+            # --- 3e. 反向传播与优化 ---
             loss.backward()
             optimizer.step()
             scheduler.step()
 
-            # --- 3e. 记录与日志 ---
+            # --- 3f. 记录与日志 ---
             if loss.item() < min_loss:
                 min_loss = loss.item()
                 best_mapper_state_dict = deepcopy(mapper.state_dict())
             
             info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
             
-            # --- 3f. 周期性验证 ---
+            # --- 3g. 周期性验证 ---
             if (iter_idx + 1) % val_interval == 0:
                 val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices, criterion)
                 if not np.isnan(val_rmse):
                     info['val_err'] = f'{val_rmse:.2f}'
                     latest_val_loss_obj = val_loss_obj
             
-            # --- 3g. 周期性可视化训练过程 ---
+            # --- 3h. 周期性可视化训练过程 ---
             if (iter_idx + 1) % vis_interval == 0:
                 true_coords_train = obj_batch_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
                 pred_coords_train = pred_mu_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
@@ -518,7 +595,7 @@ class Grid():
         torch.save(state_dict,os.path.join(self.output_path,'grid_data.pth'))
 
     def load_grid(self,path:str):
-        """从文件加载Grid的状态"""
+        """[核心修改] 从文件加载Grid的状态，包含高程范围"""
         state_dict = torch.load(os.path.join(path,'grid_data.pth'), map_location='cpu')
         name = os.path.basename(path)
         self.options.mapper_blocks_num = state_dict['mapper_blocks_num']
@@ -532,6 +609,8 @@ class Grid():
                 'x':block_state_dict['map_coeffs_x'].numpy(),
                 'y':block_state_dict['map_coeffs_y'].numpy(),
                 'h':block_state_dict['map_coeffs_h'].numpy(),
+                'h_min': block_state_dict.get('map_coeffs_h_min', torch.tensor(0.0)).item(),
+                'h_max': block_state_dict.get('map_coeffs_h_max', torch.tensor(0.0)).item()
             }
             block = Block(self.options,block_diag,block_diag_ratio,block_map_coeffs)
             block.mapper.load_state_dict(block_state_dict['mapper'])
@@ -580,77 +659,82 @@ class Grid():
         return torch.cat(all_features, dim=0)
 
     @torch.no_grad()
-    def pred_xyh(self, img_raw: np.ndarray, local_hw2: np.ndarray) -> Dict[str, np.ndarray]:
+    def pred_xyh(self, img_raw: np.ndarray, dem: np.ndarray, local_hw2: np.ndarray, rpc: RPCModelParameterTorch) -> Dict[str, torch.Tensor]:
         """
-        [修改] 对新的影像进行密集地理坐标预测。
-        采用“一次提取，按需分发”的高效策略，并移除结果去重。
+        [核心修改] 对新的影像进行密集地理坐标预测 (引入坐标先验)。
+        采用“一次提取，按需分发”的高效策略。
         """
+        if img_raw is None or img_raw.size == 0:
+            return {}
+            
         H, W = img_raw.shape[:2]
         self.encoder.eval().to(self.device)
         self.transform.to(self.device)
 
-        # --- 1. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
+        # --- 1. [核心修改] 预计算全局坐标先验 ---
+        self.fprint("正在为预测影像预计算全局坐标先验...")
+        local_flat = local_hw2.reshape(-1, 2)
+        dem_flat = dem.reshape(-1)
+        lats, lons = rpc.RPC_PHOTO2OBJ(
+            torch.from_numpy(local_flat[:, 1]).to(self.device, dtype=torch.float32),
+            torch.from_numpy(local_flat[:, 0]).to(self.device, dtype=torch.float32),
+            torch.from_numpy(dem_flat).to(self.device, dtype=torch.float32)
+        )
+        xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
+        prior_abs_flat = torch.cat([xy, torch.from_numpy(dem_flat).to(self.device, dtype=torch.float32).unsqueeze(-1)], dim=-1)
+        prior_abs_hw3 = prior_abs_flat.reshape(H, W, 3)
+
+        # --- 2. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
         self.fprint("正在为预测影像提取全局特征...")
         crop_size = self.options.crop_size
-
-        # [已修改] 根据窗口数量自适应步长
-        # 如果图像高度小于裁切尺寸，则只在垂直方向上裁切一个窗口
         num_h = 1 if H <= crop_size else self.options.crop_num_h
-        # 如果图像宽度小于裁切尺寸，则只在水平方向上裁切一个窗口
         num_w = 1 if W <= crop_size else self.options.crop_num_w
-        
-        # 使用linspace根据窗口数量自动计算均匀分布的起始点
         y_starts = np.linspace(0, max(0, H - crop_size), num_h, dtype=int)
         x_starts = np.linspace(0, max(0, W - crop_size), num_w, dtype=int)
 
-        index = get_coord_mat(H,W)
+        full_buffer = {'features': [], 'locals': [], 'confs': [], 'priors': []}
 
-        full_buffer = {'features': [], 'locals': [], 'confs': [], 'indexes':[]}
-
-        for row in tqdm(y_starts, desc="提取特征"):
+        for row in tqdm(y_starts, desc="提取特征与先验"):
             for col in x_starts:
                 img_crop = img_raw[row:row + crop_size, col:col + crop_size]
                 local_crop = local_hw2[row:row + crop_size, col:col + crop_size]
-                index_crop = index[row:row + crop_size, col:col + crop_size]
-
+                prior_crop = prior_abs_hw3[row:row + crop_size, col:col + crop_size, :]
+                
                 img_tensor = torch.from_numpy(img_crop).permute(2, 0, 1).float().div(255.0).unsqueeze(0).to(self.device)
                 img_tensor = self.transform(img_tensor)
                 
                 features_b, confs_b = self.encoder(img_tensor)
-                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device).to(self.device)
-                index_down = downsample(torch.from_numpy(index_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device).to(self.device)
+                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device)
+                prior_down = downsample(prior_crop.unsqueeze(0), self.SAMPLE_FACTOR, device=self.device)
 
-                # 将结果展平并添加到全局Buffer
                 full_buffer['features'].append(features_b.permute(0, 2, 3, 1).reshape(-1, self.encoder.output_channels))
                 full_buffer['locals'].append(local_down.reshape(-1, 2))
-                full_buffer['indexes'].append(index_down.reshape(-1, 2))
                 full_buffer['confs'].append(confs_b.permute(0, 2, 3, 1).reshape(-1))
+                full_buffer['priors'].append(prior_down.reshape(-1, 3))
 
-        # 将列表拼接成一个大的Tensor
-        full_buffer_features = torch.cat(full_buffer['features'], dim=0)
-        full_buffer_locals = torch.cat(full_buffer['locals'], dim=0)
-        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)
-        full_buffer_indexes = torch.cat(full_buffer['indexes'], dim=0)
-        self.fprint(f"全局特征提取完成，共 {len(full_buffer_features)} 个特征点。")
-
-        # --- 2. 遍历所有Block，按需筛选并分发数据进行预测 ---
-        all_results = {'mu_xyh_P3': [], 'sigma_xyh_P3': [], 'locals_P2': [], 'confs_P1': [], 'valid_score_P1': []}
+        # 拼接列表成一个大的Tensor，并进行去重
+        all_locals_flat = torch.cat(full_buffer['locals'], dim=0)
+        _, unique_indices = np.unique(all_locals_flat.cpu().numpy(), axis=0, return_index=True)
         
-        # 计算全图特征图的尺寸
-        H_feat, W_feat = (H // self.SAMPLE_FACTOR, W // self.SAMPLE_FACTOR)
+        full_buffer_features = torch.cat(full_buffer['features'], dim=0)[unique_indices]
+        full_buffer_locals = all_locals_flat[unique_indices]
+        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)[unique_indices]
+        full_buffer_priors = torch.cat(full_buffer['priors'], dim=0)[unique_indices]
+        self.fprint(f"全局特征与先验提取完成，共 {len(full_buffer_features)} 个唯一特征点。")
+
+        # --- 3. 遍历所有Block，按需筛选并分发数据进行预测 ---
+        all_results = {'mu_xyh_P3': [], 'sigma_xyh_P3': [], 'locals_P2': [], 'confs_P1': [], 'valid_score_P1': []}
 
         for block in tqdm(self.blocks, desc="分区预测"):
+            if block.status != self.STATES.WELL_TRAINED:
+                continue
             block.mapper.eval().to(self.device)
 
-            # 根据diag_ratio计算当前Block在全图像素坐标系下的范围
-            y_start_pix = int(H * block.diag_ratio[0, 0])
-            x_start_pix = int(W * block.diag_ratio[0, 1])
-            y_end_pix = int(H * block.diag_ratio[1, 0])
-            x_end_pix = int(W * block.diag_ratio[1, 1])
+            min_x, max_x = block.diag[0, 0], block.diag[1, 0]
+            min_y, max_y = block.diag[1, 1], block.diag[0, 1]
 
-            # 高效筛选出落入当前Block范围内的所有特征点
-            mask = (full_buffer_indexes[:, 0] >= y_start_pix) & (full_buffer_indexes[:, 0] < y_end_pix) & \
-                   (full_buffer_indexes[:, 1] >= x_start_pix) & (full_buffer_indexes[:, 1] < x_end_pix)
+            mask = (full_buffer_priors[:, 0] >= min_x) & (full_buffer_priors[:, 0] < max_x) & \
+                   (full_buffer_priors[:, 1] >= min_y) & (full_buffer_priors[:, 1] < max_y)
             
             if not mask.any():
                 continue
@@ -658,27 +742,29 @@ class Grid():
             block_features = full_buffer_features[mask]
             block_locals = full_buffer_locals[mask]
             block_confs = full_buffer_confs[mask]
+            block_priors = full_buffer_priors[mask]
 
-            # --- 3. 对筛选出的特征进行分批预测 ---
             num_points = len(block_features)
-            batch_size = self.options.patches_per_batch * 16 * 16 # 复用参数，转换为点数
+            batch_size = self.options.patches_per_batch * 16 * 16 
             
             for i in range(0, num_points, batch_size):
                 feature_batch = block_features[i:i+batch_size]
-                
-                # 将点云式的特征 (N, D) 变回伪图像 (N, D, 1, 1) 以适应mapper输入
+                prior_batch = block_priors[i:i+batch_size]
+
+                # [核心修改] 归一化坐标先验并与特征拼接
+                normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
-                output, valid_score = block.mapper(feature_batch_img)
+                output, valid_score = block.mapper(mapper_input)
                 
-                # 将输出展平回点云式
                 output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
                 valid_score_flat = valid_score.permute(0, 2, 3, 1).reshape(-1)
 
-                pred_mu_flat = self.warp_by_poly(output_flat[:, :3].unsqueeze(-1).unsqueeze(-1), block.map_coeffs).squeeze()
+                pred_mu_flat = self.warp_by_poly(output_flat[:, :3], block.map_coeffs)
                 pred_sigma_flat = torch.exp(output_flat[:, 3:])
 
-                # 收集结果
                 all_results['mu_xyh_P3'].append(pred_mu_flat)
                 all_results['sigma_xyh_P3'].append(pred_sigma_flat)
                 all_results['locals_P2'].append(block_locals[i:i+batch_size])
@@ -687,9 +773,8 @@ class Grid():
 
         # --- 4. 整合所有结果 ---
         if not all_results['mu_xyh_P3']:
-            return {k: torch.empty(0, v) for k, v in {'mu_xyh_P3': 3, 'sigma_xyh_P3': 3, 'locals_P2': 2, 'confs_P1': 1, 'valid_score_P1': 1}.items()}
+            return {k: torch.empty(0, v, device=self.device) for k, v in {'mu_xyh_P3': 3, 'sigma_xyh_P3': 3, 'locals_P2': 2, 'confs_P1': 1, 'valid_score_P1': 1}.items()}
 
-        # 拼接所有Block和批次的结果，不进行去重
         final_res = {
             'mu_xyh_P3': torch.cat(all_results['mu_xyh_P3'], dim=0),
             'sigma_xyh_P3': torch.cat(all_results['sigma_xyh_P3'], dim=0),
@@ -699,4 +784,3 @@ class Grid():
         }
 
         return final_res
-

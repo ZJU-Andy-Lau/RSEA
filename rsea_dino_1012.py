@@ -441,7 +441,7 @@ class RSEA():
                 img_raw,dem,local_hw2 = grid.get_overlap_image(image,mode="interpolate")
                 cv2.imwrite(os.path.join(grid.output_path,f'adjust_img_{img_idx}.png'),img_raw)
                 
-                pred_res = grid.pred_xyh(img_raw,local_hw2)
+                pred_res = grid.pred_xyh(img_raw, dem, local_hw2, image.rpc)
 
                 # 新增逻辑：收集用于可视化的数据
                 if pred_res and pred_res['mu_xyh_P3'].numel() > 0:
