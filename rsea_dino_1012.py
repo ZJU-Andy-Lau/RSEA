@@ -645,9 +645,17 @@ class RSEA():
         features_all = np.concatenate(features_all, axis=0)
         labels_all = np.array(labels_all)
 
-        # 3. 运行 t-SNE
+        # 3. 运行 t-SNE (已修复)
         print("特征提取完成，正在运行 t-SNE... (这可能需要几分钟)")
-        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300, random_state=42)
+        n_samples = len(features_all)
+        if n_samples <= 1:
+            print("错误：样本数量过少，无法运行t-SNE。")
+            return
+        
+        # 动态调整perplexity，确保其小于样本数
+        perplexity_value = min(40, n_samples - 1)
+        
+        tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity_value, max_iter=300, random_state=42, init='random')
         tsne_results = tsne.fit_transform(features_all)
 
         # 4. 绘图
