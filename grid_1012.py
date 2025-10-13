@@ -673,7 +673,7 @@ class Grid():
                 
                 # 将输出展平回点云式
                 output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
-                valid_score_flat = valid_score
+                valid_score_flat = valid_score.permute(0, 2, 3, 1).reshape(-1)
 
                 pred_mu_flat = self.warp_by_poly(output_flat[:, :3].unsqueeze(-1).unsqueeze(-1), block.map_coeffs).squeeze()
                 pred_sigma_flat = torch.exp(output_flat[:, 3:])
