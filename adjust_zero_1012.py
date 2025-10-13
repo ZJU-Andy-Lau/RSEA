@@ -19,6 +19,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
+    # =============================通用与路径参数=============================
     parser.add_argument('--root', type=str,
                         help='path to all images needed adjustment in a folder')
     
@@ -173,7 +174,16 @@ if __name__ == '__main__':
     
     parser.add_argument('--log_postfix', type=str, default='',
                         help='log_postfix')
+
+    # =============================新增的诊断功能参数=============================
+    parser.add_argument('--run_diagnostics', type=_strtobool, default=False,
+                        help='是否运行特征分布诊断. 若为True, 将不会执行adjust流程.')
+
+    parser.add_argument('--source_image_path', type=str, default='',
+                        help='[诊断用] 源域(训练)影像的文件夹路径.')
     
+    parser.add_argument('--target_image_path', type=str, default='',
+                        help='[诊断用] 目标域(新)影像的文件夹路径.')
 
     options = parser.parse_args()
 
@@ -195,6 +205,19 @@ if __name__ == '__main__':
 
     rsea.load_grids(grid_root)
 
-    # 基于网格对adjust_images平差
-    rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
-
+    # 根据命令行参数决定执行诊断还是调整
+    if options.run_diagnostics:
+        print("\n========================= 运行特征分布诊断 =========================")
+        if not options.source_image_path or not options.target_image_path:
+            print("错误: 运行诊断需要提供 --source_image_path 和 --target_image_path 参数。")
+        else:
+            rsea.visualize_feature_distribution(
+                source_image_folder=options.source_image_path,
+                target_image_folder=options.target_image_path
+            )
+        print("=========================== 诊断流程结束 ===========================")
+    else:
+        print("\n========================= 运行影像几何调整 =========================")
+        # 基于网格对adjust_images平差
+        rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
+        print("=========================== 调整流程结束 ===========================")

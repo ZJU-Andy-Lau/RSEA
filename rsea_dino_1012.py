@@ -16,7 +16,7 @@ import pandas as pd
 from model.encoder_dino_0927 import EncoderDino
 from model.solver import AffineFitter
 import cv2
-from utils import mercator2lonlat
+from utils import mercator2lonlat, project_mercator
 import queue
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
@@ -28,6 +28,7 @@ from orthorectify import orthorectify_image
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
+from sklearn.manifold import TSNE
 
 from rs_image import RSImage
 from grid_1012 import Grid
@@ -351,6 +352,62 @@ class RSEA():
             good_grids_num += 1
         print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
     
+    def _visualize_error_vectors(self, pred_xyh: torch.Tensor, local_linesamp: torch.Tensor, image_to_adjust: RSImage, save_path: str):
+        """
+        可视化预测误差向量。
+        
+        Args:
+            pred_xyh (torch.Tensor): 模型预测的地理坐标 (X,Y,H)。
+            local_linesamp (torch.Tensor): 预测点在影像上的原始像素坐标 (line, samp)。
+            image_to_adjust (RSImage): 正在被调整的影像对象。
+            save_path (str): 图像保存路径。
+        """
+        print("正在计算并可视化误差向量...")
+        pred_xyh_np = pred_xyh.cpu().numpy()
+        local_linesamp_np = local_linesamp.cpu().numpy()
+
+        # 使用影像自身的RPC，从像素坐标反算出一个 "基准" 地理坐标
+        # 注意：这里的DEM高度是一个近似值，可以使用区域平均高程或直接使用预测高程
+        heights = pred_xyh_np[:, 2] 
+        lats_true, lons_true = image_to_adjust.rpc.RPC_PHOTO2OBJ(local_linesamp_np[:, 1], local_linesamp_np[:, 0], heights, 'numpy')
+        xy_true = project_mercator(np.stack([lats_true, lons_true], axis=-1))[:, [1, 0]]
+        
+        # 计算误差向量 (在墨卡托投影下)
+        error_vectors_xy = pred_xyh_np[:, :2] - xy_true
+        
+        # 为了绘图清晰，随机采样一部分点
+        num_points = len(error_vectors_xy)
+        sample_size = min(num_points, 2000)
+        indices = np.random.choice(num_points, sample_size, replace=False)
+
+        sampled_points = xy_true[indices]
+        sampled_vectors = error_vectors_xy[indices]
+
+        # 绘图
+        plt.figure(figsize=(15, 15))
+        # 使用 quiver 绘制向量场
+        plt.quiver(sampled_points[:, 0], sampled_points[:, 1], 
+                   sampled_vectors[:, 0], sampled_vectors[:, 1], 
+                   color='r', angles='xy', scale_units='xy', scale=1, width=0.001)
+        
+        # 也可以绘制点的位置作为参考
+        plt.scatter(sampled_points[:, 0], sampled_points[:, 1], s=1, c='b', alpha=0.5, label='Error Vector Origins')
+
+        plt.title('Prediction Error Vector Field')
+        plt.xlabel('Mercator X (meters)')
+        plt.ylabel('Mercator Y (meters)')
+        ax = plt.gca()
+        ax.set_aspect('equal', adjustable='box')
+        plt.legend()
+        plt.grid(True)
+        
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+        print(f"误差向量图已保存至: {save_path}")
+        
+        # 打印统计信息
+        errors_meters = np.linalg.norm(error_vectors_xy, axis=1)
+        print(f"误差统计 (米): 平均值={np.mean(errors_meters):.2f}, 中位数={np.median(errors_meters):.2f}, 最大值={np.max(errors_meters):.2f}")
 
     def adjust(self,image_folders:List[str]):        
         adjust_images:List[RSImage] = []
@@ -366,6 +423,11 @@ class RSEA():
             all_tgt_mu = []
             all_tgt_sigma = []
             all_valid_scores = []
+            
+            # 用于误差可视化的临时容器
+            all_pred_xyh_for_vis = []
+            all_locals_for_vis = []
+
             for grid_idx,grid in enumerate(self.grids):
                 print(f"processing grid {grid_idx}")
                 overlap_diag = self.__overlap__(grid.diag[0],image.corner_xys[0],grid.diag[1],image.corner_xys[3])
@@ -377,6 +439,14 @@ class RSEA():
                 
                 pred_res = grid.pred_xyh(img_raw,local_hw2)
 
+                # 新增逻辑：收集用于可视化的数据
+                if pred_res and pred_res['mu_xyh_P3'].numel() > 0:
+                    all_pred_xyh_for_vis.append(pred_res['mu_xyh_P3'])
+                    all_locals_for_vis.append(pred_res['locals_P2'])
+                else:
+                    # 如果预测结果为空，则跳过此grid
+                    continue
+                
                 mu_linesamp,sigma_linesamp = image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
                 local_linesamp = pred_res['locals_P2']
                 conf = pred_res['confs_P1']
@@ -386,6 +456,18 @@ class RSEA():
                 all_tgt_mu.append(mu_linesamp)
                 all_tgt_sigma.append(sigma_linesamp)
                 all_valid_scores.append(valid_score)
+
+            # 新增调用
+            if all_pred_xyh_for_vis:
+                pred_xyh_vis = torch.cat(all_pred_xyh_for_vis, dim=0)
+                locals_vis = torch.cat(all_locals_for_vis, dim=0)
+                vis_save_path = os.path.join(self.root, f'adjust_img_{img_idx}_error_vectors.png')
+                self._visualize_error_vectors(pred_xyh_vis, locals_vis, image, vis_save_path)
+
+            if not all_src: # 如果没有任何预测结果，则跳过后续
+                print(f"影像 {img_idx} 未能从任何Grid中获得预测结果，跳过调整。")
+                continue
+
             all_src = torch.concatenate(all_src,dim=0).detach()
             all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0).detach()
             all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0).detach()
@@ -500,5 +582,87 @@ class RSEA():
 
         return distances
         
-    
-    
+    def visualize_feature_distribution(self, source_image_folder: str, target_image_folder: str, grid_idx_to_use: int = 0, sample_size: int = 5000):
+        """
+        可视化来自两个不同域（例如，不同卫星）的影像特征分布。
+        
+        Args:
+            source_image_folder (str): 源域影像的文件夹路径 (参与训练的卫星)。
+            target_image_folder (str): 目标域影像的文件夹路径 (新卫星)。
+            grid_idx_to_use (int): 使用哪个已加载的Grid来进行特征提取。
+            sample_size (int): 每个域随机采样多少个特征点进行可视化，以避免计算量过大。
+        """
+        print("开始进行特征分布诊断...")
+        if not self.grids:
+            print("错误：请先加载Grid (load_grids)。")
+            return
+        if grid_idx_to_use >= len(self.grids):
+            print(f"错误：grid_idx_to_use={grid_idx_to_use} 超出范围，只有 {len(self.grids)} 个grids。")
+            return
+        
+        # 将grid移动到主进程的默认GPU上
+        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+        grid = self.grids[grid_idx_to_use]
+        grid.to_device(device)
+
+        print(f"将使用 Grid {grid_idx_to_use} 在设备 {device} 上进行特征提取。")
+
+        # 1. 加载影像并提取特征
+        features_all = []
+        labels_all = []
+
+        for domain_idx, folder in enumerate([source_image_folder, target_image_folder]):
+            domain_name = "Source (Train)" if domain_idx == 0 else "Target (New)"
+            print(f"正在处理 {domain_name} 域影像: {folder}")
+            
+            if not os.path.exists(folder):
+                print(f"错误: 路径不存在 {folder}")
+                continue
+
+            image = RSImage(self.options, folder, 999 + domain_idx) # 临时ID
+            
+            # 获取与Grid重叠的影像部分
+            img_raw, _, _ = grid.get_overlap_image(image, mode="interpolate")
+            if img_raw is None or img_raw.size == 0:
+                print(f"警告: 影像与Grid {grid_idx_to_use} 没有重叠，跳过。")
+                continue
+            
+            # 提取特征
+            features = grid._extract_full_features(img_raw).cpu().numpy()
+            
+            # 2. 随机下采样
+            if len(features) > sample_size:
+                indices = np.random.choice(len(features), sample_size, replace=False)
+                features = features[indices]
+            
+            features_all.append(features)
+            labels_all.extend([domain_idx] * len(features))
+
+        if not features_all:
+            print("未能提取到任何特征，诊断中止。")
+            return
+
+        features_all = np.concatenate(features_all, axis=0)
+        labels_all = np.array(labels_all)
+
+        # 3. 运行 t-SNE
+        print("特征提取完成，正在运行 t-SNE... (这可能需要几分钟)")
+        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300, random_state=42)
+        tsne_results = tsne.fit_transform(features_all)
+
+        # 4. 绘图
+        print("t-SNE 计算完成，正在绘图...")
+        plt.figure(figsize=(12, 10))
+        scatter = plt.scatter(tsne_results[:,0], tsne_results[:,1], c=labels_all, cmap=plt.cm.get_cmap("jet", 2), alpha=0.6)
+        plt.title('Feature Distribution Visualization (t-SNE)')
+        plt.xlabel('t-SNE Component 1')
+        plt.ylabel('t-SNE Component 2')
+        handles, _ = scatter.legend_elements()
+        plt.legend(handles=handles, labels=["Source (Train)", "Target (New)"])
+        
+        save_path = os.path.join(self.root, 'feature_distribution_diagnosis.png')
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+        print(f"诊断图已保存至: {save_path}")
+        print("请检查图片：如果两类点云分离明显，则证明存在显著的域偏移。")
+

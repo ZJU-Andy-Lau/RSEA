@@ -337,7 +337,7 @@ class Grid():
         plt.close()
         
         mapper.train()
-        return val_rmse, val_loss_obj
+        return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
         """为指定的Block训练mapper模型"""
@@ -474,7 +474,7 @@ class Grid():
             if (iter_idx + 1) % val_interval == 0:
                 val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices, criterion)
                 if not np.isnan(val_rmse):
-                    info['val_err'] = f'{val_rmse:.2f}m'
+                    info['val_err'] = f'{val_rmse:.2f}'
                     latest_val_loss_obj = val_loss_obj
             
             # --- 3g. 周期性可视化训练过程 ---
@@ -538,6 +538,46 @@ class Grid():
             block.status = block_state_dict['status']
             self.blocks.append(block)        
         print(f"Grid '{name}' 加载成功")
+
+    @torch.no_grad()
+    def _extract_full_features(self, img_raw: np.ndarray) -> torch.Tensor:
+        """
+        一个辅助函数，封装了从原始影像中提取全局特征的逻辑，专用于诊断。
+        返回一个包含所有特征点的 "点云式" Tensor。
+        """
+        H, W = img_raw.shape[:2]
+        self.encoder.eval().to(self.device)
+        self.transform.to(self.device)
+
+        # --- 一次性提取全图特征 ---
+        self.fprint("正在为诊断影像提取全局特征...")
+        crop_size = self.options.crop_size
+        step = crop_size // 2
+        y_starts = np.unique(np.append(np.arange(0, H - crop_size, step), H - crop_size)).astype(int)
+        x_starts = np.unique(np.append(np.arange(0, W - crop_size, step), W - crop_size)).astype(int)
+
+        all_features = []
+        # 使用tqdm来显示进度
+        for row in tqdm(y_starts, desc="为诊断提取特征"):
+            batch_imgs = []
+            for col in x_starts:
+                img_crop = img_raw[row:row + crop_size, col:col + crop_size]
+                img_tensor = torch.from_numpy(img_crop).permute(2, 0, 1).float().div(255.0)
+                batch_imgs.append(img_tensor)
+
+            if not batch_imgs: continue
+
+            batch_tensor = torch.stack(batch_imgs).to(self.device)
+            batch_tensor = self.transform(batch_tensor)
+            
+            features_b, _ = self.encoder(batch_tensor)
+            # 展平并收集特征
+            all_features.append(features_b.permute(0, 2, 3, 1).reshape(-1, self.encoder.output_channels))
+        
+        if not all_features:
+            return torch.empty(0, self.encoder.output_channels, device=self.device)
+            
+        return torch.cat(all_features, dim=0)
 
     @torch.no_grad()
     def pred_xyh(self, img_raw: np.ndarray, local_hw2: np.ndarray) -> Dict[str, np.ndarray]:
@@ -626,7 +666,7 @@ class Grid():
                 
                 # 将输出展平回点云式
                 output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
-                valid_score_flat = torch.sigmoid(valid_score).permute(0, 2, 3, 1).reshape(-1)
+                valid_score_flat = valid_score
 
                 pred_mu_flat = self.warp_by_poly(output_flat[:, :3].unsqueeze(-1).unsqueeze(-1), block.map_coeffs).squeeze()
                 pred_sigma_flat = torch.exp(output_flat[:, 3:])
@@ -652,4 +692,3 @@ class Grid():
         }
 
         return final_res
-
