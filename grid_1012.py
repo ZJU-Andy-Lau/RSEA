@@ -526,7 +526,7 @@ class Grid():
 
     def load_grid(self,path:str):
         """从文件加载Grid的状态"""
-        state_dict = torch.load(os.path.join(path,'grid_data.pth'), map_location=self.device)
+        state_dict = torch.load(os.path.join(path,'grid_data.pth'), map_location='cpu')
         name = os.path.basename(path)
         self.options.mapper_blocks_num = state_dict['mapper_blocks_num']
         self.diag = state_dict['diag'].numpy()
