@@ -592,9 +592,16 @@ class Grid():
         # --- 1. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
         self.fprint("正在为预测影像提取全局特征...")
         crop_size = self.options.crop_size
-        step = crop_size // 2  # 使用重叠窗口以避免边缘效应
-        y_starts = np.unique(np.append(np.arange(0, H - crop_size, step), H - crop_size)).astype(int)
-        x_starts = np.unique(np.append(np.arange(0, W - crop_size, step), W - crop_size)).astype(int)
+
+        # [已修改] 根据窗口数量自适应步长
+        # 如果图像高度小于裁切尺寸，则只在垂直方向上裁切一个窗口
+        num_h = 1 if H <= crop_size else self.options.crop_num_h
+        # 如果图像宽度小于裁切尺寸，则只在水平方向上裁切一个窗口
+        num_w = 1 if W <= crop_size else self.options.crop_num_w
+        
+        # 使用linspace根据窗口数量自动计算均匀分布的起始点
+        y_starts = np.linspace(0, max(0, H - crop_size), num_h, dtype=int)
+        x_starts = np.linspace(0, max(0, W - crop_size), num_w, dtype=int)
 
         index = get_coord_mat(H,W)
 
@@ -666,7 +673,7 @@ class Grid():
                 
                 # 将输出展平回点云式
                 output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
-                valid_score_flat = valid_score.permute(0, 2, 3, 1).reshape(-1)
+                valid_score_flat = valid_score
 
                 pred_mu_flat = self.warp_by_poly(output_flat[:, :3].unsqueeze(-1).unsqueeze(-1), block.map_coeffs).squeeze()
                 pred_sigma_flat = torch.exp(output_flat[:, 3:])
@@ -692,3 +699,4 @@ class Grid():
         }
 
         return final_res
+
