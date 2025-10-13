@@ -429,17 +429,25 @@ class Grid():
         self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
         
         positive_patches, negative_patches, val_patch_indices = [], [], []
-        min_x, max_x = block.diag[0, 0], block.diag[1, 0]
-        min_y, max_y = block.diag[1, 1], block.diag[0, 1]
+        block_min_x, block_max_x = block.diag[0, 0], block.diag[1, 0]
+        block_min_y, block_max_y = block.diag[1, 1], block.diag[0, 1]
 
         for element_idx, element in enumerate(self.elements):
+            # --- [核心修改] 使用池化操作进行高效的“完全包含”判断 ---
+            
             # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
-                objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
-                patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
+                objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2).to(torch.float32)
+                x_coords = objs_tensor[:, 0:1, :, :]
+                y_coords = objs_tensor[:, 1:2, :, :]
+
+                patch_x_max = F.max_pool2d(x_coords, kernel_size=(patch_h, patch_w), stride=1)
+                patch_y_max = F.max_pool2d(y_coords, kernel_size=(patch_h, patch_w), stride=1)
+                patch_x_min = -F.max_pool2d(-x_coords, kernel_size=(patch_h, patch_w), stride=1)
+                patch_y_min = -F.max_pool2d(-y_coords, kernel_size=(patch_h, patch_w), stride=1)
                 
-                is_positive_mask = (patch_centers[:, 0] >= min_x) & (patch_centers[:, 0] < max_x) & \
-                                   (patch_centers[:, 1] >= min_y) & (patch_centers[:, 1] < max_y)
+                is_positive_mask = (patch_x_min >= block_min_x) & (patch_x_max < block_max_x) & \
+                                   (patch_y_min >= block_min_y) & (patch_y_max < block_max_y)
                 
                 pos_indices = torch.where(is_positive_mask)
                 for i in range(len(pos_indices[0])):
@@ -451,11 +459,17 @@ class Grid():
 
             # 处理验证buffer
             if element.validation_buffer and element.validation_buffer['features'].numel() > 0:
-                val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2)
-                val_patch_centers = F.avg_pool2d(val_objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
-                
-                is_val_positive_mask = (val_patch_centers[:, 0] >= min_x) & (val_patch_centers[:, 0] < max_x) & \
-                                       (val_patch_centers[:, 1] >= min_y) & (val_patch_centers[:, 1] < max_y)
+                val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2).to(torch.float32)
+                val_x_coords = val_objs_tensor[:, 0:1, :, :]
+                val_y_coords = val_objs_tensor[:, 1:2, :, :]
+
+                val_patch_x_max = F.max_pool2d(val_x_coords, kernel_size=(patch_h, patch_w), stride=1)
+                val_patch_y_max = F.max_pool2d(val_y_coords, kernel_size=(patch_h, patch_w), stride=1)
+                val_patch_x_min = -F.max_pool2d(-val_x_coords, kernel_size=(patch_h, patch_w), stride=1)
+                val_patch_y_min = -F.max_pool2d(-val_y_coords, kernel_size=(patch_h, patch_w), stride=1)
+
+                is_val_positive_mask = (val_patch_x_min >= block_min_x) & (val_patch_x_max < block_max_x) & \
+                                       (val_patch_y_min >= block_min_y) & (val_patch_y_max < block_max_y)
                                        
                 val_pos_indices = torch.where(is_val_positive_mask)
                 for i in range(len(val_pos_indices[0])):
@@ -465,9 +479,13 @@ class Grid():
 
         self.fprint(f"Block {block_idx} 索引构建完成: {len(positive_patches)} 个正样本, {len(negative_patches)} 个负样本, {len(val_patch_indices)} 个验证样本。")
 
-        if not positive_patches or not negative_patches:
-            print(f"警告: Block {block_idx} 缺少正样本或负样本，跳过训练。")
+        if not positive_patches:
+            print(f"警告: Block {block_idx} 缺少完全位于内部的正样本，跳过训练。")
             return
+        if not negative_patches: # 允许没有负样本的情况，但需要调整采样逻辑
+             print(f"警告: Block {block_idx} 缺少负样本，将仅使用正样本进行训练。")
+             num_positive_samples = patches_per_batch
+             num_negative_samples = 0
         
         vis_interval, val_interval = 500, 500
         
@@ -494,15 +512,16 @@ class Grid():
                 all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
                 all_element_indices.append(element_idx)
 
-            neg_sample_indices = torch.randint(0, len(negative_patches), (num_negative_samples,))
-            for i in neg_sample_indices:
-                element_idx, window_idx, y, x = negative_patches[i]
-                element = self.elements[element_idx]
-                all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                all_element_indices.append(element_idx)
+            if num_negative_samples > 0:
+                neg_sample_indices = torch.randint(0, len(negative_patches), (num_negative_samples,))
+                for i in neg_sample_indices:
+                    element_idx, window_idx, y, x = negative_patches[i]
+                    element = self.elements[element_idx]
+                    all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                    all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                    all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                    all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                    all_element_indices.append(element_idx)
             
             feature_batch = torch.stack(all_features)
             obj_batch_absolute = torch.stack(all_objs).permute(0, 3, 1, 2)
@@ -760,7 +779,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.permute(0, 3, 1, 2) # [N, 3, 1, 1]
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0, 3, 1, 2)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
