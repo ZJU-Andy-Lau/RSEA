@@ -352,8 +352,8 @@ class Grid():
             mapper.train()
             return float('nan'), float('nan')
         
-        feature_batch = torch.stack(all_features)
-        obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2)
+        feature_batch = torch.stack(all_features).to(torch.float32)
+        obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(torch.float32)
 
         # [修改] 验证时也需要输入坐标先验（这里用真实坐标模拟无偏先验）
         obj_batch_nhw3 = obj_batch.permute(0, 2, 3, 1)
@@ -508,10 +508,16 @@ class Grid():
             obj_batch_absolute = torch.stack(all_objs).permute(0, 3, 1, 2)
             conf_batch = torch.stack(all_confs)
             local_batch = torch.stack(all_locals).permute(0, 3, 1, 2)
+
+            # --- [代码修复] 显式转换所有批处理张量为 float32 ---
+            feature_batch = feature_batch.to(torch.float32)
+            obj_batch_absolute = obj_batch_absolute.to(torch.float32)
+            conf_batch = conf_batch.to(torch.float32)
+            local_batch = local_batch.to(torch.float32)
             
             positive_labels = torch.ones(num_positive_samples, 1, patch_h, patch_w, device=self.device)
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
-            valid_labels = torch.cat([positive_labels, negative_labels], dim=0)
+            valid_labels = torch.cat([positive_labels, negative_labels], dim=0).to(torch.float32)
             
             # --- 3b. [核心修改] 生成并融合含噪坐标先验 ---
             # 1. 生成高斯噪声
@@ -754,7 +760,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.permute(0, 3, 1, 2) # [N, 3, 1, 1]
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
@@ -784,3 +790,4 @@ class Grid():
         }
 
         return final_res
+
