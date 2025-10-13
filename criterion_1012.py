@@ -66,7 +66,7 @@ class CriterionTrainGrid(nn.Module):
         # 如果批次中没有正样本，则只返回valid_score损失
         if num_positive_samples == 0:
             total_loss = loss_valid * self.valid_score_weight
-            loss_details = {'dist': 0.0, 'obj': 0.0, 'height': 0.0, 'photo': 0.0, 'consistency': 0.0, 'valid': loss_valid.item()}
+            loss_details = {'d': 0.0, 'obj': 0.0, 'h': 0.0, 'p': 0.0, 'c': 0.0, 'v': loss_valid.item()}
             return total_loss, loss_details
 
         # --- 从批次中分离出所有正样本的数据 ---
@@ -151,12 +151,12 @@ class CriterionTrainGrid(nn.Module):
         
         # 构建一个包含各分项损失的字典，用于日志打印
         loss_details = {
-            'dist': loss_distribution.item(),
+            'd': loss_distribution.item(),
             'obj': np.sqrt(loss_obj.item()),
-            'height': loss_height.item(),
-            'photo': loss_photo.item(),
-            'consistency': loss_consistency.item(),
-            'valid': loss_valid.item()
+            'h': loss_height.item(),
+            'p': loss_photo.item(),
+            'c': loss_consistency.item(),
+            'v': loss_valid.item()
         }
 
         return total_loss, loss_details
