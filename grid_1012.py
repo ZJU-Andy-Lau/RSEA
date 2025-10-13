@@ -58,6 +58,7 @@ class Grid():
         if diag is None and grid_path is None:
             raise ValueError("Grid初始化错误: 必须提供diag或grid_path")
         self.options.mapper_input_channel = self.encoder.output_channels
+        self.device = device if device is not None else 'cuda'
         
         # 根据是新建还是加载来初始化Grid
         if grid_path is None :
@@ -79,7 +80,7 @@ class Grid():
         self.SAMPLE_FACTOR = options.sample_factor
         self.pred_resolution = .7
         self.vis_points_latlon = None
-        self.device = device if device is not None else 'cuda'
+        
     
     def to_device(self,device):
         """将Grid及其所有子组件移动到指定设备"""
