@@ -370,7 +370,11 @@ class RSEA():
         # 注意：这里的DEM高度是一个近似值，可以使用区域平均高程或直接使用预测高程
         heights = pred_xyh_np[:, 2] 
         lats_true, lons_true = image_to_adjust.rpc.RPC_PHOTO2OBJ(local_linesamp_np[:, 1], local_linesamp_np[:, 0], heights, 'numpy')
-        xy_true = project_mercator(np.stack([lats_true, lons_true], axis=-1))[:, [1, 0]]
+        
+        # [已修复] 将numpy数组转换为torch Tensor以调用project_mercator
+        latlon_true_tensor = torch.from_numpy(np.stack([lats_true, lons_true], axis=-1)).float().to(pred_xyh.device)
+        xy_true_tensor = project_mercator(latlon_true_tensor)[:, [1, 0]]
+        xy_true = xy_true_tensor.cpu().numpy()
         
         # 计算误差向量 (在墨卡托投影下)
         error_vectors_xy = pred_xyh_np[:, :2] - xy_true
