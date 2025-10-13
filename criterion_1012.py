@@ -41,7 +41,7 @@ class CriterionTrainGrid(nn.Module):
     def __init__(self):
         super().__init__()
         # --- 初始化各项损失的权重和参数 ---
-        self.consistency_weight = 0.5      # 坐标一致性损失的权重
+        self.consistency_weight = 0.0      # 坐标一致性损失的权重
         self.height_weight = 10.0          # 高程损失的权重
         self.photo_weight = 1.0            # 重投影损失的权重
         self.clamp_max = 1000              # 用于tanh_clamp函数，限制重投影损失的最大值
