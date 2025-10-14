@@ -76,6 +76,10 @@ if __name__ == '__main__':
     
     parser.add_argument('--feature_noise_level', type=float, default=0.1,
                         help='为特征向量添加的正交噪声强度，以确保余弦相似度不低于0.9。')
+    
+    # [新功能]: 添加高程噪声比例参数
+    parser.add_argument('--height_noise_ratio', type=float, default=0.1,
+                        help='定义最大高程噪声相对于当前block高程范围的比例。')
 
     #=============================Element Training Params=============================
 
@@ -146,7 +150,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--affine_weight', type=float, default=1.0,
                         help='像方仿射一致性损失 (loss_affine) 的权重.')
-    
+
     # [新功能]: 添加可视化频率控制参数
     parser.add_argument('--visualization_epoch_interval', type=int, default=0,
                         help='每隔多少个epoch输出一次可视化散点图。设置为0则禁用此功能。')
