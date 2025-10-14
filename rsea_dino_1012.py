@@ -288,27 +288,22 @@ class RSEA():
         br = np.array([min(br1[0],br2[0]),max(br1[1],br2[1])])
         return np.stack([tl,br],axis=0)
 
-    def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor,valid_scores:torch.Tensor) -> torch.Tensor:
+    def __calculate_transform__(self,src:torch.Tensor,tgt_mu:torch.Tensor,tgt_sigma:torch.Tensor) -> torch.Tensor:
 
         raw_dis = torch.norm(src - tgt_mu,dim=-1)
         plt.hist(raw_dis.cpu().numpy(),bins=100)
         plt.savefig(os.path.join(self.root,'raw_dis_hist.png'))
         plt.close()
         visualize_subset_points(src.cpu().numpy()[:10000],tgt_mu.cpu().numpy()[:10000],os.path.join(self.root,'raw_points.png'),point_radius=2)
-        print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")
-        print(f"valid_scores: {valid_scores.min()} \t {valid_scores.max()} \t {valid_scores.mean()} \t {valid_scores.median()}")       
+        print(f"raw_dis: {raw_dis.min()} \t {raw_dis.max()} \t {raw_dis.mean()} \t {raw_dis.median()}")   
         avg_sigma = torch.norm(tgt_sigma,dim=-1).mean()
         print(f"avg_sigma:{avg_sigma.item()}")
 
         fitter = AffineFitter()
 
-        valid_mask = valid_scores > .5
-        src = src[valid_mask]
-        tgt_mu = tgt_mu[valid_mask]
-        tgt_sigma = tgt_sigma[valid_mask]
 
         
-        total_num = len(valid_scores)
+        total_num = len(src)
         afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = 20)
         inliers = mask.ravel() == 1
 
@@ -320,7 +315,7 @@ class RSEA():
         # tgt_mu = tgt_mu[conf_valid_idx]
         # tgt_sigma = tgt_sigma[conf_valid_idx]
         # valid_scores = valid_scores[conf_valid_idx]
-        print(f"valid filter :{inliers.sum()}/{valid_mask.sum()}/{total_num}")
+        print(f"filter :{inliers.sum()}/{total_num}")
         print(f"cv2 afm : \n{afm}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
@@ -427,7 +422,6 @@ class RSEA():
             all_src = []
             all_tgt_mu = []
             all_tgt_sigma = []
-            all_valid_scores = []
             
             # 用于误差可视化的临时容器
             all_pred_xyh_for_vis = []
@@ -457,10 +451,11 @@ class RSEA():
                 conf = pred_res['confs_P1']
                 valid_score = pred_res['valid_score_P1']
 
-                all_src.append(local_linesamp)
-                all_tgt_mu.append(mu_linesamp)
-                all_tgt_sigma.append(sigma_linesamp)
-                all_valid_scores.append(valid_score)
+                mask = (conf > self.options.conf_threshold) & (valid_score > .5)
+
+                all_src.append(local_linesamp[mask])
+                all_tgt_mu.append(mu_linesamp[mask])
+                all_tgt_sigma.append(sigma_linesamp[mask])
 
             # 新增调用
             if all_pred_xyh_for_vis:
@@ -476,9 +471,8 @@ class RSEA():
             all_src = torch.concatenate(all_src,dim=0).detach()
             all_tgt_mu = torch.concatenate(all_tgt_mu,dim=0).detach()
             all_tgt_sigma = torch.concatenate(all_tgt_sigma,dim=0).detach()
-            all_valid_scores = torch.concatenate(all_valid_scores,dim=0).detach()
 
-            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma,all_valid_scores)
+            transform = self.__calculate_transform__(all_src,all_tgt_mu,all_tgt_sigma)
             image.rpc.Update_Adjust(transform)
             print(image.rpc.adjust_params.cpu().numpy())
 
