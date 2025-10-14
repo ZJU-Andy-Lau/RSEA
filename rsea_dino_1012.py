@@ -75,14 +75,22 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
         grid.create_elements(task_info = {'state':task_state,'id':task_id})
         grid.train(task_info = {'state':task_state,'id':task_id})
 
-def dict2str(dict):
-    output = ""
-    keys = dict.keys()
-    if len(keys) == 0:
-        return output
-    for key in keys:
-        output += f"{key}={dict[key]},"
-    return output[:-1]
+def dict2str(d: dict):
+    """[核心修改] 更新字典到字符串的转换，以适应新的日志格式"""
+    if not d:
+        return ""
+    
+    parts = []
+    if 'e' in d and 'me' in d:
+        parts.append(f"e:{d['e']}/{d['me']}")
+    if 'i' in d and 'mi' in d:
+        parts.append(f"i:{d['i']}/{d['mi']}")
+        
+    other_keys = [k for k in d if k not in ['e', 'me', 'i', 'mi']]
+    for key in other_keys:
+        parts.append(f"{key}:{d[key]}")
+        
+    return " ".join(parts)
 
 class RSEA():
     def __init__(self,options):
@@ -105,11 +113,6 @@ class RSEA():
             raise ValueError("Output path is not a folder")
         if not os.path.exists(self.root):
             os.mkdir(self.root)
-        # else:
-        #     if len(os.listdir(self.root)) > 0:
-        #         print("Output folder is not empty, a new folder is creating")
-        #     self.root = f"{self.root}_{int(time.time())}"
-        #     os.mkdir(self.root)
         
     def add_image(self,image_folder:str,size_limit = 0):
         """
@@ -191,31 +194,11 @@ class RSEA():
                     "status":f"Grid {task_id}:等待分配GPU",
                     "progress":0,
                     "total":1,
-                    "info":{
-                        # 'lr':0,
-                        # 'dist':0,
-                        # 's':0,
-                        # 'obj':0,
-                        # 'photo':0,
-                        # 'h':0,
-                        # 'reg':0,
-                        # 'min':0
-                    }
+                    "info":{}
                 }
             for _ in range(world_size):
                 task_queue.put(None)
             
-
-            # pbars = []
-            # for i in range(grid_num):
-            #     task_id = i + 1
-            #     # print(f"============================== Grid {task_id} ==============================")
-            #     bar = tqdm(total=1,
-            #                desc=f"Grid {task_id} 状态：等待初始化",
-            #                position=i * 2 + 1,
-            #                leave=True)
-            #     pbars.append(bar)
-
             processes = []
             for rank in track(range(world_size), description="[bold green]正在启动工作进程..."):
                 p = mp.Process(target=train_grid_worker,args=(rank, task_queue, task_states, self.encoder.state_dict(), self.imgs, self.options))
@@ -233,8 +216,6 @@ class RSEA():
             task_progress_ids = [progress.add_task(f"{i+1}", total=1, metrics = "") for i in range(grid_num)]
             progress_table = Table.grid(expand=True)
             progress_table.add_row(progress)
-
-            
 
             with Live(progress_table, refresh_per_second=50, screen=False) as live:
                 acitive_workers = world_size
@@ -254,25 +235,10 @@ class RSEA():
                             description=state['status'],
                             metrics=dict2str(state['info'])                            
                         )
-                        # bar = pbars[i]
-                        # bar.set_description(f"{state['status']}")
-                        # bar.total = state['total']
-                        # bar.n = state['progress']
-                        # bar.set_postfix(state['info'])
-                        # bar.refresh() 
                     time.sleep(0.02) 
 
-            # for bar in pbars:
-            #     bar.close()
                 for p in processes:
                     p.join()                   
-            # round_num = int(np.ceil(grid_num / world_size))
-            # for round_idx in range(round_num):
-            #     grids_to_train = self.grids[round_idx * world_size : (round_idx + 1) * world_size]
-            #     mp.spawn(train_grid_worker,
-            #             args=(world_size,round_idx,grids_to_train),
-            #             nprocs=len(grids_to_train),
-            #             join=True)
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
         
@@ -301,8 +267,6 @@ class RSEA():
 
         fitter = AffineFitter()
 
-
-        
         total_num = len(src)
         afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = 20)
         inliers = mask.ravel() == 1
@@ -310,21 +274,11 @@ class RSEA():
         src = src[inliers]
         tgt_mu = tgt_mu[inliers]
         tgt_sigma = tgt_sigma[inliers]
-        # conf_valid_idx = valid_scores > .5
-        # src = src[conf_valid_idx]
-        # tgt_mu = tgt_mu[conf_valid_idx]
-        # tgt_sigma = tgt_sigma[conf_valid_idx]
-        # valid_scores = valid_scores[conf_valid_idx]
+
         print(f"filter :{inliers.sum()}/{total_num}")
         print(f"cv2 afm : \n{afm}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
-        # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
-        # print("mean_dis:",dis.mean())
-        # dis_valid_idx = dis < dis.mean() + dis.std()
-        # locals = locals[dis_valid_idx]
-        # targets = targets[dis_valid_idx]
-        # offset = np.mean(targets,axis=0) - np.mean(locals,axis=0)
         
         return fitted_matrix
 
@@ -339,11 +293,6 @@ class RSEA():
         bad_grids_num = 0
         for grid_path in grid_paths[:grid_num]:
             new_grid = Grid(self.options,self.encoder,os.path.join(path,grid_path),grid_path=os.path.join(path,grid_path))
-            # if new_grid.status == new_grid.STATES.WELL_TRAINED:
-            #     self.grids.append(new_grid)
-            #     good_grids_num += 1
-            # else:
-            #     bad_grids_num += 1
             self.grids.append(new_grid)
             good_grids_num += 1
         print(f"{len(grid_paths)} grids loaded \t including {good_grids_num} good grids and {bad_grids_num} bad grids \t total {len(self.grids)} grids in RSEA now")
@@ -351,31 +300,20 @@ class RSEA():
     def _visualize_error_vectors(self, pred_xyh: torch.Tensor, local_linesamp: torch.Tensor, image_to_adjust: RSImage, save_path: str):
         """
         可视化预测误差向量。
-        
-        Args:
-            pred_xyh (torch.Tensor): 模型预测的地理坐标 (X,Y,H)。
-            local_linesamp (torch.Tensor): 预测点在影像上的原始像素坐标 (line, samp)。
-            image_to_adjust (RSImage): 正在被调整的影像对象。
-            save_path (str): 图像保存路径。
         """
         print("正在计算并可视化误差向量...")
         pred_xyh_np = pred_xyh.cpu().numpy()
         local_linesamp_np = local_linesamp.cpu().numpy()
 
-        # 使用影像自身的RPC，从像素坐标反算出一个 "基准" 地理坐标
-        # 注意：这里的DEM高度是一个近似值，可以使用区域平均高程或直接使用预测高程
         heights = pred_xyh_np[:, 2] 
         lats_true, lons_true = image_to_adjust.rpc.RPC_PHOTO2OBJ(local_linesamp_np[:, 1], local_linesamp_np[:, 0], heights, 'numpy')
         
-        # [已修复] 将numpy数组转换为torch Tensor以调用project_mercator
         latlon_true_tensor = torch.from_numpy(np.stack([lats_true, lons_true], axis=-1)).float().to(pred_xyh.device)
         xy_true_tensor = project_mercator(latlon_true_tensor)[:, [1, 0]]
         xy_true = xy_true_tensor.cpu().numpy()
         
-        # 计算误差向量 (在墨卡托投影下)
         error_vectors_xy = pred_xyh_np[:, :2] - xy_true
         
-        # 为了绘图清晰，随机采样一部分点
         num_points = len(error_vectors_xy)
         sample_size = min(num_points, 2000)
         indices = np.random.choice(num_points, sample_size, replace=False)
@@ -383,14 +321,11 @@ class RSEA():
         sampled_points = xy_true[indices]
         sampled_vectors = error_vectors_xy[indices]
 
-        # 绘图
         plt.figure(figsize=(15, 15))
-        # 使用 quiver 绘制向量场
         plt.quiver(sampled_points[:, 0], sampled_points[:, 1], 
                    sampled_vectors[:, 0], sampled_vectors[:, 1], 
                    color='r', angles='xy', scale_units='xy', scale=1, width=0.001)
         
-        # 也可以绘制点的位置作为参考
         plt.scatter(sampled_points[:, 0], sampled_points[:, 1], s=1, c='b', alpha=0.5, label='Error Vector Origins')
 
         plt.title('Prediction Error Vector Field')
@@ -405,7 +340,6 @@ class RSEA():
         plt.close()
         print(f"误差向量图已保存至: {save_path}")
         
-        # 打印统计信息
         errors_meters = np.linalg.norm(error_vectors_xy, axis=1)
         print(f"误差统计 (米): 平均值={np.mean(errors_meters):.2f}, 中位数={np.median(errors_meters):.2f}, 最大值={np.max(errors_meters):.2f}")
 
@@ -423,7 +357,6 @@ class RSEA():
             all_tgt_mu = []
             all_tgt_sigma = []
             
-            # 用于误差可视化的临时容器
             all_pred_xyh_for_vis = []
             all_locals_for_vis = []
 
@@ -438,12 +371,10 @@ class RSEA():
                 
                 pred_res = grid.pred_xyh(img_raw, dem, local_hw2, image.rpc)
 
-                # 新增逻辑：收集用于可视化的数据
                 if pred_res and pred_res['mu_xyh_P3'].numel() > 0:
                     all_pred_xyh_for_vis.append(pred_res['mu_xyh_P3'])
                     all_locals_for_vis.append(pred_res['locals_P2'])
                 else:
-                    # 如果预测结果为空，则跳过此grid
                     continue
                 
                 mu_linesamp,sigma_linesamp = image.rpc.xy_distribution_to_linesamp(pred_res['mu_xyh_P3'],pred_res['sigma_xyh_P3'])
@@ -457,14 +388,13 @@ class RSEA():
                 all_tgt_mu.append(mu_linesamp[mask])
                 all_tgt_sigma.append(sigma_linesamp[mask])
 
-            # 新增调用
             if all_pred_xyh_for_vis:
                 pred_xyh_vis = torch.cat(all_pred_xyh_for_vis, dim=0).detach()
                 locals_vis = torch.cat(all_locals_for_vis, dim=0).detach()
                 vis_save_path = os.path.join(self.root, f'adjust_img_{img_idx}_error_vectors.png')
                 self._visualize_error_vectors(pred_xyh_vis, locals_vis, image, vis_save_path)
 
-            if not all_src: # 如果没有任何预测结果，则跳过后续
+            if not all_src: 
                 print(f"影像 {img_idx} 未能从任何Grid中获得预测结果，跳过调整。")
                 continue
 
@@ -476,35 +406,6 @@ class RSEA():
             image.rpc.Update_Adjust(transform)
             print(image.rpc.adjust_params.cpu().numpy())
 
-            # output_obj_vis(all_xyh,output_path=os.path.join(image.root,'obj_vis.txt'))
-
-            # check_points = np.stack(np.meshgrid(np.arange(0,image.H,10),np.arange(0,image.W,10),indexing='ij'),axis=-1).reshape(-1,2)
-            # errors = check_error(check_points,transform)
-            # errors = self.check_error()
-
-
-            # info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
-            # print("error:")
-            # print("max:",errors.max())
-            # print("min:",errors.min())
-            # print("mean:",errors.mean())
-            # print("median:",np.median(errors))
-            # print("<1px:",(errors < 1.).sum() * 1. / len(errors))
-            # print("<3px:",(errors < 3.).sum() * 1. / len(errors))
-            # print("<5px:",(errors < 5.).sum() * 1. / len(errors))
-            # print(info)
-
-
-            # image.rpc.Merge_Adjust()
-            # orthorectify_image(image.image[:,:,0],image.dem,image.rpc,os.path.join(image.root,'dom.tif'))
-            # image.rpc.save_rpc_to_file(os.path.join(image.root,'rpc_corrected.txt'))
-            # timestamp  = time.strftime("%Y%m%d%H%M%S")
-            # with open(os.path.join(image.root,f'adjust_info_{timestamp}.txt'),'w') as f:
-            #     for k,v in vars(options).items():
-            #         info = info + f"{k}:{v}\n"
-            #     f.write(info)
-
-            # return adjust_images
         errors = self.check_error(os.path.join('./log',f'adjust_log_{self.options.log_postfix}.csv'),adjust_images)
         info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
         print(info)
@@ -584,12 +485,6 @@ class RSEA():
     def visualize_feature_distribution(self, source_image_folder: str, target_image_folder: str, grid_idx_to_use: int = 0, sample_size: int = 5000):
         """
         可视化来自两个不同域（例如，不同卫星）的影像特征分布。
-        
-        Args:
-            source_image_folder (str): 源域影像的文件夹路径 (参与训练的卫星)。
-            target_image_folder (str): 目标域影像的文件夹路径 (新卫星)。
-            grid_idx_to_use (int): 使用哪个已加载的Grid来进行特征提取。
-            sample_size (int): 每个域随机采样多少个特征点进行可视化，以避免计算量过大。
         """
         print("开始进行特征分布诊断...")
         if not self.grids:
@@ -599,14 +494,12 @@ class RSEA():
             print(f"错误：grid_idx_to_use={grid_idx_to_use} 超出范围，只有 {len(self.grids)} 个grids。")
             return
         
-        # 将grid移动到主进程的默认GPU上
         device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
         grid = self.grids[grid_idx_to_use]
         grid.to_device(device)
 
         print(f"将使用 Grid {grid_idx_to_use} 在设备 {device} 上进行特征提取。")
 
-        # 1. 加载影像并提取特征
         features_all = []
         labels_all = []
 
@@ -618,18 +511,15 @@ class RSEA():
                 print(f"错误: 路径不存在 {folder}")
                 continue
 
-            image = RSImage(self.options, folder, 999 + domain_idx) # 临时ID
+            image = RSImage(self.options, folder, 999 + domain_idx) 
             
-            # 获取与Grid重叠的影像部分
             img_raw, _, _ = grid.get_overlap_image(image, mode="interpolate")
             if img_raw is None or img_raw.size == 0:
                 print(f"警告: 影像与Grid {grid_idx_to_use} 没有重叠，跳过。")
                 continue
             
-            # 提取特征
             features = grid._extract_full_features(img_raw).cpu().numpy()
             
-            # 2. 随机下采样
             if len(features) > sample_size:
                 indices = np.random.choice(len(features), sample_size, replace=False)
                 features = features[indices]
@@ -644,20 +534,17 @@ class RSEA():
         features_all = np.concatenate(features_all, axis=0)
         labels_all = np.array(labels_all)
 
-        # 3. 运行 t-SNE (已修复)
         print("特征提取完成，正在运行 t-SNE... (这可能需要几分钟)")
         n_samples = len(features_all)
         if n_samples <= 1:
             print("错误：样本数量过少，无法运行t-SNE。")
             return
         
-        # 动态调整perplexity，确保其小于样本数
         perplexity_value = min(40, n_samples - 1)
         
         tsne = TSNE(n_components=2, verbose=1, perplexity=perplexity_value, max_iter=300, random_state=42, init='random')
         tsne_results = tsne.fit_transform(features_all)
 
-        # 4. 绘图
         print("t-SNE 计算完成，正在绘图...")
         plt.figure(figsize=(12, 10))
         scatter = plt.scatter(tsne_results[:,0], tsne_results[:,1], c=labels_all, cmap=plt.cm.get_cmap("jet", 2), alpha=0.6)

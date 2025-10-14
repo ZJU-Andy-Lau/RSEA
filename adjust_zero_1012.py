@@ -53,12 +53,6 @@ if __name__ == '__main__':
     parser.add_argument('--mapper_blocks_num', type=int, default=5,
                         help='depth of the regression head, defines the map size')
     
-    parser.add_argument('--batch_size', type=int, default=8,
-                        help='number of input images when extracting features')
-    
-    parser.add_argument('--patches_per_batch', type=int, default=256,
-                        help='number of patches in a batch')
-
     parser.add_argument('--grid_num',type=int,default=-1)
 
     parser.add_argument('--digit_num',type=int,default=3)
@@ -80,7 +74,6 @@ if __name__ == '__main__':
     parser.add_argument('--validation_noise_std', type=float, default=10.0,
                         help='验证时，为坐标先验注入的固定噪声水平 (单位:米).')
     
-    # [核心修改] 新增特征噪声等级参数
     parser.add_argument('--feature_noise_level', type=float, default=0.1,
                         help='为特征向量添加的正交噪声强度，以确保余弦相似度不低于0.9。')
 
@@ -122,23 +115,27 @@ if __name__ == '__main__':
     
     #=============================Grid Training Params=============================
 
+    # --- [核心修改] 更新训练参数体系为Epoch制 ---
+    parser.add_argument('--num_epochs', type=int, default=10,
+                        help='训练的总轮数 (epochs)。一个epoch代表模型完整看过一次所有数据。')
+    
+    parser.add_argument('--batch_size', type=int, default=128,
+                        help='在梯度累积的每一步中，从单个Element抽取的patches数量。')
+
+    parser.add_argument('--validation_epoch_interval', type=int, default=1,
+                        help='每隔多少个训练轮数 (epochs) 执行一次验证。')
+
     parser.add_argument('--grid_train_lr_max', type=float, default=0.001,
                         help='highest learning rate')
     
     parser.add_argument('--grid_train_lr_min', type=float, default=0.0001,
                         help='lowest learning rate')
     
-    parser.add_argument('--grid_training_iters', type=int, default=10000,
-                        help='number of epochs through the finetune mapper')
+    parser.add_argument('--grid_warmup_epochs', type=float, default=0.5,
+                        help='学习率预热阶段所占的Epoch数。')
     
-    parser.add_argument('--grid_warmup_iters', type=int, default=200,
-                        help='number of epochs for lr climbing to lr_max')
-    
-    parser.add_argument('--grid_summit_hold_iters', type=int, default=8800,
-                        help='number of epochs for lr staying lr_max after warmup')
-    
-    parser.add_argument('--grid_cooldown_iters', type=int, default=1000,
-                        help='number of epochs for lr staying lr_max after warmup')
+    parser.add_argument('--grid_cooldown_epochs', type=float, default=2.0,
+                        help='学习率冷却阶段所占的Epoch数。')
     
     parser.add_argument('--consistency_weight', type=float, default=50.0,
                         help='一阶平滑损失 (loss_consistency) 的权重.')
