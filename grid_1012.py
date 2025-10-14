@@ -351,10 +351,71 @@ class Grid():
             norm_h = 2 * (coords_abs[..., 2] - h_min) / range_h - 1
             
         return torch.stack([norm_x, norm_y, norm_h], dim=-1)
+    
+    def _visualize_predictions(self, pred_mu: torch.Tensor, gt_obj: torch.Tensor, epoch: int, stage: str, block_idx: int, vis_output_path: str):
+        """
+        [新功能] 核心可视化函数，用于生成预测值与真值的散点图。
+        
+        Args:
+            pred_mu (torch.Tensor): 模型的预测坐标 [B, 3, 16, 16]
+            gt_obj (torch.Tensor): 真实的坐标 [B, 3, 16, 16]
+            epoch (int): 当前的epoch号
+            stage (str): 'train' 或 'validation'
+            block_idx (int): 当前Block的索引
+            vis_output_path (str): 可视化结果的保存路径
+        """
+        # 将数据移动到CPU并转为numpy
+        pred_mu_np = pred_mu.detach().cpu().numpy().transpose(0, 2, 3, 1) # -> [B, 16, 16, 3]
+        gt_obj_np = gt_obj.detach().cpu().numpy().transpose(0, 2, 3, 1)   # -> [B, 16, 16, 3]
+
+        batch_size = pred_mu_np.shape[0]
+
+        for n_samples in [1, 10]:
+            if batch_size < n_samples:
+                continue
+
+            # 1. 随机采样N个patch
+            sample_indices = np.random.choice(batch_size, n_samples, replace=False)
+            
+            sampled_preds = pred_mu_np[sample_indices].reshape(-1, 3)
+            sampled_gts = gt_obj_np[sample_indices].reshape(-1, 3)
+            
+            # 2. 创建绘图
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+            fig.suptitle(f'Block {block_idx} | Epoch {epoch} | {stage.capitalize()} | {n_samples} Patches Sampled', fontsize=16)
+
+            # 绘制 X 坐标对比
+            ax1.scatter(sampled_gts[:, 0], sampled_preds[:, 0], alpha=0.5, s=5)
+            min_val_x = min(sampled_gts[:, 0].min(), sampled_preds[:, 0].min())
+            max_val_x = max(sampled_gts[:, 0].max(), sampled_preds[:, 0].max())
+            ax1.plot([min_val_x, max_val_x], [min_val_x, max_val_x], 'r--', label='y=x')
+            ax1.set_xlabel('Ground Truth X (m)')
+            ax1.set_ylabel('Predicted X (m)')
+            ax1.set_title('X Coordinate Comparison')
+            ax1.grid(True)
+            ax1.legend()
+            ax1.axis('equal')
+
+            # 绘制 Y 坐标对比
+            ax2.scatter(sampled_gts[:, 1], sampled_preds[:, 1], alpha=0.5, s=5)
+            min_val_y = min(sampled_gts[:, 1].min(), sampled_preds[:, 1].min())
+            max_val_y = max(sampled_gts[:, 1].max(), sampled_preds[:, 1].max())
+            ax2.plot([min_val_y, max_val_y], [min_val_y, max_val_y], 'r--', label='y=x')
+            ax2.set_xlabel('Ground Truth Y (m)')
+            ax2.set_ylabel('Predicted Y (m)')
+            ax2.set_title('Y Coordinate Comparison')
+            ax2.grid(True)
+            ax2.legend()
+            ax2.axis('equal')
+
+            # 3. 保存图像
+            save_path = os.path.join(vis_output_path, f'block_{block_idx}_epoch_{epoch}_{stage}_samples_{n_samples}.png')
+            plt.savefig(save_path, dpi=150)
+            plt.close(fig)
 
     @torch.no_grad()
-    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, total_iter_idx: int, val_patches: dict):
-        """[核心修改] 在验证集上评估模型，使用固定的验证噪声"""
+    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, total_iter_idx: int, val_patches: dict, epoch: int, vis_output_path: str):
+        """[核心修改] 在验证集上评估模型，并根据需要进行可视化"""
         if not val_patches or val_patches['features'].numel() == 0:
             return float('nan'), float('nan')
 
@@ -390,6 +451,18 @@ class Grid():
         output_raw_flat = output_raw.permute(0, 2, 3, 1)
         pred_mu_absolute = self.warp_by_poly(output_raw_flat[...,:3], block.map_coeffs).permute(0, 3, 1, 2)
 
+        # [新功能]: 验证阶段的可视化触发
+        if self.options.visualization_epoch_interval > 0 and epoch % self.options.visualization_epoch_interval == 0:
+            self.fprint(f"Epoch {epoch}: 生成验证阶段可视化图...")
+            self._visualize_predictions(
+                pred_mu_absolute,
+                obj_batch,
+                epoch,
+                "validation",
+                block_idx,
+                vis_output_path
+            )
+
         error_rmse = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
         val_rmse = error_rmse.mean().item()
         
@@ -400,7 +473,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构 V3] 完整Epoch遍历，修正负采样，简化RPC传递, Patch级噪声 """
+        """ [核心重构 V3] 完整Epoch遍历，修正负采样，简化RPC传递, Patch级噪声, 增加可视化 """
         
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
@@ -417,6 +490,11 @@ class Grid():
         mapper.train()
         min_loss = 1e8
         best_mapper_state_dict = None
+
+        # [新功能]: 创建可视化输出目录
+        vis_output_path = os.path.join(self.output_path, 'visualization')
+        if self.options.visualization_epoch_interval > 0:
+            os.makedirs(vis_output_path, exist_ok=True)
         
         # --- 2. 数据源准备 ---
         self.fprint(f"为Block {block_idx} 准备数据源...")
@@ -474,19 +552,15 @@ class Grid():
             return
         
         # --- 4. 训练循环设置 ---
-        all_batches = []
-        for eid, indices in train_indices_for_block.items():
-            for i in range(0, len(indices), self.options.mapper_batch_size):
-                all_batches.append((eid, i))
-        
-        total_training_steps = len(all_batches) * self.options.num_epochs
+        total_batches_per_epoch = sum( (len(indices) + self.options.mapper_batch_size - 1) // self.options.mapper_batch_size for indices in train_indices_for_block.values() )
+        total_training_steps = total_batches_per_epoch * self.options.num_epochs
         
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
                                      total_steps=total_training_steps,
                                      warmup_ratio=self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0,
                                      cooldown_ratio=self.options.grid_cooldown_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0)
 
-        self.fprint(f"Block {block_idx} 索引构建完成. 每个Epoch包含 {len(all_batches)} 个批次. 总训练步数: {total_training_steps}")
+        self.fprint(f"Block {block_idx} 索引构建完成. 每个Epoch包含 {total_batches_per_epoch} 个批次. 总训练步数: {total_training_steps}")
 
         if task_info: 
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':total_training_steps, 'progress': 0})
@@ -494,21 +568,30 @@ class Grid():
             pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
         
         latest_val_loss_obj = float('nan')
-        warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs
+        warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0
         current_total_iter = 0
 
         # --- 5. Epoch-based 训练循环 ---
         for epoch in range(self.options.num_epochs):
-            random.shuffle(all_batches) # 每个epoch都打乱批次顺序
+            shuffled_indices_per_element = {
+                eid: indices[torch.randperm(len(indices))] 
+                for eid, indices in train_indices_for_block.items()
+            }
+            
+            all_batches_shuffled = []
+            for eid, indices in shuffled_indices_per_element.items():
+                for i in range(0, len(indices), self.options.mapper_batch_size):
+                    all_batches_shuffled.append((eid, i, i + self.options.mapper_batch_size))
+            random.shuffle(all_batches_shuffled)
 
-            for element_id, i in all_batches:
+            for batch_idx, (element_id, i_start, i_end) in enumerate(all_batches_shuffled):
                 optimizer.zero_grad()
                 
-                indices = train_indices_for_block[element_id]
+                indices = shuffled_indices_per_element[element_id]
                 element_patches = all_element_patches[element_id]
                 current_rpc = self.elements[element_id].rpc
                 
-                indices_to_sample = indices[i : i + self.options.mapper_batch_size]
+                indices_to_sample = indices[i_start : i_end]
                 
                 feature_batch = element_patches['features'][indices_to_sample].to(torch.float32)
                 obj_batch = element_patches['objs'][indices_to_sample].to(torch.float32)
@@ -526,7 +609,7 @@ class Grid():
                 orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
                 noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
 
-                progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 else 0
+                progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 and warmup_ratio > 0 else 1.0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
                 # 生成Patch级统一平移噪声
@@ -581,6 +664,19 @@ class Grid():
                 optimizer.step()
                 scheduler.step()
                 
+                # [新功能]: 训练阶段的可视化触发
+                is_last_batch_of_epoch = (batch_idx == len(all_batches_shuffled) - 1)
+                if self.options.visualization_epoch_interval > 0 and (epoch + 1) % self.options.visualization_epoch_interval == 0 and is_last_batch_of_epoch:
+                    self.fprint(f"Epoch {epoch+1}: 生成训练阶段可视化图...")
+                    self._visualize_predictions(
+                        pred_mu_pos,
+                        obj_pos,
+                        epoch + 1,
+                        "train",
+                        block_idx,
+                        vis_output_path
+                    )
+                
                 if total_loss_for_batch.item() < min_loss:
                     min_loss = total_loss_for_batch.item()
                     best_mapper_state_dict = deepcopy(mapper.state_dict())
@@ -594,7 +690,11 @@ class Grid():
                     pbar.set_postfix(info)
             
             if (epoch + 1) % self.options.validation_epoch_interval == 0:
-                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, current_total_iter, filtered_val_patches)
+                val_rmse, val_loss_obj = self.validate_and_visualize_block(
+                    mapper, block, block_idx, current_total_iter, filtered_val_patches,
+                    epoch=epoch + 1,
+                    vis_output_path=vis_output_path
+                )
                 if not np.isnan(val_rmse):
                     latest_val_loss_obj = val_loss_obj
         
@@ -770,7 +870,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)

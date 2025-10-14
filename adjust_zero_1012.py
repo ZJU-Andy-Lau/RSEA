@@ -146,6 +146,10 @@ if __name__ == '__main__':
     
     parser.add_argument('--affine_weight', type=float, default=1.0,
                         help='像方仿射一致性损失 (loss_affine) 的权重.')
+    
+    # [新功能]: 添加可视化频率控制参数
+    parser.add_argument('--visualization_epoch_interval', type=int, default=0,
+                        help='每隔多少个epoch输出一次可视化散点图。设置为0则禁用此功能。')
 
     parser.add_argument('--resume_training',type=str2bool,default=False)
 
