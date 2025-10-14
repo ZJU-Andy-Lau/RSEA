@@ -78,11 +78,10 @@ class Element():
         self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW = self.__crop_validation_img__(crop_size=self.options.crop_size)
 
         self.SAMPLE_FACTOR = self.options.sample_factor
-        self.buffer = self.__extract_features_for_set__(self.train_crop_imgs_NHWC, self.train_crop_locals_NHW2, self.train_crop_dems_NHW, is_training=True)
-        self.validation_buffer = self.__extract_features_for_set__(self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW, is_training=False)
+        self.buffer = self.__extract_and_unfold_patches__(self.train_crop_imgs_NHWC, self.train_crop_locals_NHW2, self.train_crop_dems_NHW, is_training=True)
+        self.validation_buffer = self.__extract_and_unfold_patches__(self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW, is_training=False)
         
         self._log(f"=========================== Element {self.id} 初始化完成 ===========================")
-        # ... (日志打印)
     
     def _log(self, *args, **kwargs):
         if self.verbose:
@@ -153,15 +152,16 @@ class Element():
         
         return np.stack(crop_imgs), np.stack(crop_locals), np.stack(crop_dems)
     
-    def __extract_features_for_set__(self, crop_imgs_nhwc, crop_locals_nhw2, crop_dems_nhw, is_training: bool) -> Dict[str, torch.Tensor]:
+    def __extract_and_unfold_patches__(self, crop_imgs_nhwc, crop_locals_nhw2, crop_dems_nhw, is_training: bool) -> Dict[str, torch.Tensor]:
         """
-        [核心修改] 使用 self.options.encoder_batch_size
+        [核心重构] 提取特征图，并立即使用unfold将其转换为patch格式的数据集。
         """
         if crop_imgs_nhwc.size == 0:
             return {}
 
-        self._log(f"正在提取 {crop_imgs_nhwc.shape[0]} 个窗口的特征... (模式: {'训练' if is_training else '验证'})")
+        self._log(f"正在提取并构建 {crop_imgs_nhwc.shape[0]} 个窗口的Patch数据集... (模式: {'训练' if is_training else '验证'})")
         
+        # --- 1. 特征提取 (与之前相同) ---
         imgs_nchw = torch.from_numpy(crop_imgs_nhwc).permute(0, 3, 1, 2).float() / 255.0
         
         transform_to_use = self.train_transform if is_training else self.val_transform
@@ -203,14 +203,29 @@ class Element():
         
         objs_bhw3 = torch.cat([xy, dems_nhw_down.flatten().to(self.device).unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
 
-        buffer = {
+        feature_maps = {
             'features': features_bdhw,
             'confs': confs_b1hw,
-            'locals': locals_nhw2_down.to(self.device),
-            'objs': objs_bhw3
+            'locals': locals_nhw2_down.to(self.device).permute(0, 3, 1, 2), # NCHW
+            'objs': objs_bhw3.permute(0, 3, 1, 2) # NCHW
         }
-        self._log("特征提取完成。")
-        return buffer
+
+        # --- 2. [核心新增] 使用unfold将特征图转换为Patch ---
+        patch_h, patch_w, patch_stride = 16, 16, 8
+        patch_buffer = {}
+        
+        for key, tensor in feature_maps.items():
+            B, C, H, W = tensor.shape
+            unfolded = F.unfold(tensor, kernel_size=(patch_h, patch_w), stride=patch_stride)
+            
+            num_patches_per_img = unfolded.shape[-1]
+            
+            # (B, C*k*k, L) -> (B, L, C, k, k) -> (B*L, C, k, k)
+            unfolded = unfolded.permute(0, 2, 1).reshape(B * num_patches_per_img, C, patch_h, patch_w)
+            patch_buffer[key] = unfolded
+        
+        self._log(f"Patch数据集构建完成, 共 {len(patch_buffer['features'])} 个Patches。")
+        return patch_buffer
 
     def clear_buffer(self):
         if hasattr(self, 'buffer') and self.buffer:
