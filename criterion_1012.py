@@ -67,12 +67,13 @@ class CriterionTrainGrid(nn.Module):
         self.photo_weight = 1.0
         self.warmup_iters = 5
 
-    def forward(self, epoch, max_epoch, pred_mu_absolute_patch, pred_log_sigma_patch, gt_absolute_patch, conf_patch, linesamp_patch, elements: list, element_indices: list):
+    # [核心修改 V3]: 简化接口，直接接收单个RPC对象
+    def forward(self, epoch, max_epoch, pred_mu_absolute_patch, pred_log_sigma_patch, gt_absolute_patch, conf_patch, linesamp_patch, rpc: RPCModelParameterTorch):
         """
         损失函数的前向传播计算 (只处理正样本)。
         """
         
-        progress = 1. * epoch / max_epoch
+        progress = 1. * epoch / max_epoch if max_epoch > 0 else 0
 
         conf_weights = conf_patch.clone()
         conf_weights[conf_weights > 0.5] = 0.5 + progress * 0.4
@@ -83,35 +84,18 @@ class CriterionTrainGrid(nn.Module):
         loss_obj = (error_squared[:, :2, ...].sum(dim=1, keepdim=True) * conf_weights).mean()
         loss_height = (error_squared[:, 2:3, ...] * conf_weights).mean()
 
-        loss_photo_total = torch.tensor(0.0, device=pred_mu_absolute_patch.device)
-        loss_affine_total = torch.tensor(0.0, device=pred_mu_absolute_patch.device)
-        unique_element_indices = np.unique(element_indices)
+        # [核心修改 V3]: 移除基于element_indices的循环，直接计算
+        pred_xyh_flat = pred_mu_absolute_patch.permute(0, 2, 3, 1).reshape(-1, 3)
+        linesamp_gt_flat = linesamp_patch.permute(0, 2, 3, 1).reshape(-1, 2)
+
+        latlon_pred_flat = mercator2lonlat(pred_xyh_flat[:, [1, 0]])
+        linesamp_pred_flat = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred_flat[:, 0], latlon_pred_flat[:, 1], pred_xyh_flat[:, 2]), dim=1)[:, [1, 0]].to(torch.float32)
         
-        for element_idx in unique_element_indices:
-            mask = torch.tensor([i == element_idx for i in element_indices], device=pred_mu_absolute_patch.device)
-            if not mask.any(): continue
+        reprojection_error_pixels = torch.norm(linesamp_pred_flat - linesamp_gt_flat, dim=1)
+        loss_photo = reprojection_error_pixels.mean()
 
-            pred_mu_group = pred_mu_absolute_patch[mask]
-            linesamp_gt_group = linesamp_patch[mask]
-            
-            rpc = elements[element_idx].rpc
-            
-            pred_xyh_flat = pred_mu_group.permute(0, 2, 3, 1).reshape(-1, 3)
-            linesamp_gt_flat = linesamp_gt_group.permute(0, 2, 3, 1).reshape(-1, 2)
-
-            latlon_pred_flat = mercator2lonlat(pred_xyh_flat[:, [1, 0]])
-            linesamp_pred_flat = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred_flat[:, 0], latlon_pred_flat[:, 1], pred_xyh_flat[:, 2]), dim=1)[:, [1, 0]].to(torch.float32)
-            
-            reprojection_error_pixels = torch.norm(linesamp_pred_flat - linesamp_gt_flat, dim=1)
-            loss_photo_group = reprojection_error_pixels.mean()
-            loss_photo_total += loss_photo_group
-
-            loss_affine_group = calculate_affine_loss_differentiable(linesamp_gt_flat, linesamp_pred_flat)
-            loss_affine_total += loss_affine_group
-
-        loss_photo = loss_photo_total / len(unique_element_indices) if len(unique_element_indices) > 0 else torch.tensor(0.0, device=pred_mu_absolute_patch.device)
-        loss_affine = loss_affine_total / len(unique_element_indices) if len(unique_element_indices) > 0 else torch.tensor(0.0, device=pred_mu_absolute_patch.device)
-
+        loss_affine = calculate_affine_loss_differentiable(linesamp_gt_flat, linesamp_pred_flat)
+        
         loss_consistency = calculate_consistency_loss(pred_mu_absolute_patch, gt_absolute_patch)
 
         if epoch < self.warmup_iters:
