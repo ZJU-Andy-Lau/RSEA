@@ -96,9 +96,9 @@ class Decoder(nn.Module):
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
         
-        mu_xy = F.tanh(xy_res[:,:2])
+        mu_xy = F.tanh(xy_res[:,:2]) * 2.
         log_sigma_xy = F.tanh(xy_res[:,2:]) * 5.
-        mu_h = F.tanh(height_res[:,:1])
+        mu_h = F.tanh(height_res[:,:1]) * 2.
         log_sigma_h = F.tanh(height_res[:,1:]) * 5.
 
         return torch.cat([mu_xy,mu_h,log_sigma_xy,log_sigma_h],dim=1),valid_score

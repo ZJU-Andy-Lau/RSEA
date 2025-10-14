@@ -330,8 +330,8 @@ class Grid():
             torch.Tensor: 归一化后的坐标张量, shape [..., 3]
         """
         # --- 准备归一化参数 ---
-        min_x, max_x = block.diag[0, 0], block.diag[1, 0]
-        min_y, max_y = block.diag[1, 1], block.diag[0, 1]
+        min_x, max_x = min(block.diag[:,0]),max(block.diag[:,0])
+        min_y, max_y = min(block.diag[:,1]),max(block.diag[:,1])
         h_min = block.map_coeffs['h_min']
         h_max = block.map_coeffs['h_max']
 
@@ -866,7 +866,7 @@ class Grid():
 
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
