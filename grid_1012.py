@@ -176,14 +176,15 @@ class Grid():
                 obj_patches = el.buffer['objs']
                 centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
                 all_centers_list.append(centers)
-                all_heights_list.append(obj_patches[:, 2, ...].flatten())
+                # [核心修复 1/2]: 保持patch结构，reshape为 [N_patches, 256]
+                all_heights_list.append(obj_patches[:, 2, ...].reshape(obj_patches.shape[0], -1))
 
         if not all_centers_list:
             self.fprint("警告: 没有任何Element Buffer包含高度信息，无法计算高程系数。")
             return
         
         all_centers = torch.cat(all_centers_list)
-        all_heights = torch.cat(all_heights_list)
+        all_heights = torch.cat(all_heights_list) # 现在的形状是 [总patch数, 256]
 
         global_h_min = all_heights.min().item()
         global_h_max = all_heights.max().item()
@@ -195,13 +196,20 @@ class Grid():
             points_in_block = mask.sum().item()
             
             if points_in_block > 10: 
-                heights_in_block = all_heights[mask]
-                block.map_coeffs['h'] = get_map_coef(heights_in_block.cpu().numpy())
-                block.map_coeffs['h_min'] = heights_in_block.min().item()
-                block.map_coeffs['h_max'] = heights_in_block.max().item()
+                # [核心修复 2/2]: 先用mask索引，再flatten
+                heights_in_block = all_heights[mask].flatten()
+                if heights_in_block.numel() > 0:
+                    block.map_coeffs['h'] = get_map_coef(heights_in_block.cpu().numpy())
+                    block.map_coeffs['h_min'] = heights_in_block.min().item()
+                    block.map_coeffs['h_max'] = heights_in_block.max().item()
+                else: # Fallback for safety
+                    self.fprint(f"警告: Block {self.blocks.index(block)} 内掩码计算后无高程点，使用全局统计。")
+                    block.map_coeffs['h'] = get_map_coef(all_heights.flatten().cpu().numpy())
+                    block.map_coeffs['h_min'] = global_h_min
+                    block.map_coeffs['h_max'] = global_h_max
             else:
                 self.fprint(f"警告: Block {self.blocks.index(block)} 内只有 {points_in_block} 个数据点，使用全局高程统计。")
-                block.map_coeffs['h'] = get_map_coef(all_heights.cpu().numpy())
+                block.map_coeffs['h'] = get_map_coef(all_heights.flatten().cpu().numpy())
                 block.map_coeffs['h_min'] = global_h_min
                 block.map_coeffs['h_max'] = global_h_max
 
@@ -486,7 +494,6 @@ class Grid():
             pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
         
         latest_val_loss_obj = float('nan')
-        warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs
         current_total_iter = 0
 
         # --- 5. Epoch-based 训练循环 ---
@@ -518,7 +525,7 @@ class Grid():
                 orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
                 noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
 
-                progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 else 0
+                progress = current_total_iter / total_training_steps if total_training_steps > 0 else 0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
                 # 生成Patch级统一平移噪声
@@ -762,7 +769,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
