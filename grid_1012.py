@@ -494,10 +494,10 @@ class Grid():
 
                     element_patches = all_element_patches[element_id]
                     
-                    feature_batch = element_patches['features'][indices_to_sample]
-                    obj_batch = element_patches['objs'][indices_to_sample]
-                    conf_batch = element_patches['confs'][indices_to_sample]
-                    local_batch = element_patches['locals'][indices_to_sample]
+                    feature_batch = element_patches['features'][indices_to_sample].to(torch.float32)
+                    obj_batch = element_patches['objs'][indices_to_sample].to(torch.float32)
+                    conf_batch = element_patches['confs'][indices_to_sample].to(torch.float32)
+                    local_batch = element_patches['locals'][indices_to_sample].to(torch.float32)
 
                     # 正样本处理
                     feature_pos = feature_batch.repeat(2, 1, 1, 1)
