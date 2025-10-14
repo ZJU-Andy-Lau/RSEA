@@ -330,8 +330,8 @@ class Grid():
         return torch.stack([norm_x, norm_y, norm_h], dim=-1)
 
     @torch.no_grad()
-    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]], criterion: nn.Module):
-        """[核心修改] 在验证集上评估模型，对齐训练和验证任务"""
+    def validate_and_visualize_block(self, mapper: nn.Module, block: Block, block_idx: int, iter_idx: int, val_patch_indices: List[Tuple[int, int, int, int]]):
+        """[核心修改] 在验证集上评估模型，使用固定的验证噪声"""
         if not val_patch_indices:
             return float('nan'), float('nan')
 
@@ -341,12 +341,16 @@ class Grid():
         val_batch_size = min(self.options.patches_per_batch // 2, len(val_patch_indices))
         
         all_features, all_objs = [], [],
-        sample_indices = torch.randint(0, len(val_patch_indices), (val_batch_size,))
-        for i in sample_indices:
-            element_idx, window_idx, y, x = val_patch_indices[i]
-            element = self.elements[element_idx]
-            all_features.append(element.validation_buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
-            all_objs.append(element.validation_buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+        if val_batch_size > 0:
+            sample_indices = torch.randint(0, len(val_patch_indices), (val_batch_size,))
+            for i in sample_indices:
+                element_idx, window_idx, y, x = val_patch_indices[i]
+                element = self.elements[element_idx]
+                all_features.append(element.validation_buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                all_objs.append(element.validation_buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+        else: # 如果验证样本不足一个batch，则不进行验证
+             mapper.train()
+             return float('nan'), float('nan')
 
         if not all_features:
             mapper.train()
@@ -355,8 +359,8 @@ class Grid():
         feature_batch = torch.stack(all_features).to(torch.float32)
         obj_batch = torch.stack(all_objs).permute(0, 3, 1, 2).to(torch.float32)
 
-        # --- [核心修改] 为验证集的坐标先验注入同分布的噪声，确保任务一致性 ---
-        noise = torch.randn_like(obj_batch) * self.options.prior_noise_std
+        # --- [核心修改] 为验证集的坐标先验注入固定的噪声 ---
+        noise = torch.randn_like(obj_batch) * self.options.validation_noise_std
         noisy_prior_absolute_val = obj_batch + noise
         
         noisy_prior_nhw3_val = noisy_prior_absolute_val.permute(0, 2, 3, 1)
@@ -387,7 +391,6 @@ class Grid():
             plot_dir = os.path.join(self.output_path, f'block_{block_idx}_plots', 'validation')
             os.makedirs(plot_dir, exist_ok=True)
             
-            # ... (可视化代码保持不变)
             plt.figure(figsize=(10, 10))
             plt.scatter(true_coords_all[:, 0], true_coords_all[:, 1], s=5, c='blue', alpha=0.6, label='真实坐标')
             plt.scatter(pred_coords_all[:, 0], pred_coords_all[:, 1], s=5, c='red', marker='x', alpha=0.6, label='预测坐标')
@@ -421,7 +424,11 @@ class Grid():
                                      total_steps=self.options.grid_training_iters,
                                      warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
                                      cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
-        criterion = CriterionTrainGrid()
+        # --- [核心修改] 传递损失权重 ---
+        criterion = CriterionTrainGrid(
+            consistency_weight=self.options.consistency_weight,
+            laplacian_weight=self.options.laplacian_weight
+        )
         
         mapper.train()
         min_loss = 1e8
@@ -441,15 +448,15 @@ class Grid():
         block_min_y, block_max_y = block.diag[1, 1], block.diag[0, 1]
 
         for element_idx, element in enumerate(self.elements):
-            # --- [核心修改] 恢复为基于Patch中心点的筛选方法 ---
+            # --- 恢复为基于Patch中心点的筛选方法 ---
             
             # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
                 objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
                 patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
                 
-                is_positive_mask = (patch_centers[:, 0] >= block_min_x + 16.) & (patch_centers[:, 0] <= block_max_x - 16.) & \
-                                   (patch_centers[:, 1] >= block_min_y + 16.) & (patch_centers[:, 1] <= block_max_y - 16.)
+                is_positive_mask = (patch_centers[:, 0] >= block_min_x) & (patch_centers[:, 0] < block_max_x) & \
+                                   (patch_centers[:, 1] >= block_min_y) & (patch_centers[:, 1] < block_max_y)
                 
                 pos_indices = torch.where(is_positive_mask)
                 for i in range(len(pos_indices[0])):
@@ -464,8 +471,8 @@ class Grid():
                 val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2)
                 val_patch_centers = F.avg_pool2d(val_objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
                 
-                is_val_positive_mask = (val_patch_centers[:, 0] >= block_min_x + 16.) & (val_patch_centers[:, 0] < block_max_x - 16.) & \
-                                       (val_patch_centers[:, 1] >= block_min_y + 16.) & (val_patch_centers[:, 1] < block_max_y - 16.)
+                is_val_positive_mask = (val_patch_centers[:, 0] >= block_min_x) & (val_patch_centers[:, 0] < block_max_x) & \
+                                       (val_patch_centers[:, 1] >= block_min_y) & (val_patch_centers[:, 1] < block_max_y)
                                        
                 val_pos_indices = torch.where(is_val_positive_mask)
                 for i in range(len(val_pos_indices[0])):
@@ -478,7 +485,7 @@ class Grid():
         if not positive_patches:
             print(f"警告: Block {block_idx} 缺少正样本，跳过训练。")
             return
-        if not negative_patches: # 允许没有负样本的情况，但需要调整采样逻辑
+        if not negative_patches: 
              print(f"警告: Block {block_idx} 缺少负样本，将仅使用正样本进行训练。")
              num_positive_samples = patches_per_batch
              num_negative_samples = 0
@@ -534,8 +541,12 @@ class Grid():
             negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
             valid_labels = torch.cat([positive_labels, negative_labels], dim=0).to(torch.float32)
             
-            # --- 3b. 生成并融合含噪坐标先验 ---
-            noise = torch.randn_like(obj_batch_absolute) * self.options.prior_noise_std
+            # --- 3b. [核心修改] 生成并融合含噪坐标先验 ---
+            # --- 课程学习动态噪声计算 ---
+            progress = iter_idx / self.options.grid_training_iters
+            current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
+            
+            noise = torch.randn_like(obj_batch_absolute) * current_noise_std
             noisy_prior_absolute = obj_batch_absolute + noise
             noisy_prior_absolute_nhw3 = noisy_prior_absolute.permute(0, 2, 3, 1)
             normalized_prior_nhw3 = self._normalize_coords(noisy_prior_absolute_nhw3, block)
@@ -564,7 +575,7 @@ class Grid():
             
             # --- 3g. 周期性验证 ---
             if (iter_idx + 1) % val_interval == 0:
-                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices, criterion)
+                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices)
                 if not np.isnan(val_rmse):
                     info['val_err'] = f'{val_rmse:.2f}'
                     latest_val_loss_obj = val_loss_obj
@@ -764,7 +775,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)

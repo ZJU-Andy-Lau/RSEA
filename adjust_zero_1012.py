@@ -36,7 +36,6 @@ if __name__ == '__main__':
     parser.add_argument('--crop_size', type=int, default=1024,
                         help='size of input data')
     
-    # [新增] 允许用户指定均匀裁切时，在高度和宽度方向上的窗口数量
     parser.add_argument('--crop_num_h', type=int, default=8,
                         help='number of uniform crops along the height')
     
@@ -68,13 +67,18 @@ if __name__ == '__main__':
 
     parser.add_argument('--grid_offset_y',type=float,default=0)
     
-    # [新增] Encoder的下采样因子，必须与模型结构匹配
     parser.add_argument('--sample_factor', type=int, default=16,
                         help='Downsampling factor of the encoder feature map.')
     
-    # ============================= [核心修改] 新增坐标先验噪声参数 =============================
-    parser.add_argument('--prior_noise_std', type=float, default=50.0,
-                        help='Standard deviation of Gaussian noise added to coordinate priors during training (in meters).')
+    # ============================= [核心修改] 新增坐标先验与损失控制参数 =============================
+    parser.add_argument('--prior_noise_min', type=float, default=1.0,
+                        help='课程学习中，坐标先验噪声的初始最小值 (单位:米).')
+    
+    parser.add_argument('--prior_noise_max', type=float, default=100.0,
+                        help='课程学习中，坐标先验噪声的最终最大值 (单位:米).')
+    
+    parser.add_argument('--validation_noise_std', type=float, default=10.0,
+                        help='验证时，为坐标先验注入的固定噪声水平 (单位:米).')
     
 
     #=============================Element Training Params=============================
@@ -133,6 +137,12 @@ if __name__ == '__main__':
     parser.add_argument('--grid_cooldown_iters', type=int, default=1000,
                         help='number of epochs for lr staying lr_max after warmup')
     
+    parser.add_argument('--consistency_weight', type=float, default=50.0,
+                        help='一阶平滑损失 (loss_consistency) 的权重.')
+    
+    parser.add_argument('--laplacian_weight', type=float, default=10.0,
+                        help='二阶平滑损失 (loss_laplacian) 的权重.')
+
     parser.add_argument('--resume_training',type=str2bool,default=False)
 
     parser.add_argument('--nearest_neighbor_num',type=int,default=3)
@@ -156,9 +166,6 @@ if __name__ == '__main__':
     
     parser.add_argument('--grid_finetune_cooldown_iters', type=int, default=500,
                         help='number of epochs for lr staying lr_max after warmup')
-    
-    # parser.add_argument('--lr_decay_per_100_epochs', type=float, default=0.85,
-    #                     help='factor of lr decay in every 10 epochs')
     
     parser.add_argument('--conf_threshold', type=float, default=0.7,
                         help='minimum confidence to filter reliable patches')
@@ -225,3 +232,4 @@ if __name__ == '__main__':
         # 基于网格对adjust_images平差
         rsea.adjust([os.path.join(adjust_images_root,i) for i in os.listdir(adjust_images_root)])
         print("=========================== 调整流程结束 ===========================")
+

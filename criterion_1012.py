@@ -8,6 +8,27 @@ from utils import project_mercator,mercator2lonlat
 import time
 from typing import List
 
+def calculate_laplacian_loss(pred_patch):
+    """
+    计算二阶平滑度损失（拉普拉斯正则化）。
+    直接惩罚预测坐标场中的高频抖动。
+    """
+    # 定义一个固定的2D拉普拉斯卷积核
+    laplacian_kernel = torch.tensor([
+        [0, 1, 0],
+        [1, -4, 1],
+        [0, 1, 0]
+    ], dtype=torch.float32, device=pred_patch.device).reshape(1, 1, 3, 3)
+
+    # (输入通道=3, 输出通道=3, group=3 实现逐通道卷积)
+    laplacian_kernel_xyz = laplacian_kernel.repeat(3, 1, 1, 1)
+
+    # F.conv2d需要 (N, C, H, W) 格式
+    laplacian_response = F.conv2d(pred_patch, laplacian_kernel_xyz, padding=1, groups=3)
+    
+    # 损失是拉普拉斯响应的L1范数，鼓励响应趋近于0
+    return torch.mean(torch.abs(laplacian_response))
+
 def calculate_consistency_loss(pred_patch, gt_patch):
     """
     计算patch内的坐标一致性损失 (在绝对地理坐标空间中计算)。
@@ -38,10 +59,11 @@ class CriterionTrainGrid(nn.Module):
     """
     用于训练Grid中Mapper的核心损失函数。
     """
-    def __init__(self):
+    def __init__(self, consistency_weight: float = 1.0, laplacian_weight: float = 0.0):
         super().__init__()
         # --- 初始化各项损失的权重和参数 ---
-        self.consistency_weight = 1.0      # 坐标一致性损失的权重
+        self.consistency_weight = consistency_weight
+        self.laplacian_weight = laplacian_weight
         self.height_weight = 10.0          # 高程损失的权重
         self.photo_weight = 1.0            # 重投影损失的权重
         self.clamp_max = 1000              # 用于tanh_clamp函数，限制重投影损失的最大值
@@ -66,7 +88,7 @@ class CriterionTrainGrid(nn.Module):
         # 如果批次中没有正样本，则只返回valid_score损失
         if num_positive_samples == 0:
             total_loss = loss_valid * self.valid_score_weight
-            loss_details = {'d': 0.0, 'obj': 0.0, 'h': 0.0, 'p': 0.0, 'c': 0.0, 'v': loss_valid.item()}
+            loss_details = {'d': 0.0, 'obj': 0.0, 'h': 0.0, 'p': 0.0, 'c': 0.0, 'lap': 0.0, 'v': loss_valid.item()}
             return total_loss, loss_details
 
         # --- 从批次中分离出所有正样本的数据 ---
@@ -103,7 +125,6 @@ class CriterionTrainGrid(nn.Module):
             # 提取这部分 patch 对应的所有数据
             pred_mu_group = pred_mu_absolute_pos[mask]
             linesamp_gt_group = linesamp_pos[mask]
-            conf_weights_group = conf_weights[mask]
             
             # 使用正确的 RPC 模型进行重投影
             rpc = elements[element_idx].rpc
@@ -111,24 +132,20 @@ class CriterionTrainGrid(nn.Module):
             # 为了高效计算，先将patch展平
             pred_xyh_flat = pred_mu_group.permute(0, 2, 3, 1).reshape(-1, 3)
             linesamp_gt_flat = linesamp_gt_group.permute(0, 2, 3, 1).reshape(-1, 2)
-            conf_flat = conf_weights_group.permute(0, 2, 3, 1).reshape(-1, 1)
 
             latlon_pred_flat = mercator2lonlat(pred_xyh_flat[:, [1, 0]])
             linesamp_pred_flat = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred_flat[:, 0], latlon_pred_flat[:, 1], pred_xyh_flat[:, 2]), dim=1)[:, [1, 0]]
             
             reprojection_error_pixels = torch.norm(linesamp_pred_flat - linesamp_gt_flat, dim=1)
             
-            # 使用tanh_clamp函数来限制损失值
-            # w = np.sqrt(1 - progress**2)
-            # t = w * self.clamp_max + 1
-            # loss_photo_group = (t * torch.tanh(reprojection_error_pixels / t) * conf_flat.squeeze()).mean()
             loss_photo_group = reprojection_error_pixels.mean()
             loss_photo_total += loss_photo_group
 
         loss_photo = loss_photo_total / len(unique_element_indices) if len(unique_element_indices) > 0 else torch.tensor(0.0, device=pred_mu_absolute_pos.device)
 
-        # --- 4. 坐标一致性损失 ---
+        # --- 4. 几何一致性损失 ---
         loss_consistency = calculate_consistency_loss(pred_mu_absolute_pos, gt_absolute_pos)
+        loss_laplacian = calculate_laplacian_loss(pred_mu_absolute_pos)
 
         # --- 5. 组合总损失 (引入预热逻辑) ---
         if epoch < self.warmup_iters:
@@ -137,7 +154,11 @@ class CriterionTrainGrid(nn.Module):
             # 对sigma施加一个小的正则化，防止其在预热期乱跑
             sigma_regularization = (pred_log_sigma_pos ** 2).mean() * 0.01 
             
-            total_loss = loss_regression + sigma_regularization + loss_consistency * self.consistency_weight + loss_photo * self.photo_weight + loss_valid * self.valid_score_weight
+            total_loss = (loss_regression + sigma_regularization + 
+                          loss_consistency * self.consistency_weight + 
+                          loss_laplacian * self.laplacian_weight + 
+                          loss_photo * self.photo_weight + 
+                          loss_valid * self.valid_score_weight)
             
             loss_distribution = torch.tensor(0.0) # 在预热期，分布损失为0
         else:
@@ -147,7 +168,11 @@ class CriterionTrainGrid(nn.Module):
             term2 = pred_log_sigma_pos
             loss_distribution = ((term1 + term2) * conf_weights).mean()
             
-            total_loss = loss_distribution + loss_obj + loss_height * self.height_weight + loss_photo * self.photo_weight + self.consistency_weight * self.consistency_weight + loss_valid * self.valid_score_weight
+            total_loss = (loss_distribution + loss_obj + loss_height * self.height_weight + 
+                          loss_photo * self.photo_weight + 
+                          loss_consistency * self.consistency_weight + 
+                          loss_laplacian * self.laplacian_weight +
+                          loss_valid * self.valid_score_weight)
         
         # 构建一个包含各分项损失的字典，用于日志打印
         loss_details = {
@@ -156,6 +181,7 @@ class CriterionTrainGrid(nn.Module):
             'h': loss_height.item(),
             'p': loss_photo.item(),
             'c': loss_consistency.item(),
+            'lap': loss_laplacian.item(),
             'v': loss_valid.item()
         }
 
