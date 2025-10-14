@@ -163,13 +163,13 @@ class Grid():
         """
         [核心修改] 根据所有Element Buffer中的数据，为每个Block估计高度多项式系数，并计算真实高程范围 (h_min, h_max)。
         """
-        heights_list = [el.buffer['objs'][..., 2].flatten() for el in self.elements if el.buffer and 'objs' in el.buffer]
+        heights_list = [el.buffer['objs'][:, 2, ...].flatten() for el in self.elements if el.buffer and 'objs' in el.buffer]
         if not heights_list: 
             self.fprint("警告: 没有任何Element Buffer包含高度信息，无法计算高程系数。")
             return
         
         heights_all = torch.cat(heights_list)
-        xys_all = torch.cat([el.buffer['objs'][..., :2].reshape(-1, 2) for el in self.elements if el.buffer and 'objs' in el.buffer])
+        xys_all = torch.cat([el.buffer['objs'][:, :2, ...].reshape(-1, 2) for el in self.elements if el.buffer and 'objs' in el.buffer])
 
         global_h_min = heights_all.min().item()
         global_h_max = heights_all.max().item()
@@ -228,7 +228,8 @@ class Grid():
         all_points_list = []
         for element in self.elements:
             if not element.buffer or element.buffer['objs'].numel() == 0: continue
-            points = element.buffer['objs'].reshape(-1, 3)
+            # Reshape from (N, C, H, W) to (N*H*W, C) if needed, assuming C=3
+            points = element.buffer['objs'].permute(0, 2, 3, 1).reshape(-1, 3)
             all_points_list.append(points)
         
         if not all_points_list:
@@ -349,8 +350,8 @@ class Grid():
         feature_batch = val_patches['features'][sample_indices]
         obj_batch = val_patches['objs'][sample_indices]
 
-        noise = torch.randn_like(obj_batch) * self.options.validation_noise_std
-        noisy_prior_absolute_val = obj_batch + noise
+        noise = torch.randn_like(obj_batch[:,:3,:,:]) * self.options.validation_noise_std
+        noisy_prior_absolute_val = obj_batch[:,:3,:,:] + noise
         
         noisy_prior_nhw3_val = noisy_prior_absolute_val.permute(0, 2, 3, 1)
         normalized_prior_nhw3 = self._normalize_coords(noisy_prior_nhw3_val, block)
@@ -359,12 +360,15 @@ class Grid():
         mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
         
         output_raw, _ = mapper(mapper_input)
-        pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
         
+        output_raw_flat = output_raw.permute(0, 2, 3, 1).reshape(-1, 6)
+        pred_mu_absolute_flat = self.warp_by_poly(output_raw_flat[:,:3], block.map_coeffs)
+        pred_mu_absolute = pred_mu_absolute_flat.reshape(val_batch_size, 16, 16, 3).permute(0, 3, 1, 2)
+
         error_rmse = torch.sqrt(torch.sum((pred_mu_absolute[:, :2, ...] - obj_batch[:, :2, ...])**2, dim=1))
         val_rmse = error_rmse.mean().item()
         
-        error_squared = (pred_mu_absolute - obj_batch) ** 2
+        error_squared = (pred_mu_absolute - obj_batch[:,:3,:,:]) ** 2
         val_loss_obj = error_squared[:, :2, ...].sum(dim=1).mean().item()
         
         # 可视化逻辑
@@ -376,8 +380,8 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构] Epoch制训练循环，支持梯度累积 """
-        
+        """ [核心重构 V2] 在函数开头进行即时索引，并使用索引进行训练 """
+
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
         mapper = block.mapper
@@ -394,52 +398,66 @@ class Grid():
         min_loss = 1e8
         best_mapper_state_dict = None
         
-        patch_h, patch_w, patch_stride = 16, 16, 8
-
-        # --- 2. 数据预处理：构建离线Patch数据集 ---
-        self.fprint(f"为Block {block_idx} 构建离线Patch数据集...")
-        all_element_patches = []
+        # --- 2. 数据源准备 ---
+        self.fprint(f"为Block {block_idx} 准备数据源...")
+        all_element_patches = [elem.buffer for elem in self.elements]
+        
         val_patches = {}
+        for element in self.elements:
+            if element.validation_buffer and element.validation_buffer['features'].numel() > 0:
+                if not val_patches:
+                    val_patches = {k: v.clone() for k, v in element.validation_buffer.items()}
+                else:
+                    for key in val_patches:
+                        val_patches[key] = torch.cat([val_patches[key], element.validation_buffer[key]], dim=0)
+
+        # --- 3. [核心修改] 即时索引构建 (Just-in-Time Indexing) ---
+        self.fprint(f"为Block {block_idx} 即时构建训练与验证索引...")
+
+        # 3a. 构建训练集索引
+        train_indices_for_block = {}
+        neg_indices_pool_for_block = {} 
         max_patches_in_element = 0
 
-        for element in self.elements:
-            for buffer_type, buffer in [('train', element.buffer), ('val', element.validation_buffer)]:
-                if not (buffer and buffer['features'].numel() > 0):
-                    continue
+        for element_id, element_data in enumerate(all_element_patches):
+            if not element_data or 'objs' not in element_data or element_data['objs'].numel() == 0:
+                continue
+            
+            obj_patches = element_data['objs']
+            centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
+            
+            pos_mask = (centers[:, 0] >= block.border[0]) & (centers[:, 0] < block.border[2]) & \
+                       (centers[:, 1] >= block.border[1]) & (centers[:, 1] < block.border[3])
+            
+            valid_pos_indices = torch.where(pos_mask)[0]
+            if valid_pos_indices.numel() > 0:
+                train_indices_for_block[element_id] = valid_pos_indices.to(self.device)
+                max_patches_in_element = max(max_patches_in_element, valid_pos_indices.numel())
 
-                element_data = {}
-                for key in ['features', 'objs', 'confs', 'locals']:
-                    tensor = buffer[key]
-                    if key in ['objs', 'locals']:
-                        tensor = tensor.permute(0, 3, 1, 2)
+            valid_neg_indices = torch.where(~pos_mask)[0]
+            if valid_neg_indices.numel() > 0:
+                neg_indices_pool_for_block[element_id] = valid_neg_indices.to(self.device)
 
-                    B, C, H, W = tensor.shape
-                    unfolded = F.unfold(tensor, kernel_size=(patch_h, patch_w), stride=patch_stride)
-                    
-                    num_patches = unfolded.shape[-1]
-                    if key == 'confs':
-                         unfolded = unfolded.reshape(B, 1 * patch_h * patch_w, num_patches)
-                    else:
-                        unfolded = unfolded.reshape(B, C * patch_h * patch_w, num_patches)
+        # 3b. 构建并筛选验证集
+        filtered_val_patches = {}
+        if val_patches and val_patches.get('features') is not None and val_patches['features'].numel() > 0:
+            val_obj_patches = val_patches['objs']
+            val_centers = F.avg_pool2d(val_obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
+            
+            val_pos_mask = (val_centers[:, 0] >= block.border[0]) & (val_centers[:, 0] < block.border[2]) & \
+                           (val_centers[:, 1] >= block.border[1]) & (val_centers[:, 1] < block.border[3])
+                           
+            val_indices_for_block = torch.where(val_pos_mask)[0].to(self.device)
 
-                    unfolded = unfolded.permute(0, 2, 1).reshape(-1, C, patch_h, patch_w)
-                    element_data[key] = unfolded
-                
-                if buffer_type == 'train':
-                    all_element_patches.append(element_data)
-                    max_patches_in_element = max(max_patches_in_element, len(unfolded))
-                else: 
-                    # 将所有element的验证patch合并
-                    if not val_patches:
-                        val_patches = element_data
-                    else:
-                        for key in val_patches:
-                            val_patches[key] = torch.cat([val_patches[key], element_data[key]], dim=0)
+            if val_indices_for_block.numel() > 0:
+                for key in val_patches:
+                    filtered_val_patches[key] = val_patches[key][val_indices_for_block]
 
-        if not all_element_patches:
+        if not train_indices_for_block:
             self.fprint(f"错误：未能为Block {block_idx} 提取任何训练Patch，跳过。")
             return
-            
+        
+        # --- 4. 训练循环设置 ---
         iters_per_epoch = max(1, max_patches_in_element // self.options.mapper_batch_size)
         total_training_steps = iters_per_epoch * self.options.num_epochs
         
@@ -448,77 +466,80 @@ class Grid():
                                      warmup_ratio=self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0,
                                      cooldown_ratio=self.options.grid_cooldown_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0)
 
-        self.fprint(f"Block {block_idx} 数据集构建完成。每个Epoch包含 {iters_per_epoch} 次迭代。总训练步数: {total_training_steps}")
+        self.fprint(f"Block {block_idx} 索引构建完成。每个Epoch包含 {iters_per_epoch} 次迭代。总训练步数: {total_training_steps}")
 
-        # --- 3. 初始化训练UI ---
         if task_info: 
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':total_training_steps, 'progress': 0})
         else:
             pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
         
         latest_val_loss_obj = float('nan')
-        
-        # --- 4. Epoch-based 训练循环 ---
-        for epoch in range(self.options.num_epochs):
-            shuffled_indices_per_element = [torch.randperm(len(data['features']), device=self.device) for data in all_element_patches]
 
+        # --- 5. Epoch-based 训练循环 ---
+        for epoch in range(self.options.num_epochs):
             for iter_idx in range(iters_per_epoch):
                 optimizer.zero_grad()
                 
-                # --- 4a. 内层循环：梯度累积 ---
-                for element_id, element_patches in enumerate(all_element_patches):
-                    num_patches_in_element = len(element_patches['features'])
-                    start_idx = (iter_idx * self.options.mapper_batch_size) % num_patches_in_element
-                    end_idx = start_idx + self.options.mapper_batch_size
-                    
-                    indices_to_sample = shuffled_indices_per_element[element_id][start_idx:end_idx]
-                    if len(indices_to_sample) == 0: continue
+                total_loss_for_iter = torch.tensor(0.0, device=self.device)
+                loss_details = {}
+                
+                # 5a. 梯度累积循环
+                for element_id, pos_indices in train_indices_for_block.items():
+                    num_pos_patches = len(pos_indices)
+                    if num_pos_patches == 0: continue
 
+                    sample_size = min(self.options.mapper_batch_size, num_pos_patches)
+                    perm = torch.randperm(num_pos_patches, device=self.device)[:sample_size]
+                    indices_to_sample = pos_indices[perm]
+
+                    element_patches = all_element_patches[element_id]
+                    
                     feature_batch = element_patches['features'][indices_to_sample]
                     obj_batch = element_patches['objs'][indices_to_sample]
                     conf_batch = element_patches['confs'][indices_to_sample]
                     local_batch = element_patches['locals'][indices_to_sample]
-                    
-                    patch_centers = F.avg_pool2d(obj_batch, kernel_size=(patch_h, patch_w)).squeeze()
-                    if patch_centers.ndim == 1: patch_centers = patch_centers.unsqueeze(0)
-                    pos_mask = (patch_centers[:, 0] >= block.border[0]) & (patch_centers[:, 0] < block.border[2]) & \
-                               (patch_centers[:, 1] >= block.border[1]) & (patch_centers[:, 1] < block.border[3])
-                    neg_mask = ~pos_mask
-                    
-                    loss_regression = torch.tensor(0.0, device=self.device)
-                    loss_details = {}
-                    valid_score_pos = torch.empty(0, 1, patch_h, patch_w, device=self.device)
-                    
-                    if pos_mask.any():
-                        feature_pos = feature_batch[pos_mask].repeat(2, 1, 1, 1)
-                        obj_pos = obj_batch[pos_mask].repeat(2, 1, 1, 1)
-                        conf_pos = conf_batch[pos_mask].repeat(2, 1, 1, 1)
-                        local_pos = local_batch[pos_mask].repeat(2, 1, 1, 1)
-                        indices_pos = [element_id] * pos_mask.sum().item() * 2
 
-                        noise = torch.randn_like(feature_pos)
-                        proj = torch.sum(feature_pos * noise, dim=1, keepdim=True) / (torch.sum(feature_pos * feature_pos, dim=1, keepdim=True) + 1e-8) * feature_pos
-                        orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
-                        noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
+                    # 正样本处理
+                    feature_pos = feature_batch.repeat(2, 1, 1, 1)
+                    obj_pos = obj_batch.repeat(2, 1, 1, 1)
+                    conf_pos = conf_batch.repeat(2, 1, 1, 1)
+                    local_pos = local_batch.repeat(2, 1, 1, 1)
+                    indices_pos = [element_id] * len(feature_batch) * 2
 
-                        progress = (epoch * iters_per_epoch + iter_idx) / total_training_steps
-                        current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
-                        
-                        coord_noise = torch.randn_like(obj_pos) * current_noise_std
-                        noisy_prior = (obj_pos + coord_noise).permute(0, 2, 3, 1)
-                        normalized_prior = self._normalize_coords(noisy_prior, block).permute(0, 3, 1, 2)
-                        mapper_input_pos = torch.cat([noisy_features, normalized_prior], dim=1)
-                        
-                        output_raw_pos, valid_score_pos = mapper(mapper_input_pos)
-                        pred_mu_pos = self.warp_by_poly(output_raw_pos[:,:3,:,:], block.map_coeffs)
-                        pred_log_sigma_pos = output_raw_pos[:,3:,:,:]
-                        
-                        loss_regression, loss_details = criterion(epoch, self.options.num_epochs, pred_mu_pos, pred_log_sigma_pos, obj_pos, conf_pos, local_pos, self.elements, indices_pos)
+                    noise = torch.randn_like(feature_pos)
+                    proj = torch.sum(feature_pos * noise, dim=1, keepdim=True) / (torch.sum(feature_pos * feature_pos, dim=1, keepdim=True) + 1e-8) * feature_pos
+                    orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
+                    noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
+
+                    progress = (epoch * iters_per_epoch + iter_idx) / total_training_steps if total_training_steps > 0 else 0
+                    current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                     
-                    valid_score_neg = torch.empty(0, 1, patch_h, patch_w, device=self.device)
-                    if neg_mask.any():
-                        feature_neg = feature_batch[neg_mask]
-                        obj_neg = obj_batch[neg_mask]
+                    coord_noise = torch.randn_like(obj_pos) * current_noise_std
+                    noisy_prior = (obj_pos + coord_noise).permute(0, 2, 3, 1)
+                    normalized_prior = self._normalize_coords(noisy_prior, block).permute(0, 3, 1, 2)
+                    mapper_input_pos = torch.cat([noisy_features, normalized_prior], dim=1)
+                    
+                    output_raw_pos, valid_score_pos = mapper(mapper_input_pos)
+                    
+                    pred_mu_pos_flat = self.warp_by_poly(output_raw_pos[:,:3,:,:].permute(0, 2, 3, 1).reshape(-1, 3), block.map_coeffs)
+                    pred_mu_pos = pred_mu_pos_flat.reshape(feature_pos.shape[0], 16, 16, 3).permute(0, 3, 1, 2)
+
+                    pred_log_sigma_pos = output_raw_pos[:,3:,:,:]
+                    
+                    loss_regression, loss_details = criterion(epoch, self.options.num_epochs, pred_mu_pos, pred_log_sigma_pos, obj_pos, conf_pos, local_pos, self.elements, indices_pos)
+                    
+                    # 负样本处理
+                    valid_score_neg = torch.empty(0, 1, 16, 16, device=self.device)
+                    neg_indices = neg_indices_pool_for_block.get(element_id)
+                    if neg_indices is not None and neg_indices.numel() > 0:
+                        num_neg_patches = len(neg_indices)
+                        neg_sample_size = min(sample_size, num_neg_patches)
+                        neg_perm = torch.randperm(num_neg_patches, device=self.device)[:neg_sample_size]
+                        neg_indices_to_sample = neg_indices[neg_perm]
+
+                        feature_neg = element_patches['features'][neg_indices_to_sample]
+                        obj_neg = element_patches['objs'][neg_indices_to_sample]
+                        
                         coord_noise_neg = torch.randn_like(obj_neg) * current_noise_std
                         noisy_prior_neg = (obj_neg + coord_noise_neg).permute(0, 2, 3, 1)
                         normalized_prior_neg = self._normalize_coords(noisy_prior_neg, block).permute(0, 3, 1, 2)
@@ -535,16 +556,17 @@ class Grid():
                         total_loss_for_element = loss_regression
                     
                     total_loss_for_element.backward()
+                    total_loss_for_iter += total_loss_for_element
                 
                 optimizer.step()
                 scheduler.step()
                 
                 current_total_iter = epoch * iters_per_epoch + iter_idx
-                if total_loss_for_element.item() < min_loss:
-                    min_loss = total_loss_for_element.item()
+                if total_loss_for_iter.item() < min_loss:
+                    min_loss = total_loss_for_iter.item()
                     best_mapper_state_dict = deepcopy(mapper.state_dict())
                 
-                info = { 'e': f'{epoch+1}', 'me': f'{self.options.num_epochs}', 'i': f'{iter_idx+1}', 'mi': f'{iters_per_epoch}', 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{total_loss_for_element.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
+                info = { 'e': f'{epoch+1}', 'me': f'{self.options.num_epochs}', 'i': f'{iter_idx+1}', 'mi': f'{iters_per_epoch}', 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{total_loss_for_iter.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
                 if task_info:
                     self.update_task_state(task_info, {'progress': current_total_iter + 1, 'info': info})
                 else:
@@ -552,7 +574,7 @@ class Grid():
                     pbar.set_postfix(info)
             
             if (epoch + 1) % self.options.validation_epoch_interval == 0:
-                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, (epoch + 1) * iters_per_epoch, val_patches)
+                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, (epoch + 1) * iters_per_epoch, filtered_val_patches)
                 if not np.isnan(val_rmse):
                     latest_val_loss_obj = val_loss_obj
         
@@ -562,6 +584,7 @@ class Grid():
              mapper.load_state_dict(best_mapper_state_dict)
         block.status = self.STATES.WELL_TRAINED if min_loss < 25. else self.STATES.BAD_TRAINED
         self.save_grid()
+
 
     def save_grid(self):
         """保存Grid的状态，包括所有Blocks的模型权重"""
@@ -758,4 +781,3 @@ class Grid():
         }
 
         return final_res
-
