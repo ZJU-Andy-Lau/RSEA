@@ -494,6 +494,7 @@ class Grid():
             pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
         
         latest_val_loss_obj = float('nan')
+        warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs
         current_total_iter = 0
 
         # --- 5. Epoch-based 训练循环 ---
@@ -525,7 +526,7 @@ class Grid():
                 orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
                 noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
 
-                progress = current_total_iter / total_training_steps if total_training_steps > 0 else 0
+                progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 else 0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
                 # 生成Patch级统一平移噪声
@@ -769,7 +770,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
