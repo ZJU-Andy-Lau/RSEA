@@ -728,10 +728,10 @@ class Grid():
                 full_buffer['priors'].append(prior_down.reshape(-1, 3))
 
         
-        full_buffer_features = torch.cat(full_buffer['features'], dim=0)
-        full_buffer_locals = torch.cat(full_buffer['locals'], dim=0)
-        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)
-        full_buffer_priors = torch.cat(full_buffer['priors'], dim=0)
+        full_buffer_features = torch.cat(full_buffer['features'], dim=0).to(dtype=torch.float32)
+        full_buffer_locals = torch.cat(full_buffer['locals'], dim=0).to(dtype=torch.float32)
+        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0).to(dtype=torch.float32)
+        full_buffer_priors = torch.cat(full_buffer['priors'], dim=0).to(dtype=torch.float32)
         self.fprint(f"全局特征与先验提取完成，共 {len(full_buffer_features)} 个唯一特征点。")
 
         # --- 3. 遍历所有Block，按需筛选并分发数据进行预测 ---
