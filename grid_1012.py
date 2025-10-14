@@ -354,7 +354,7 @@ class Grid():
     
     def _visualize_predictions(self, pred_mu: torch.Tensor, gt_obj: torch.Tensor, epoch: int, stage: str, block_idx: int, vis_output_path: str):
         """
-        [新功能] 核心可视化函数，用于生成预测值与真值的散点图。
+        [新功能] 核心可视化函数，用于生成预测值与真值的二维空间散点图。
         
         Args:
             pred_mu (torch.Tensor): 模型的预测坐标 [B, 3, 16, 16]
@@ -381,35 +381,31 @@ class Grid():
             sampled_gts = gt_obj_np[sample_indices].reshape(-1, 3)
             
             # 2. 创建绘图
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+            fig, ax = plt.subplots(1, 1, figsize=(10, 10))
             fig.suptitle(f'Block {block_idx} | Epoch {epoch} | {stage.capitalize()} | {n_samples} Patches Sampled', fontsize=16)
 
-            # 绘制 X 坐标对比
-            ax1.scatter(sampled_gts[:, 0], sampled_preds[:, 0], alpha=0.5, s=5)
-            min_val_x = min(sampled_gts[:, 0].min(), sampled_preds[:, 0].min())
-            max_val_x = max(sampled_gts[:, 0].max(), sampled_preds[:, 0].max())
-            ax1.plot([min_val_x, max_val_x], [min_val_x, max_val_x], 'r--', label='y=x')
-            ax1.set_xlabel('Ground Truth X (m)')
-            ax1.set_ylabel('Predicted X (m)')
-            ax1.set_title('X Coordinate Comparison')
-            ax1.grid(True)
-            ax1.legend()
-            ax1.axis('equal')
+            # 绘制真值点 (蓝色)
+            ax.scatter(sampled_gts[:, 0], sampled_gts[:, 1], c='blue', label='Ground Truth', alpha=0.7, s=10, zorder=2)
+            
+            # 绘制预测点 (红色)
+            ax.scatter(sampled_preds[:, 0], sampled_preds[:, 1], c='red', label='Predicted', alpha=0.7, s=10, zorder=3)
 
-            # 绘制 Y 坐标对比
-            ax2.scatter(sampled_gts[:, 1], sampled_preds[:, 1], alpha=0.5, s=5)
-            min_val_y = min(sampled_gts[:, 1].min(), sampled_preds[:, 1].min())
-            max_val_y = max(sampled_gts[:, 1].max(), sampled_preds[:, 1].max())
-            ax2.plot([min_val_y, max_val_y], [min_val_y, max_val_y], 'r--', label='y=x')
-            ax2.set_xlabel('Ground Truth Y (m)')
-            ax2.set_ylabel('Predicted Y (m)')
-            ax2.set_title('Y Coordinate Comparison')
-            ax2.grid(True)
-            ax2.legend()
-            ax2.axis('equal')
+            # 如果只采样1个patch，则绘制误差向量连线
+            if n_samples == 1:
+                for i in range(len(sampled_gts)):
+                    ax.plot([sampled_gts[i, 0], sampled_preds[i, 0]], 
+                            [sampled_gts[i, 1], sampled_preds[i, 1]], 
+                            color='gray', linestyle='--', linewidth=0.5, zorder=1)
+
+            ax.set_xlabel('X Coordinate (m)')
+            ax.set_ylabel('Y Coordinate (m)')
+            ax.set_title('Prediction vs. Ground Truth Spatial Distribution')
+            ax.grid(True)
+            ax.legend()
+            ax.axis('equal') # 保持X和Y轴的比例一致
 
             # 3. 保存图像
-            save_path = os.path.join(vis_output_path, f'block_{block_idx}_epoch_{epoch}_{stage}_samples_{n_samples}.png')
+            save_path = os.path.join(vis_output_path, f'block_{block_idx}_epoch_{epoch}_{stage}_spatial_samples_{n_samples}.png')
             plt.savefig(save_path, dpi=150)
             plt.close(fig)
 
