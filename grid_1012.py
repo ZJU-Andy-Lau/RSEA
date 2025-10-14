@@ -691,13 +691,13 @@ class Grid():
         local_flat = local_hw2.reshape(-1, 2)
         dem_flat = dem.reshape(-1)
         lats, lons = rpc.RPC_PHOTO2OBJ(
-            torch.from_numpy(local_flat[:, 1]).to(self.device, dtype=torch.float32),
-            torch.from_numpy(local_flat[:, 0]).to(self.device, dtype=torch.float32),
-            torch.from_numpy(dem_flat).to(self.device, dtype=torch.float32)
+            local_flat[:, 1],
+            local_flat[:, 0],
+            dem_flat
         )
         xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
         prior_abs_flat = torch.cat([xy, torch.from_numpy(dem_flat).to(self.device, dtype=torch.float32).unsqueeze(-1)], dim=-1)
-        prior_abs_hw3 = prior_abs_flat.reshape(H, W, 3)
+        prior_abs_hw3 = prior_abs_flat.reshape(H, W, 3).cpu()
 
         # --- 2. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
         self.fprint("正在为预测影像提取全局特征...")
@@ -719,8 +719,8 @@ class Grid():
                 img_tensor = self.transform(img_tensor)
                 
                 features_b, confs_b = self.encoder(img_tensor)
-                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR, device=self.device)
-                prior_down = downsample(prior_crop.unsqueeze(0), self.SAMPLE_FACTOR, device=self.device)
+                local_down = downsample(torch.from_numpy(local_crop).unsqueeze(0), self.SAMPLE_FACTOR).to(self.device)
+                prior_down = downsample(prior_crop.unsqueeze(0), self.SAMPLE_FACTOR).to(self.device)
 
                 full_buffer['features'].append(features_b.permute(0, 2, 3, 1).reshape(-1, self.encoder.output_channels))
                 full_buffer['locals'].append(local_down.reshape(-1, 2))
