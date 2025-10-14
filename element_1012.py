@@ -154,6 +154,7 @@ class Element():
         
         return np.stack(crop_imgs), np.stack(crop_locals), np.stack(crop_dems)
     
+    @torch.no_grad()
     def __extract_and_unfold_patches__(self, crop_imgs_nhwc, crop_locals_nhw2, crop_dems_nhw, is_training: bool) -> Dict[str, torch.Tensor]:
         """
         [核心重构] 提取特征图，并立即使用unfold将其转换为patch格式的数据集。
@@ -213,7 +214,7 @@ class Element():
         }
 
         # --- 2. [核心新增] 使用unfold将特征图转换为Patch ---
-        patch_h, patch_w, patch_stride = 16, 16, 8
+        patch_h, patch_w, patch_stride = 16, 16, 16
         patch_buffer = {}
         
         for key, tensor in feature_maps.items():
