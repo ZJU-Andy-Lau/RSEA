@@ -429,6 +429,7 @@ class Grid():
         feature_batch = val_patches['features'][sample_indices].to(torch.float32)
         obj_batch = val_patches['objs'][sample_indices].to(torch.float32)
 
+        # [核心修改] 验证时，恢复为Patch内统一平移的噪声
         batch_size_val = obj_batch.shape[0]
         noise_per_patch_val = torch.randn(batch_size_val, 3, 1, 1, device=obj_batch.device, dtype=obj_batch.dtype)
         noise = noise_per_patch_val * self.options.validation_noise_std
@@ -470,7 +471,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构] 实现残差预测、完整Epoch遍历、修正负采样、简化RPC、Patch级噪声、增加可视化 """
+        """ [核心重构] 实现残差预测、完整Epoch遍历、修正负采样、简化RPC、增加可视化、调整噪声策略 """
         
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
@@ -608,8 +609,11 @@ class Grid():
                 progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 and warmup_ratio > 0 else 1.0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
-                noise_per_patch_pos = torch.randn(obj_pos.shape[0], 3, 1, 1, device=obj_pos.device, dtype=obj_pos.dtype) * current_noise_std
-                noisy_prior_patch = obj_pos + noise_per_patch_pos
+                # [核心修改] 恢复为像素级噪声，并使用0到最大值之间的均匀随机噪声大小
+                random_scale = torch.rand(obj_pos.shape[0], 1, 1, 1, device=obj_pos.device, dtype=obj_pos.dtype)
+                noise_magnitude = random_scale * current_noise_std
+                coord_noise = torch.randn_like(obj_pos) * noise_magnitude
+                noisy_prior_patch = obj_pos + coord_noise
                 
                 noisy_prior = noisy_prior_patch.permute(0, 2, 3, 1)
                 normalized_prior = self._normalize_coords(noisy_prior, block).permute(0, 3, 1, 2)
@@ -641,8 +645,11 @@ class Grid():
                     pos_perm = torch.randint(0, num_pos, (neg_sample_size,), device=self.device)
                     obj_for_neg = obj_batch[pos_perm]
 
-                    noise_per_patch_neg = torch.randn(obj_for_neg.shape[0], 3, 1, 1, device=obj_for_neg.device, dtype=obj_for_neg.dtype) * current_noise_std
-                    noisy_prior_patch_neg = obj_for_neg + noise_per_patch_neg
+                    # [核心修改] 为负样本应用与正样本相同的噪声逻辑
+                    random_scale_neg = torch.rand(obj_for_neg.shape[0], 1, 1, 1, device=obj_for_neg.device, dtype=obj_for_neg.dtype)
+                    noise_magnitude_neg = random_scale_neg * current_noise_std
+                    coord_noise_neg = torch.randn_like(obj_for_neg) * noise_magnitude_neg
+                    noisy_prior_patch_neg = obj_for_neg + coord_noise_neg
                     
                     noisy_prior_neg = noisy_prior_patch_neg.permute(0, 2, 3, 1)
                     normalized_prior_neg = self._normalize_coords(noisy_prior_neg, block).permute(0, 3, 1, 2)
