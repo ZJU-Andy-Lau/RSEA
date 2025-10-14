@@ -309,7 +309,7 @@ class RSEA():
 
         
         total_num = len(valid_scores)
-        _,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold= 50)
+        afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = 20)
         inliers = mask.ravel() == 1
 
         src = src[inliers]
@@ -321,6 +321,7 @@ class RSEA():
         # tgt_sigma = tgt_sigma[conf_valid_idx]
         # valid_scores = valid_scores[conf_valid_idx]
         print(f"valid filter :{inliers.sum()}/{valid_mask.sum()}/{total_num}")
+        print(f"cv2 afm : \n{afm}")
 
         fitted_matrix = fitter.fit(src,tgt_mu,tgt_sigma)
         # dis = np.linalg.norm(locals + (np.mean(targets,axis=0)[None] - np.mean(locals,axis=0)[None]) - targets,axis=-1)
