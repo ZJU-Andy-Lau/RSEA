@@ -763,8 +763,10 @@ class Grid():
 
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
+                print(f"1 : {normalized_prior_batch.shape} \t {feature_batch.shape}")
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
                 normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0, 3, 1, 2)
+                print(f"2 : {normalized_prior_img.shape} \t {feature_batch_img.shape}")
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)
