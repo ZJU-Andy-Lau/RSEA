@@ -727,22 +727,17 @@ class Grid():
                 full_buffer['confs'].append(confs_b.permute(0, 2, 3, 1).reshape(-1))
                 full_buffer['priors'].append(prior_down.reshape(-1, 3))
 
-        # 拼接列表成一个大的Tensor，并进行去重
-        all_locals_flat = torch.cat(full_buffer['locals'], dim=0)
-        _, unique_indices = np.unique(all_locals_flat.cpu().numpy(), axis=0, return_index=True)
         
-        full_buffer_features = torch.cat(full_buffer['features'], dim=0)[unique_indices]
-        full_buffer_locals = all_locals_flat[unique_indices]
-        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)[unique_indices]
-        full_buffer_priors = torch.cat(full_buffer['priors'], dim=0)[unique_indices]
+        full_buffer_features = torch.cat(full_buffer['features'], dim=0)
+        full_buffer_locals = torch.cat(full_buffer['locals'], dim=0)
+        full_buffer_confs = torch.cat(full_buffer['confs'], dim=0)
+        full_buffer_priors = torch.cat(full_buffer['priors'], dim=0)
         self.fprint(f"全局特征与先验提取完成，共 {len(full_buffer_features)} 个唯一特征点。")
 
         # --- 3. 遍历所有Block，按需筛选并分发数据进行预测 ---
         all_results = {'mu_xyh_P3': [], 'sigma_xyh_P3': [], 'locals_P2': [], 'confs_P1': [], 'valid_score_P1': []}
 
         for block in tqdm(self.blocks, desc="分区预测"):
-            if block.status != self.STATES.WELL_TRAINED:
-                continue
             block.mapper.eval().to(self.device)
 
             min_x, max_x = block.diag[0, 0], block.diag[1, 0]
