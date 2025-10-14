@@ -415,7 +415,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self,block_idx:int,task_info = None,save_checkpoint = True):
-        """ 核心训练函数 """
+        """ [核心修改] 重构后的核心训练函数 """
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
         mapper = block.mapper
@@ -424,11 +424,12 @@ class Grid():
                                      total_steps=self.options.grid_training_iters,
                                      warmup_ratio=self.options.grid_warmup_iters / self.options.grid_training_iters,
                                      cooldown_ratio=self.options.grid_cooldown_iters / self.options.grid_training_iters)
-        # --- [核心修改] 传递损失权重 ---
         criterion = CriterionTrainGrid(
             consistency_weight=self.options.consistency_weight,
             affine_weight=self.options.affine_weight
         )
+        bce_loss_fn = nn.BCEWithLogitsLoss()
+        valid_score_weight = 10.0
         
         mapper.train()
         min_loss = 1e8
@@ -439,7 +440,7 @@ class Grid():
         num_positive_samples = patches_per_batch // 2
         num_negative_samples = patches_per_batch - num_positive_samples
         
-        # --- 2. [高效向量化] 构建精确到Patch级别的正/负/验证样本索引 ---
+        # --- 2. 索引预处理 ---
         if task_info: self.update_task_state(task_info, {'status': f"Grid {task_info['id']}:Block {block_idx + 1} 索引预处理", 'total': len(self.elements), 'progress': 0})
         self.fprint(f"为Block {block_idx} 构建精确的Patch索引...")
         
@@ -448,9 +449,6 @@ class Grid():
         block_min_y, block_max_y = block.diag[1, 1], block.diag[0, 1]
 
         for element_idx, element in enumerate(self.elements):
-            # --- 恢复为基于Patch中心点的筛选方法 ---
-            
-            # 处理训练buffer
             if element.buffer and element.buffer['features'].numel() > 0:
                 objs_tensor = element.buffer['objs'].permute(0, 3, 1, 2)
                 patch_centers = F.avg_pool2d(objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
@@ -466,7 +464,6 @@ class Grid():
                 for i in range(len(neg_indices[0])):
                     negative_patches.append((element_idx, neg_indices[0][i].item(), neg_indices[1][i].item(), neg_indices[2][i].item()))
 
-            # 处理验证buffer
             if element.validation_buffer and element.validation_buffer['features'].numel() > 0:
                 val_objs_tensor = element.validation_buffer['objs'].permute(0, 3, 1, 2)
                 val_patch_centers = F.avg_pool2d(val_objs_tensor, kernel_size=(patch_h, patch_w), stride=1)
@@ -490,100 +487,132 @@ class Grid():
              num_positive_samples = patches_per_batch
              num_negative_samples = 0
         
+        # --- 3. 初始化训练UI ---
         vis_interval, val_interval = 500, 500
-        
         if task_info: self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':self.options.grid_training_iters, 'progress': 0})
         else:
             pbar = tqdm(total=self.options.grid_training_iters, desc=f"训练 Block {block_idx+1}")
-            
         latest_val_loss_obj = float('nan')
         
-        # --- 3. 主训练循环 ---
+        # --- 4. 主训练循环 ---
         for iter_idx in range(self.options.grid_training_iters):
             optimizer.zero_grad()
             
-            # --- 3a. 高效采样批次数据 ---
-            all_features, all_objs, all_confs, all_locals, all_element_indices = [], [], [], [], []
-            
+            # --- 4a. 分别采样正负样本数据 ---
+            # 正样本
+            pos_features, pos_objs, pos_confs, pos_locals, pos_element_indices = [], [], [], [], []
             pos_sample_indices = torch.randint(0, len(positive_patches), (num_positive_samples,))
             for i in pos_sample_indices:
                 element_idx, window_idx, y, x = positive_patches[i]
                 element = self.elements[element_idx]
-                all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                all_element_indices.append(element_idx)
+                pos_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                pos_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                pos_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                pos_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
+                pos_element_indices.append(element_idx)
+            
+            feature_batch_pos = torch.stack(pos_features).to(torch.float32)
+            obj_batch_pos = torch.stack(pos_objs).permute(0, 3, 1, 2).to(torch.float32)
+            conf_batch_pos = torch.stack(pos_confs).to(torch.float32)
+            local_batch_pos = torch.stack(pos_locals).permute(0, 3, 1, 2).to(torch.float32)
 
+            # 负样本
+            neg_features, neg_objs = [], []
             if num_negative_samples > 0:
                 neg_sample_indices = torch.randint(0, len(negative_patches), (num_negative_samples,))
                 for i in neg_sample_indices:
                     element_idx, window_idx, y, x = negative_patches[i]
                     element = self.elements[element_idx]
-                    all_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                    all_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                    all_confs.append(element.buffer['confs'][window_idx, :, y:y+patch_h, x:x+patch_w])
-                    all_locals.append(element.buffer['locals'][window_idx, y:y+patch_h, x:x+patch_w, :])
-                    all_element_indices.append(element_idx)
-            
-            feature_batch = torch.stack(all_features)
-            obj_batch_absolute = torch.stack(all_objs).permute(0, 3, 1, 2)
-            conf_batch = torch.stack(all_confs)
-            local_batch = torch.stack(all_locals).permute(0, 3, 1, 2)
+                    neg_features.append(element.buffer['features'][window_idx, :, y:y+patch_h, x:x+patch_w])
+                    neg_objs.append(element.buffer['objs'][window_idx, y:y+patch_h, x:x+patch_w, :]) # obj仅用于生成先验
+                
+                feature_batch_neg = torch.stack(neg_features).to(torch.float32)
+                obj_batch_neg = torch.stack(neg_objs).permute(0, 3, 1, 2).to(torch.float32)
 
-            # --- 显式转换所有批处理张量为 float32 ---
-            feature_batch = feature_batch.to(torch.float32)
-            obj_batch_absolute = obj_batch_absolute.to(torch.float32)
-            conf_batch = conf_batch.to(torch.float32)
-            local_batch = local_batch.to(torch.float32)
+            # --- 4b. 正样本数据增强: 数据倍增与特征噪声 ---
+            # 1. 数据倍增
+            feature_batch_pos = feature_batch_pos.repeat(2, 1, 1, 1)
+            obj_batch_pos = obj_batch_pos.repeat(2, 1, 1, 1)
+            conf_batch_pos = conf_batch_pos.repeat(2, 1, 1, 1)
+            local_batch_pos = local_batch_pos.repeat(2, 1, 1, 1)
+            pos_element_indices = pos_element_indices * 2
+
+            # 2. 生成并应用正交特征噪声
+            noise = torch.randn_like(feature_batch_pos)
+            proj = (torch.sum(feature_batch_pos * noise, dim=1, keepdim=True) / (torch.sum(feature_batch_pos * feature_batch_pos, dim=1, keepdim=True) + 1e-8)) * feature_batch_pos
+            orthogonal_noise = noise - proj
+            orthogonal_noise = F.normalize(orthogonal_noise, p=2, dim=1)
             
-            positive_labels = torch.ones(num_positive_samples, 1, patch_h, patch_w, device=self.device)
-            negative_labels = torch.zeros(num_negative_samples, 1, patch_h, patch_w, device=self.device)
-            valid_labels = torch.cat([positive_labels, negative_labels], dim=0).to(torch.float32)
-            
-            # --- 3b. [核心修改] 生成并融合含噪坐标先验 ---
-            # --- 课程学习动态噪声计算 ---
+            noisy_features = feature_batch_pos + self.options.feature_noise_level * orthogonal_noise
+            feature_batch_pos = F.normalize(noisy_features, p=2, dim=1)
+
+            # --- 4c. 准备模型输入 (正负样本) ---
             progress = iter_idx / self.options.grid_training_iters
             current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
             
-            noise = torch.randn_like(obj_batch_absolute) * current_noise_std
-            noisy_prior_absolute = obj_batch_absolute + noise
-            noisy_prior_absolute_nhw3 = noisy_prior_absolute.permute(0, 2, 3, 1)
-            normalized_prior_nhw3 = self._normalize_coords(noisy_prior_absolute_nhw3, block)
-            normalized_prior_n3hw = normalized_prior_nhw3.permute(0, 3, 1, 2)
-            mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
+            # 正样本输入
+            coord_noise_pos = torch.randn_like(obj_batch_pos) * current_noise_std
+            noisy_prior_pos = (obj_batch_pos + coord_noise_pos).permute(0, 2, 3, 1)
+            normalized_prior_pos = self._normalize_coords(noisy_prior_pos, block).permute(0, 3, 1, 2)
+            mapper_input_pos = torch.cat([feature_batch_pos, normalized_prior_pos], dim=1)
+            
+            # 负样本输入
+            if num_negative_samples > 0:
+                coord_noise_neg = torch.randn_like(obj_batch_neg) * current_noise_std
+                noisy_prior_neg = (obj_batch_neg + coord_noise_neg).permute(0, 2, 3, 1)
+                normalized_prior_neg = self._normalize_coords(noisy_prior_neg, block).permute(0, 3, 1, 2)
+                mapper_input_neg = torch.cat([feature_batch_neg, normalized_prior_neg], dim=1)
 
-            # --- 3c. 前向传播 ---
-            output_raw, valid_score_batch = mapper(mapper_input)
-            pred_mu_absolute = self.warp_by_poly(output_raw[:, :3, :, :], block.map_coeffs)
-            pred_log_sigma_batch = output_raw[:, 3:, :, :]
+            # --- 4d. 分离前向传播与损失计算 ---
+            optimizer.zero_grad()
+
+            # 正样本
+            output_raw_pos, valid_score_pos = mapper(mapper_input_pos)
+            pred_mu_absolute_pos = self.warp_by_poly(output_raw_pos[:, :3, :, :], block.map_coeffs)
+            pred_log_sigma_pos = output_raw_pos[:, 3:, :, :]
+            loss_regression, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_absolute_pos, pred_log_sigma_pos, obj_batch_pos, conf_batch_pos, local_batch_pos, self.elements, pos_element_indices)
             
-            # --- 3d. 计算损失 ---
-            loss, loss_details = criterion(iter_idx, self.options.grid_training_iters, pred_mu_absolute, pred_log_sigma_batch, obj_batch_absolute, conf_batch, local_batch, self.elements, all_element_indices, valid_score_batch, valid_labels, num_positive_samples)
+            # 负样本 (只计算valid_score)
+            if num_negative_samples > 0:
+                _, valid_score_neg = mapper(mapper_input_neg)
+                valid_scores_combined = torch.cat([valid_score_pos, valid_score_neg], dim=0)
+                labels_pos = torch.ones_like(valid_score_pos)
+                labels_neg = torch.zeros_like(valid_score_neg)
+                labels_combined = torch.cat([labels_pos, labels_neg], dim=0)
+            else:
+                valid_scores_combined = valid_score_pos
+                labels_combined = torch.ones_like(valid_score_pos)
             
-            # --- 3e. 反向传播与优化 ---
-            loss.backward()
+            loss_valid = bce_loss_fn(valid_scores_combined, labels_combined)
+            loss_details['v'] = loss_valid.item()
+
+            # 合并总损失
+            total_loss = loss_regression + loss_valid * valid_score_weight
+            
+            # --- 4e. 反向传播与优化 ---
+            total_loss.backward()
             optimizer.step()
             scheduler.step()
 
-            # --- 3f. 记录与日志 ---
-            if loss.item() < min_loss:
-                min_loss = loss.item()
+            # --- 4f. 记录与日志 ---
+            if total_loss.item() < min_loss:
+                min_loss = total_loss.item()
                 best_mapper_state_dict = deepcopy(mapper.state_dict())
             
-            info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{loss.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
+            info = { 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{total_loss.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
             
-            # --- 3g. 周期性验证 ---
+            # --- 4g. 周期性验证 ---
             if (iter_idx + 1) % val_interval == 0:
                 val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, iter_idx + 1, val_patch_indices)
                 if not np.isnan(val_rmse):
                     info['val_err'] = f'{val_rmse:.2f}'
                     latest_val_loss_obj = val_loss_obj
             
-            # --- 3h. 周期性可视化训练过程 ---
+            # --- 4h. 周期性可视化 ---
             if (iter_idx + 1) % vis_interval == 0:
-                true_coords_train = obj_batch_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
-                pred_coords_train = pred_mu_absolute[:num_positive_samples].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
+                vis_sample_count = num_positive_samples # 只可视化原始正样本数量
+                true_coords_train = obj_batch_pos[:vis_sample_count].permute(0, 2, 3, 1).reshape(-1, 3).cpu().numpy()
+                pred_coords_train = pred_mu_absolute_pos[:vis_sample_count].permute(0, 2, 3, 1).reshape(-1, 3).detach().cpu().numpy()
                 
                 plt.figure(figsize=(10, 10))
                 plt.scatter(true_coords_train[:, 0], true_coords_train[:, 1], s=5, c='blue', alpha=0.6, label='真实坐标')
@@ -775,7 +804,7 @@ class Grid():
                 # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
-                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1)
+                normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
                 mapper_input = torch.cat([feature_batch_img, normalized_prior_img], dim=1)
                 
                 output, valid_score = block.mapper(mapper_input)

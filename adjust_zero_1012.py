@@ -80,6 +80,9 @@ if __name__ == '__main__':
     parser.add_argument('--validation_noise_std', type=float, default=10.0,
                         help='验证时，为坐标先验注入的固定噪声水平 (单位:米).')
     
+    # [核心修改] 新增特征噪声等级参数
+    parser.add_argument('--feature_noise_level', type=float, default=0.1,
+                        help='为特征向量添加的正交噪声强度，以确保余弦相似度不低于0.9。')
 
     #=============================Element Training Params=============================
 
@@ -140,7 +143,6 @@ if __name__ == '__main__':
     parser.add_argument('--consistency_weight', type=float, default=50.0,
                         help='一阶平滑损失 (loss_consistency) 的权重.')
     
-    # [核心修改] 移除laplacian_weight, 添加affine_weight
     parser.add_argument('--affine_weight', type=float, default=1.0,
                         help='像方仿射一致性损失 (loss_affine) 的权重.')
 
