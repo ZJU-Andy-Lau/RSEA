@@ -78,6 +78,8 @@ class Element():
         self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW = self.__crop_validation_img__(crop_size=self.options.crop_size)
 
         self.SAMPLE_FACTOR = self.options.sample_factor
+        
+        # --- [核心修改] 在初始化时就将特征图转换为Patch数据集 ---
         self.buffer = self.__extract_and_unfold_patches__(self.train_crop_imgs_NHWC, self.train_crop_locals_NHW2, self.train_crop_dems_NHW, is_training=True)
         self.validation_buffer = self.__extract_and_unfold_patches__(self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW, is_training=False)
         
