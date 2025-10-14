@@ -695,9 +695,9 @@ class Grid():
             local_flat[:, 0],
             dem_flat
         )
-        xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
-        prior_abs_flat = torch.cat([xy, torch.from_numpy(dem_flat).to(self.device, dtype=torch.float32).unsqueeze(-1)], dim=-1)
-        prior_abs_hw3 = prior_abs_flat.reshape(H, W, 3).cpu()
+        xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]].to('cpu', dtype=torch.float32)
+        prior_abs_flat = torch.cat([xy, torch.from_numpy(dem_flat).to(dtype=torch.float32).unsqueeze(-1)], dim=-1)
+        prior_abs_hw3 = prior_abs_flat.reshape(H, W, 3)
 
         # --- 2. 一次性提取全图特征，构建一个“点云式”的全局Buffer ---
         self.fprint("正在为预测影像提取全局特征...")
