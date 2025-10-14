@@ -533,7 +533,7 @@ class Grid():
                 orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
                 noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
 
-                progress = current_total_iter / total_training_steps if total_training_steps > 0 else 0
+                progress = min(1.,2.* current_total_iter / total_training_steps) if total_training_steps > 0 else 0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
                 coord_noise = torch.randn_like(obj_pos) * current_noise_std
