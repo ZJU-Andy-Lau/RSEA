@@ -426,11 +426,9 @@ class Grid():
             
         sample_indices = torch.randperm(num_val_patches, device=self.device)[:val_batch_size]
 
-        # [核心修改 V3]: 确保数据类型为float
         feature_batch = val_patches['features'][sample_indices].to(torch.float32)
         obj_batch = val_patches['objs'][sample_indices].to(torch.float32)
 
-        # [核心修改 V3]: 生成Patch级统一平移噪声
         batch_size_val = obj_batch.shape[0]
         noise_per_patch_val = torch.randn(batch_size_val, 3, 1, 1, device=obj_batch.device, dtype=obj_batch.dtype)
         noise = noise_per_patch_val * self.options.validation_noise_std
@@ -443,11 +441,13 @@ class Grid():
         mapper_input = torch.cat([feature_batch, normalized_prior_n3hw], dim=1)
         
         output_raw, _ = mapper(mapper_input)
-        
-        output_raw_flat = output_raw.permute(0, 2, 3, 1)
-        pred_mu_absolute = self.warp_by_poly(output_raw_flat[...,:3], block.map_coeffs).permute(0, 3, 1, 2)
 
-        # [新功能]: 验证阶段的可视化触发
+        # [核心修改] 实现残差预测逻辑
+        pred_residual_normalized_val = output_raw[:, :3, ...]
+        normalized_prior_val = mapper_input[:, -3:, ...]
+        corrected_normalized_val = normalized_prior_val + pred_residual_normalized_val
+        pred_mu_absolute = self.warp_by_poly(corrected_normalized_val.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
+
         if self.options.visualization_epoch_interval > 0 and epoch % self.options.visualization_epoch_interval == 0:
             self.fprint(f"Epoch {epoch}: 生成验证阶段可视化图...")
             self._visualize_predictions(
@@ -469,7 +469,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构 V3] 完整Epoch遍历，修正负采样，简化RPC传递, Patch级噪声, 增加可视化 """
+        """ [核心重构] 实现残差预测、完整Epoch遍历、修正负采样、简化RPC、Patch级噪声、增加可视化 """
         
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
@@ -487,7 +487,6 @@ class Grid():
         min_loss = 1e8
         best_mapper_state_dict = None
 
-        # [新功能]: 创建可视化输出目录
         vis_output_path = os.path.join(self.output_path, 'visualization')
         if self.options.visualization_epoch_interval > 0:
             os.makedirs(vis_output_path, exist_ok=True)
@@ -518,8 +517,8 @@ class Grid():
             obj_patches = element_data['objs']
             centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
             
-            pos_mask = (centers[:, 0] >= block.border[0] + 16.) & (centers[:, 0] < block.border[2] - 16.) & \
-                       (centers[:, 1] >= block.border[1] + 16.) & (centers[:, 1] < block.border[3] - 16.)
+            pos_mask = (centers[:, 0] >= block.border[0]) & (centers[:, 0] < block.border[2]) & \
+                       (centers[:, 1] >= block.border[1]) & (centers[:, 1] < block.border[3])
             
             valid_pos_indices = torch.where(pos_mask)[0]
             if valid_pos_indices.numel() > 0:
@@ -534,8 +533,8 @@ class Grid():
             val_obj_patches = val_patches['objs']
             val_centers = F.avg_pool2d(val_obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
             
-            val_pos_mask = (val_centers[:, 0] >= block.border[0] + 16.) & (val_centers[:, 0] < block.border[2] - 16.) & \
-                           (val_centers[:, 1] >= block.border[1] + 16.) & (val_centers[:, 1] < block.border[3] - 16.)
+            val_pos_mask = (val_centers[:, 0] >= block.border[0]) & (val_centers[:, 0] < block.border[2]) & \
+                           (val_centers[:, 1] >= block.border[1]) & (val_centers[:, 1] < block.border[3])
                            
             val_indices_for_block = torch.where(val_pos_mask)[0].to(self.device)
 
@@ -608,7 +607,6 @@ class Grid():
                 progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 and warmup_ratio > 0 else 1.0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
-                # 生成Patch级统一平移噪声
                 noise_per_patch_pos = torch.randn(obj_pos.shape[0], 3, 1, 1, device=obj_pos.device, dtype=obj_pos.dtype) * current_noise_std
                 noisy_prior_patch = obj_pos + noise_per_patch_pos
                 
@@ -618,10 +616,12 @@ class Grid():
                 
                 output_raw_pos, valid_score_pos = mapper(mapper_input_pos)
                 
-                output_raw_flat = output_raw_pos.permute(0, 2, 3, 1)
-                pred_mu_pos = self.warp_by_poly(output_raw_flat[...,:3], block.map_coeffs).permute(0, 3, 1, 2)
-                pred_log_sigma_pos = output_raw_flat[...,3:].permute(0, 3, 1, 2)
-                
+                # [核心修改] 实现残差预测逻辑
+                pred_residual_normalized = output_raw_pos[:, :3, ...]
+                corrected_normalized = normalized_prior + pred_residual_normalized
+                pred_mu_pos = self.warp_by_poly(corrected_normalized.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
+                pred_log_sigma_pos = output_raw_pos.permute(0, 2, 3, 1)[..., 3:].permute(0, 3, 1, 2)
+
                 loss_regression, loss_details = criterion(epoch, self.options.num_epochs, pred_mu_pos, pred_log_sigma_pos, obj_pos, conf_pos, local_pos, current_rpc)
                 
                 # 负样本处理
@@ -660,7 +660,6 @@ class Grid():
                 optimizer.step()
                 scheduler.step()
                 
-                # [新功能]: 训练阶段的可视化触发
                 is_last_batch_of_epoch = (batch_idx == len(all_batches_shuffled) - 1)
                 if self.options.visualization_epoch_interval > 0 and (epoch + 1) % self.options.visualization_epoch_interval == 0 and is_last_batch_of_epoch:
                     self.fprint(f"Epoch {epoch+1}: 生成训练阶段可视化图...")
@@ -857,13 +856,12 @@ class Grid():
             block_priors = full_buffer_priors[mask]
 
             num_points = len(block_features)
-            batch_size = self.options.mapper_batch_size * 16 * 16 
+            batch_size = self.options.mapper_batch_size * 16 * 16
             
             for i in range(0, num_points, batch_size):
                 feature_batch = block_features[i:i+batch_size]
                 prior_batch = block_priors[i:i+batch_size]
 
-                # [核心修改] 归一化坐标先验并与特征拼接
                 normalized_prior_batch = self._normalize_coords(prior_batch, block)
                 feature_batch_img = feature_batch.unsqueeze(-1).unsqueeze(-1)
                 normalized_prior_img = normalized_prior_batch.unsqueeze(-1).unsqueeze(-1).permute(0,3,1,2)
@@ -871,11 +869,14 @@ class Grid():
                 
                 output, valid_score = block.mapper(mapper_input)
                 
-                output_flat = output.permute(0, 2, 3, 1).reshape(-1, 6)
+                # [核心修改] 实现残差预测逻辑
+                pred_residual_normalized = output[:, :3, ...]
+                corrected_normalized = normalized_prior_img + pred_residual_normalized
+                corrected_normalized_flat = corrected_normalized.permute(0, 2, 3, 1).reshape(-1, 3)
+                pred_mu_flat = self.warp_by_poly(corrected_normalized_flat, block.map_coeffs)
+                
                 valid_score_flat = valid_score.permute(0, 2, 3, 1).reshape(-1)
-
-                pred_mu_flat = self.warp_by_poly(output_flat[:, :3], block.map_coeffs)
-                pred_sigma_flat = torch.exp(output_flat[:, 3:])
+                pred_sigma_flat = torch.exp(output.permute(0, 2, 3, 1).reshape(-1, 6)[:, 3:])
 
                 all_results['mu_xyh_P3'].append(pred_mu_flat)
                 all_results['sigma_xyh_P3'].append(pred_sigma_flat)
