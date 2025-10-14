@@ -442,11 +442,12 @@ class Grid():
         
         output_raw, _ = mapper(mapper_input)
 
-        # [核心修改] 实现残差预测逻辑
+        # [核心修改] 实现残差预测逻辑并使用tanh约束值域
         pred_residual_normalized_val = output_raw[:, :3, ...]
         normalized_prior_val = mapper_input[:, -3:, ...]
-        corrected_normalized_val = normalized_prior_val + pred_residual_normalized_val
-        pred_mu_absolute = self.warp_by_poly(corrected_normalized_val.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
+        fused_normalized_val = normalized_prior_val + pred_residual_normalized_val
+        clamped_fused_normalized_val = torch.tanh(fused_normalized_val)
+        pred_mu_absolute = self.warp_by_poly(clamped_fused_normalized_val.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
 
         if self.options.visualization_epoch_interval > 0 and epoch % self.options.visualization_epoch_interval == 0:
             self.fprint(f"Epoch {epoch}: 生成验证阶段可视化图...")
@@ -616,10 +617,11 @@ class Grid():
                 
                 output_raw_pos, valid_score_pos = mapper(mapper_input_pos)
                 
-                # [核心修改] 实现残差预测逻辑
+                # [核心修改] 实现残差预测逻辑并使用tanh约束值域
                 pred_residual_normalized = output_raw_pos[:, :3, ...]
-                corrected_normalized = normalized_prior + pred_residual_normalized
-                pred_mu_pos = self.warp_by_poly(corrected_normalized.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
+                fused_normalized = normalized_prior + pred_residual_normalized
+                clamped_fused_normalized = torch.tanh(fused_normalized)
+                pred_mu_pos = self.warp_by_poly(clamped_fused_normalized.permute(0, 2, 3, 1), block.map_coeffs).permute(0, 3, 1, 2)
                 pred_log_sigma_pos = output_raw_pos.permute(0, 2, 3, 1)[..., 3:].permute(0, 3, 1, 2)
 
                 loss_regression, loss_details = criterion(epoch, self.options.num_epochs, pred_mu_pos, pred_log_sigma_pos, obj_pos, conf_pos, local_pos, current_rpc)
@@ -869,10 +871,12 @@ class Grid():
                 
                 output, valid_score = block.mapper(mapper_input)
                 
-                # [核心修改] 实现残差预测逻辑
+                # [核心修改] 实现残差预测逻辑并使用tanh约束值域
                 pred_residual_normalized = output[:, :3, ...]
-                corrected_normalized = normalized_prior_img + pred_residual_normalized
-                corrected_normalized_flat = corrected_normalized.permute(0, 2, 3, 1).reshape(-1, 3)
+                fused_normalized = normalized_prior_img + pred_residual_normalized
+                clamped_fused_normalized = torch.tanh(fused_normalized)
+                
+                corrected_normalized_flat = clamped_fused_normalized.permute(0, 2, 3, 1).reshape(-1, 3)
                 pred_mu_flat = self.warp_by_poly(corrected_normalized_flat, block.map_coeffs)
                 
                 valid_score_flat = valid_score.permute(0, 2, 3, 1).reshape(-1)
