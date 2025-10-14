@@ -161,58 +161,50 @@ class Grid():
 
     def get_height_map_coeffs(self):
         """
-        [核心修改] 根据所有Element Buffer中的数据，为每个Block估计高度多项式系数，并计算真实高程范围 (h_min, h_max)。
+        根据所有Element Buffer中的数据，为每个Block估计高度多项式系数，并计算真实高程范围 (h_min, h_max)。
         """
-        # [核心修改] 调整数据访问方式以匹配Patch Buffer的 (N, C, H, W) 格式
-        heights_list = [el.buffer['objs'][:, 2, ...].flatten() for el in self.elements if el.buffer and 'objs' in el.buffer]
-        if not heights_list: 
+        # 确保有elements
+        if not self.elements:
+            self.fprint("警告: 没有任何Element，无法计算高程系数。")
+            return
+
+        # 收集所有patch的中心点坐标和高程
+        all_centers_list = []
+        all_heights_list = []
+        for el in self.elements:
+            if el.buffer and 'objs' in el.buffer and el.buffer['objs'].numel() > 0:
+                obj_patches = el.buffer['objs']
+                centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
+                all_centers_list.append(centers)
+                all_heights_list.append(obj_patches[:, 2, ...].flatten())
+
+        if not all_centers_list:
             self.fprint("警告: 没有任何Element Buffer包含高度信息，无法计算高程系数。")
             return
         
-        heights_all = torch.cat(heights_list)
-        # [核心修改] 调整数据访问方式
-        xys_list = [el.buffer['objs'][:, :2, ...].permute(0, 2, 3, 1).reshape(-1, 2) for el in self.elements if el.buffer and 'objs' in el.buffer]
-        xys_all = torch.cat(xys_list)
+        all_centers = torch.cat(all_centers_list)
+        all_heights = torch.cat(all_heights_list)
 
-        global_h_min = heights_all.min().item()
-        global_h_max = heights_all.max().item()
+        global_h_min = all_heights.min().item()
+        global_h_max = all_heights.max().item()
 
         for block in self.blocks:
-            # 使用PyTorch进行高效的掩码操作
-            mask = (xys_all[:,0] >= block.diag[0,0]) & (xys_all[:,1] <= block.diag[0,1]) & \
-                   (xys_all[:,0] < block.diag[1,0]) & (xys_all[:,1] > block.diag[1,1])
-            
+            mask = (all_centers[:, 0] >= block.border[0]) & (all_centers[:, 0] < block.border[2]) & \
+                   (all_centers[:, 1] >= block.border[1]) & (all_centers[:, 1] < block.border[3])
+
             points_in_block = mask.sum().item()
             
-            if points_in_block > 10: # 确保有足够的数据点
-                # 注意：这里需要从原始的heights_all中索引，因为xys_all已经被展平了
-                # 为了简化，我们重新计算一次在块内的所有点的高程统计
-                heights_in_block_list = []
-                for el in self.elements:
-                     if el.buffer and 'objs' in el.buffer:
-                        obj_patches = el.buffer['objs']
-                        centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
-                        block_mask = (centers[:, 0] >= block.border[0]) & (centers[:, 0] < block.border[2]) & \
-                                     (centers[:, 1] >= block.border[1]) & (centers[:, 1] < block.border[3])
-                        if block_mask.any():
-                            heights_in_block_list.append(obj_patches[block_mask][:, 2, ...].flatten())
-                
-                if heights_in_block_list:
-                    heights_in_block = torch.cat(heights_in_block_list)
-                    block.map_coeffs['h'] = get_map_coef(heights_in_block.cpu().numpy())
-                    block.map_coeffs['h_min'] = heights_in_block.min().item()
-                    block.map_coeffs['h_max'] = heights_in_block.max().item()
-                else:
-                    # Fallback if no patch centers are in the block (edge case)
-                    block.map_coeffs['h'] = get_map_coef(heights_all.cpu().numpy())
-                    block.map_coeffs['h_min'] = global_h_min
-                    block.map_coeffs['h_max'] = global_h_max
+            if points_in_block > 10: 
+                heights_in_block = all_heights[mask]
+                block.map_coeffs['h'] = get_map_coef(heights_in_block.cpu().numpy())
+                block.map_coeffs['h_min'] = heights_in_block.min().item()
+                block.map_coeffs['h_max'] = heights_in_block.max().item()
             else:
-                # 如果块内数据太少，使用全局统计作为回退
                 self.fprint(f"警告: Block {self.blocks.index(block)} 内只有 {points_in_block} 个数据点，使用全局高程统计。")
-                block.map_coeffs['h'] = get_map_coef(heights_all.cpu().numpy())
+                block.map_coeffs['h'] = get_map_coef(all_heights.cpu().numpy())
                 block.map_coeffs['h_min'] = global_h_min
                 block.map_coeffs['h_max'] = global_h_max
+
 
     def add_img(self,img:RSImage):
         """添加一张用于训练的影像"""
@@ -293,7 +285,7 @@ class Grid():
         self.get_height_map_coeffs()
         self.visualize_block_assignment()
         for block_idx in range(len(self.blocks)):
-            if self.blocks[block_idx].map_coeffs['h_min'] is None:
+            if self.blocks[block_idx].map_coeffs.get('h_min') is None:
                 self.fprint(f"错误: Block {block_idx} 未能成功计算高程范围，跳过训练。")
                 continue
             self.train_mapper(block_idx,task_info)
@@ -373,7 +365,10 @@ class Grid():
         feature_batch = val_patches['features'][sample_indices].to(torch.float32)
         obj_batch = val_patches['objs'][sample_indices].to(torch.float32)
 
-        noise = torch.randn_like(obj_batch) * self.options.validation_noise_std
+        # [核心修改 V3]: 生成Patch级统一平移噪声
+        batch_size_val = obj_batch.shape[0]
+        noise_per_patch_val = torch.randn(batch_size_val, 3, 1, 1, device=obj_batch.device, dtype=obj_batch.dtype)
+        noise = noise_per_patch_val * self.options.validation_noise_std
         noisy_prior_absolute_val = obj_batch + noise
         
         noisy_prior_nhw3_val = noisy_prior_absolute_val.permute(0, 2, 3, 1)
@@ -397,7 +392,7 @@ class Grid():
         return val_rmse, np.sqrt(val_loss_obj)
 
     def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构 V3] 完整Epoch遍历，修正负采样，简化RPC传递 """
+        """ [核心重构 V3] 完整Epoch遍历，修正负采样，简化RPC传递, Patch级噪声 """
         
         # --- 1. 初始化 ---
         block = self.blocks[block_idx]
@@ -471,15 +466,19 @@ class Grid():
             return
         
         # --- 4. 训练循环设置 ---
-        total_patches_in_block = sum(len(indices) for indices in train_indices_for_block.values())
-        total_training_steps = (total_patches_in_block // self.options.mapper_batch_size + 1) * self.options.num_epochs
+        all_batches = []
+        for eid, indices in train_indices_for_block.items():
+            for i in range(0, len(indices), self.options.mapper_batch_size):
+                all_batches.append((eid, i))
+        
+        total_training_steps = len(all_batches) * self.options.num_epochs
         
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
                                      total_steps=total_training_steps,
                                      warmup_ratio=self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0,
                                      cooldown_ratio=self.options.grid_cooldown_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0)
 
-        self.fprint(f"Block {block_idx} 索引构建完成. 每个Epoch包含 {total_patches_in_block} 个Patches. 总训练步数: {total_training_steps}")
+        self.fprint(f"Block {block_idx} 索引构建完成. 每个Epoch包含 {len(all_batches)} 个批次. 总训练步数: {total_training_steps}")
 
         if task_info: 
             self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':total_training_steps, 'progress': 0})
@@ -487,35 +486,21 @@ class Grid():
             pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
         
         latest_val_loss_obj = float('nan')
+        warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs
         current_total_iter = 0
 
         # --- 5. Epoch-based 训练循环 ---
         for epoch in range(self.options.num_epochs):
-            shuffled_indices_per_element = {
-                eid: indices[torch.randperm(len(indices))] 
-                for eid, indices in train_indices_for_block.items()
-            }
-            
-            element_iters = {
-                eid: range(0, len(indices), self.options.mapper_batch_size)
-                for eid, indices in shuffled_indices_per_element.items()
-            }
-            
-            # 简单地混合来自不同element的batch
-            all_batches = []
-            for eid, it_range in element_iters.items():
-                for i in it_range:
-                    all_batches.append((eid, i))
-            random.shuffle(all_batches)
+            random.shuffle(all_batches) # 每个epoch都打乱批次顺序
 
             for element_id, i in all_batches:
                 optimizer.zero_grad()
                 
-                shuffled_indices = shuffled_indices_per_element[element_id]
+                indices = train_indices_for_block[element_id]
                 element_patches = all_element_patches[element_id]
                 current_rpc = self.elements[element_id].rpc
                 
-                indices_to_sample = shuffled_indices[i : i + self.options.mapper_batch_size]
+                indices_to_sample = indices[i : i + self.options.mapper_batch_size]
                 
                 feature_batch = element_patches['features'][indices_to_sample].to(torch.float32)
                 obj_batch = element_patches['objs'][indices_to_sample].to(torch.float32)
@@ -533,11 +518,14 @@ class Grid():
                 orthogonal_noise = F.normalize(noise - proj, p=2, dim=1)
                 noisy_features = F.normalize(feature_pos + self.options.feature_noise_level * orthogonal_noise, p=2, dim=1)
 
-                progress = min(1.,2.* current_total_iter / total_training_steps) if total_training_steps > 0 else 0
+                progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 else 0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
-                coord_noise = torch.randn_like(obj_pos) * current_noise_std
-                noisy_prior = (obj_pos + coord_noise).permute(0, 2, 3, 1)
+                # 生成Patch级统一平移噪声
+                noise_per_patch_pos = torch.randn(obj_pos.shape[0], 3, 1, 1, device=obj_pos.device, dtype=obj_pos.dtype) * current_noise_std
+                noisy_prior_patch = obj_pos + noise_per_patch_pos
+                
+                noisy_prior = noisy_prior_patch.permute(0, 2, 3, 1)
                 normalized_prior = self._normalize_coords(noisy_prior, block).permute(0, 3, 1, 2)
                 mapper_input_pos = torch.cat([noisy_features, normalized_prior], dim=1)
                 
@@ -564,8 +552,10 @@ class Grid():
                     pos_perm = torch.randint(0, num_pos, (neg_sample_size,), device=self.device)
                     obj_for_neg = obj_batch[pos_perm]
 
-                    coord_noise_neg = torch.randn_like(obj_for_neg) * current_noise_std
-                    noisy_prior_neg = (obj_for_neg + coord_noise_neg).permute(0, 2, 3, 1)
+                    noise_per_patch_neg = torch.randn(obj_for_neg.shape[0], 3, 1, 1, device=obj_for_neg.device, dtype=obj_for_neg.dtype) * current_noise_std
+                    noisy_prior_patch_neg = obj_for_neg + noise_per_patch_neg
+                    
+                    noisy_prior_neg = noisy_prior_patch_neg.permute(0, 2, 3, 1)
                     normalized_prior_neg = self._normalize_coords(noisy_prior_neg, block).permute(0, 3, 1, 2)
                     mapper_input_neg = torch.cat([feature_neg, normalized_prior_neg], dim=1)
                     valid_score_neg = mapper.forward_valid(mapper_input_neg)
