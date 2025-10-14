@@ -70,7 +70,7 @@ if __name__ == '__main__':
     parser.add_argument('--sample_factor', type=int, default=16,
                         help='Downsampling factor of the encoder feature map.')
     
-    # ============================= [核心修改] 新增坐标先验与损失控制参数 =============================
+    # ============================= 坐标先验与损失控制参数 =============================
     parser.add_argument('--prior_noise_min', type=float, default=1.0,
                         help='课程学习中，坐标先验噪声的初始最小值 (单位:米).')
     
@@ -140,8 +140,9 @@ if __name__ == '__main__':
     parser.add_argument('--consistency_weight', type=float, default=50.0,
                         help='一阶平滑损失 (loss_consistency) 的权重.')
     
-    parser.add_argument('--laplacian_weight', type=float, default=10.0,
-                        help='二阶平滑损失 (loss_laplacian) 的权重.')
+    # [核心修改] 移除laplacian_weight, 添加affine_weight
+    parser.add_argument('--affine_weight', type=float, default=1.0,
+                        help='像方仿射一致性损失 (loss_affine) 的权重.')
 
     parser.add_argument('--resume_training',type=str2bool,default=False)
 

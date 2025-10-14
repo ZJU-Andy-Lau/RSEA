@@ -427,7 +427,7 @@ class Grid():
         # --- [核心修改] 传递损失权重 ---
         criterion = CriterionTrainGrid(
             consistency_weight=self.options.consistency_weight,
-            laplacian_weight=self.options.laplacian_weight
+            affine_weight=self.options.affine_weight
         )
         
         mapper.train()
