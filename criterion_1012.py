@@ -100,7 +100,7 @@ class CriterionTrainGrid(nn.Module):
             linesamp_gt_flat = linesamp_gt_group.permute(0, 2, 3, 1).reshape(-1, 2)
 
             latlon_pred_flat = mercator2lonlat(pred_xyh_flat[:, [1, 0]])
-            linesamp_pred_flat = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred_flat[:, 0], latlon_pred_flat[:, 1], pred_xyh_flat[:, 2]), dim=1)[:, [1, 0]]
+            linesamp_pred_flat = torch.stack(rpc.RPC_OBJ2PHOTO(latlon_pred_flat[:, 0], latlon_pred_flat[:, 1], pred_xyh_flat[:, 2]), dim=1)[:, [1, 0]].to(torch.float32)
             
             reprojection_error_pixels = torch.norm(linesamp_pred_flat - linesamp_gt_flat, dim=1)
             loss_photo_group = reprojection_error_pixels.mean()
