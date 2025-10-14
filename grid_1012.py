@@ -338,7 +338,7 @@ class Grid():
         mapper.eval()
         
         num_val_patches = len(val_patches['features'])
-        val_batch_size = min(self.options.batch_size, num_val_patches)
+        val_batch_size = min(self.options.mapper_batch_size, num_val_patches)
         
         if val_batch_size == 0:
             mapper.train()
@@ -399,10 +399,10 @@ class Grid():
         # --- 2. 数据预处理：构建离线Patch数据集 ---
         self.fprint(f"为Block {block_idx} 构建离线Patch数据集...")
         all_element_patches = []
+        val_patches = {}
         max_patches_in_element = 0
 
         for element in self.elements:
-            # 分别处理训练和验证数据
             for buffer_type, buffer in [('train', element.buffer), ('val', element.validation_buffer)]:
                 if not (buffer and buffer['features'].numel() > 0):
                     continue
@@ -416,27 +416,31 @@ class Grid():
                     B, C, H, W = tensor.shape
                     unfolded = F.unfold(tensor, kernel_size=(patch_h, patch_w), stride=patch_stride)
                     
+                    num_patches = unfolded.shape[-1]
                     if key == 'confs':
-                         unfolded = unfolded.reshape(B, 1, patch_h, patch_w, -1)
+                         unfolded = unfolded.reshape(B, 1 * patch_h * patch_w, num_patches)
                     else:
-                        unfolded = unfolded.reshape(B, C, patch_h, patch_w, -1)
+                        unfolded = unfolded.reshape(B, C * patch_h * patch_w, num_patches)
 
-                    unfolded = unfolded.permute(0, 4, 1, 2, 3).reshape(-1, C, patch_h, patch_w)
+                    unfolded = unfolded.permute(0, 2, 1).reshape(-1, C, patch_h, patch_w)
                     element_data[key] = unfolded
-                
-                element_data['element_idx'] = torch.full((len(unfolded),), element.id, device=self.device)
                 
                 if buffer_type == 'train':
                     all_element_patches.append(element_data)
                     max_patches_in_element = max(max_patches_in_element, len(unfolded))
-                else: # 验证数据单独存储
-                    val_patches = element_data
+                else: 
+                    # 将所有element的验证patch合并
+                    if not val_patches:
+                        val_patches = element_data
+                    else:
+                        for key in val_patches:
+                            val_patches[key] = torch.cat([val_patches[key], element_data[key]], dim=0)
 
         if not all_element_patches:
             self.fprint(f"错误：未能为Block {block_idx} 提取任何训练Patch，跳过。")
             return
             
-        iters_per_epoch = max(1, max_patches_in_element // self.options.batch_size)
+        iters_per_epoch = max(1, max_patches_in_element // self.options.mapper_batch_size)
         total_training_steps = iters_per_epoch * self.options.num_epochs
         
         scheduler = MultiStageOneCycleLR(optimizer=optimizer,
@@ -464,8 +468,8 @@ class Grid():
                 # --- 4a. 内层循环：梯度累积 ---
                 for element_id, element_patches in enumerate(all_element_patches):
                     num_patches_in_element = len(element_patches['features'])
-                    start_idx = (iter_idx * self.options.batch_size) % num_patches_in_element
-                    end_idx = start_idx + self.options.batch_size
+                    start_idx = (iter_idx * self.options.mapper_batch_size) % num_patches_in_element
+                    end_idx = start_idx + self.options.mapper_batch_size
                     
                     indices_to_sample = shuffled_indices_per_element[element_id][start_idx:end_idx]
                     if len(indices_to_sample) == 0: continue
@@ -474,9 +478,9 @@ class Grid():
                     obj_batch = element_patches['objs'][indices_to_sample]
                     conf_batch = element_patches['confs'][indices_to_sample]
                     local_batch = element_patches['locals'][indices_to_sample]
-                    element_indices_batch = [element_id] * len(indices_to_sample)
                     
                     patch_centers = F.avg_pool2d(obj_batch, kernel_size=(patch_h, patch_w)).squeeze()
+                    if patch_centers.ndim == 1: patch_centers = patch_centers.unsqueeze(0)
                     pos_mask = (patch_centers[:, 0] >= block.border[0]) & (patch_centers[:, 0] < block.border[2]) & \
                                (patch_centers[:, 1] >= block.border[1]) & (patch_centers[:, 1] < block.border[3])
                     neg_mask = ~pos_mask
@@ -490,7 +494,7 @@ class Grid():
                         obj_pos = obj_batch[pos_mask].repeat(2, 1, 1, 1)
                         conf_pos = conf_batch[pos_mask].repeat(2, 1, 1, 1)
                         local_pos = local_batch[pos_mask].repeat(2, 1, 1, 1)
-                        indices_pos = [element_indices_batch[i] for i, flag in enumerate(pos_mask) if flag] * 2
+                        indices_pos = [element_id] * pos_mask.sum().item() * 2
 
                         noise = torch.randn_like(feature_pos)
                         proj = torch.sum(feature_pos * noise, dim=1, keepdim=True) / (torch.sum(feature_pos * feature_pos, dim=1, keepdim=True) + 1e-8) * feature_pos
@@ -540,14 +544,13 @@ class Grid():
                     min_loss = total_loss_for_element.item()
                     best_mapper_state_dict = deepcopy(mapper.state_dict())
                 
+                info = { 'e': f'{epoch+1}', 'me': f'{self.options.num_epochs}', 'i': f'{iter_idx+1}', 'mi': f'{iters_per_epoch}', 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{total_loss_for_element.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
                 if task_info:
-                    info = { 'e': f'{epoch+1}', 'me': f'{self.options.num_epochs}', 'i': f'{iter_idx+1}', 'mi': f'{iters_per_epoch}', 'lr':f'{scheduler.get_last_lr()[0]:.2e}', 'loss': f'{total_loss_for_element.item():.2f}', **{k: f'{v:.2f}' for k, v in loss_details.items()}, 'val_obj': f'{latest_val_loss_obj:.2f}'}
                     self.update_task_state(task_info, {'progress': current_total_iter + 1, 'info': info})
                 else:
                     pbar.update(1)
                     pbar.set_postfix(info)
             
-            # --- 4h. Epoch结束时进行验证 ---
             if (epoch + 1) % self.options.validation_epoch_interval == 0:
                 val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, (epoch + 1) * iters_per_epoch, val_patches)
                 if not np.isnan(val_rmse):
@@ -716,7 +719,7 @@ class Grid():
             block_priors = full_buffer_priors[mask]
 
             num_points = len(block_features)
-            batch_size = self.options.batch_size * 16 * 16 
+            batch_size = self.options.mapper_batch_size * 16 * 16 
             
             for i in range(0, num_points, batch_size):
                 feature_batch = block_features[i:i+batch_size]

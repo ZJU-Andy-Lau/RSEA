@@ -41,27 +41,20 @@ class Element():
         self.verbose = verbose
         self.device = device if device is not None else 'cuda'
         
-        # 存储原始数据
         self.img_raw = img_raw
         cv2.imwrite(os.path.join(output_path,f'img_{id}.png'),img_raw)
         
-        # top_left_linesamp: 影像块在原始大图中的左上角像素坐标
-        self.top_left_linesamp = top_left_linesamp if top_left_linesamp is not None else np.array([0.,0.])
-        
-        # local_raw: 一个与影像块同样大小的坐标网格，存储每个像素在原始大图中的绝对像素坐标
         if local_raw is None:
             self.local_raw = get_coord_mat(self.img_raw.shape[0],self.img_raw.shape[1])
-            self.local_raw += self.top_left_linesamp
+            self.local_raw += top_left_linesamp if top_left_linesamp is not None else np.array([0.,0.])
         else:
             self.local_raw = local_raw
-            self.top_left_linesamp = local_raw[0,0]
             
         self.dem = dem
         self.rpc = rpc
         self.H,self.W = self.img_raw.shape[:2]
         
-        # --- [核心修改] 分离训练和验证的图像变换流程 ---
-        # 训练变换：包含随机数据增强
+        # --- 训练和验证的图像变换流程 ---
         self.train_transform = nn.Sequential(
             K.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=.3),
             K.RandomGaussianBlur(kernel_size=(3, 3), sigma=(0.1, 2.0), p=0.2),
@@ -71,7 +64,6 @@ class Element():
                 std=torch.tensor([0.229, 0.224, 0.225])
             ),
         )
-        # 验证变换：只包含确定性的归一化操作
         self.val_transform = nn.Sequential(
             K.Normalize(
                 mean=torch.tensor([0.485, 0.456, 0.406]), 
@@ -82,55 +74,29 @@ class Element():
         self.encoder = encoder.eval()
         self.output_path = output_path
         
-        # --- 2. 裁切训练和验证窗口 ---
-        # 裁切用于训练的窗口
         self.train_crop_imgs_NHWC, self.train_crop_locals_NHW2, self.train_crop_dems_NHW = self.__crop_img__(crop_size=self.options.crop_size)
-        # 裁切用于验证的、稀疏独立的窗口
         self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW = self.__crop_validation_img__(crop_size=self.options.crop_size)
 
-        # --- 3. 提取特征并构建Buffer ---
         self.SAMPLE_FACTOR = self.options.sample_factor
-        # 为训练集提取特征 (is_training=True)
         self.buffer = self.__extract_features_for_set__(self.train_crop_imgs_NHWC, self.train_crop_locals_NHW2, self.train_crop_dems_NHW, is_training=True)
-        # 为验证集提取特征 (is_training=False)
         self.validation_buffer = self.__extract_features_for_set__(self.val_crop_imgs_NHWC, self.val_crop_locals_NHW2, self.val_crop_dems_NHW, is_training=False)
         
         self._log(f"=========================== Element {self.id} 初始化完成 ===========================")
-        self._log(f"影像尺寸: {img_raw.shape}")
-        self._log(f"左上角像素坐标: {top_left_linesamp}")
-        log_buffer_shape = self.buffer['features'].shape if self.buffer and 'features' in self.buffer else '空'
-        log_val_buffer_shape = self.validation_buffer['features'].shape if self.validation_buffer and 'features' in self.validation_buffer else '空'
-        self._log(f"训练Buffer尺寸: {log_buffer_shape}")
-        self._log(f"验证Buffer尺寸: {log_val_buffer_shape}")
-        self._log("=================================================================================")
+        # ... (日志打印)
     
     def _log(self, *args, **kwargs):
-        # 日志打印函数
         if self.verbose:
             print(f"[Element {self.id}]:", *args, **kwargs)
 
     def __crop_img__(self, crop_size=1024, rotation_angle=10.):
-        """
-        [修改] 裁切训练窗口。
-        均匀裁切部分由用户指定的窗口数量控制，随机裁切部分带有旋转。
-        """
         self._log("正在为训练集裁切窗口...")
         H, W = self.img_raw.shape[:2]
         
         crop_imgs, crop_locals, crop_dems = [], [], []
 
-        # --- Part 1: 高效的均匀裁切，由用户指定窗口数量 ---
-        self._log(f"--- 正在执行均匀裁切 ({self.options.crop_num_h} x {self.options.crop_num_w} 个窗口)")
-        # 直接使用用户指定的窗口数量
-        num_steps_h = self.options.crop_num_h
-        num_steps_w = self.options.crop_num_w
-        
-        if H <= crop_size or W <= crop_size:
-            self._log(f"影像尺寸({H},{W})过小，无法进行 {crop_size}x{crop_size} 的裁切，跳过均匀裁切。")
-        else:
-            # np.linspace会根据指定的数量，自动计算均匀分布的起始点
-            y_starts = np.linspace(0, H - crop_size, num_steps_h, dtype=int)
-            x_starts = np.linspace(0, W - crop_size, num_steps_w, dtype=int)
+        if H > crop_size and W > crop_size:
+            y_starts = np.linspace(0, H - crop_size, self.options.crop_num_h, dtype=int)
+            x_starts = np.linspace(0, W - crop_size, self.options.crop_num_w, dtype=int)
 
             for row in y_starts:
                 for col in x_starts:
@@ -139,20 +105,12 @@ class Element():
                     crop_dems.append(self.dem[row:row + crop_size, col:col + crop_size])
 
         n_uniform = len(crop_imgs)
-        self._log(f"--- 已生成 {n_uniform} 个均匀裁切窗口")
-
-        # --- Part 2: 高效且安全的随机旋转裁切 ---
-        n_random = n_uniform # 随机裁切的数量与均匀裁切相同
+        n_random = n_uniform
         if n_random > 0:
-            self._log(f"--- 正在执行 {n_random} 个随机旋转裁切")
-            
-            # 为了保证旋转后的窗口完全在图像内，在一个“安全区域”内采样中心点
             half_diag = int(np.sqrt(2) * crop_size / 2) + 1
-            safe_top, safe_left = half_diag, half_diag
-            safe_bottom, safe_right = H - half_diag, W - half_diag
-
-            if safe_bottom > safe_top and safe_right > safe_left:
-                # 批量生成随机中心点和旋转角度，效率最高
+            if H > 2 * half_diag and W > 2 * half_diag:
+                safe_top, safe_left = half_diag, half_diag
+                safe_bottom, safe_right = H - half_diag, W - half_diag
                 center_y = np.random.randint(safe_top, safe_bottom, n_random)
                 center_x = np.random.randint(safe_left, safe_right, n_random)
                 angles = np.random.uniform(-rotation_angle, rotation_angle, n_random)
@@ -161,45 +119,34 @@ class Element():
                     M = cv2.getRotationMatrix2D((cx, cy), angle, 1)
                     flags = cv2.INTER_LINEAR
                     
-                    # 对三个数据源应用同一个旋转矩阵
                     rotated_img = cv2.warpAffine(self.img_raw, M, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT_101)
                     rotated_local = cv2.warpAffine(self.local_raw, M, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT_101)
                     rotated_dem = cv2.warpAffine(self.dem, M, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT_101)
                     
-                    # 从旋转后的大图中裁切出窗口
                     tl_x, tl_y = cx - crop_size // 2, cy - crop_size // 2
                     
                     crop_imgs.append(rotated_img[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
                     crop_locals.append(rotated_local[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
                     crop_dems.append(rotated_dem[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
 
-        # 如果没有裁切到任何窗口，返回空数组
         if not crop_imgs:
             return np.array([]), np.array([]), np.array([])
 
         return np.stack(crop_imgs), np.stack(crop_locals), np.stack(crop_dems)
 
     def __crop_validation_img__(self, crop_size=1024, num_val_windows=16):
-        """
-        裁切独立的验证窗口。
-        采用稀疏、大步长的策略，确保验证数据与训练数据不重叠。
-        """
         self._log(f"正在为验证集裁切 {num_val_windows} 个窗口...")
         H, W = self.img_raw.shape[:2]
         
         crop_imgs, crop_locals, crop_dems = [], [], []
         
-        if H <= crop_size or W <= crop_size:
-            self._log("影像尺寸过小，无法裁切验证窗口。")
-            return np.array([]), np.array([]), np.array([])
-        
-        # 随机生成不重叠的窗口左上角坐标
-        for _ in range(num_val_windows):
-            row = np.random.randint(0, H - crop_size)
-            col = np.random.randint(0, W - crop_size)
-            crop_imgs.append(self.img_raw[row:row + crop_size, col:col + crop_size])
-            crop_locals.append(self.local_raw[row:row + crop_size, col:col + crop_size])
-            crop_dems.append(self.dem[row:row + crop_size, col:col + crop_size])
+        if H > crop_size and W > crop_size:
+            for _ in range(num_val_windows):
+                row = np.random.randint(0, H - crop_size)
+                col = np.random.randint(0, W - crop_size)
+                crop_imgs.append(self.img_raw[row:row + crop_size, col:col + crop_size])
+                crop_locals.append(self.local_raw[row:row + crop_size, col:col + crop_size])
+                crop_dems.append(self.dem[row:row + crop_size, col:col + crop_size])
 
         if not crop_imgs:
             return np.array([]), np.array([]), np.array([])
@@ -208,41 +155,37 @@ class Element():
     
     def __extract_features_for_set__(self, crop_imgs_nhwc, crop_locals_nhw2, crop_dems_nhw, is_training: bool) -> Dict[str, torch.Tensor]:
         """
-        [核心修改] 提取特征并构建Buffer的通用函数。
-        根据 is_training 参数，选择应用训练变换（带增强）还是验证变换（不带增强）。
+        [核心修改] 使用 self.options.encoder_batch_size
         """
         if crop_imgs_nhwc.size == 0:
-            return {} # 如果输入为空，返回空字典
+            return {}
 
         self._log(f"正在提取 {crop_imgs_nhwc.shape[0]} 个窗口的特征... (模式: {'训练' if is_training else '验证'})")
         
-        # --- 1. 图像预处理与增广 ---
         imgs_nchw = torch.from_numpy(crop_imgs_nhwc).permute(0, 3, 1, 2).float() / 255.0
         
         transform_to_use = self.train_transform if is_training else self.val_transform
         transform_to_use.to(self.device)
 
         with torch.no_grad():
-            batch_num = int(np.ceil(imgs_nchw.shape[0] / self.options.batch_size))
+            batch_num = int(np.ceil(imgs_nchw.shape[0] / self.options.encoder_batch_size))
             imgs_nchw_aug = []
             for b in range(batch_num):
-                batch = imgs_nchw[b * self.options.batch_size : (b+1) * self.options.batch_size].to(self.device)
+                batch = imgs_nchw[b * self.options.encoder_batch_size : (b+1) * self.options.encoder_batch_size].to(self.device)
                 imgs_nchw_aug.append(transform_to_use(batch))
             imgs_nchw_aug = torch.cat(imgs_nchw_aug, dim=0)
 
-        # --- 2. 坐标与DEM降采样 ---
         locals_nhw2 = torch.from_numpy(crop_locals_nhw2)
         locals_nhw2_down = downsample(locals_nhw2, self.SAMPLE_FACTOR, mode='avg')
         
         dems_nhw = torch.from_numpy(crop_dems_nhw)
         dems_nhw_down = downsample(dems_nhw, self.SAMPLE_FACTOR, mode='avg')
 
-        # --- 3. 批量提取特征 ---
         self.encoder.to(self.device)
         features_list, confs_list = [], []
         with torch.no_grad():
             for b in range(batch_num):
-                batch_imgs = imgs_nchw_aug[b * self.options.batch_size : (b+1) * self.options.batch_size]
+                batch_imgs = imgs_nchw_aug[b * self.options.encoder_batch_size : (b+1) * self.options.encoder_batch_size]
                 feat, conf = self.encoder(batch_imgs)
                 features_list.append(feat)
                 confs_list.append(conf)
@@ -250,7 +193,6 @@ class Element():
         features_bdhw = torch.cat(features_list, dim=0)
         confs_b1hw = torch.cat(confs_list, dim=0)
 
-        # --- 4. 计算地理坐标并保持多维结构 ---
         B, h, w, _ = locals_nhw2_down.shape
         lats, lons = self.rpc.RPC_PHOTO2OBJ(
             locals_nhw2_down[..., 1].flatten().to(self.device), 
@@ -261,7 +203,6 @@ class Element():
         
         objs_bhw3 = torch.cat([xy, dems_nhw_down.flatten().to(self.device).unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
 
-        # --- 5. 构建Buffer字典 (直接保留在GPU上) ---
         buffer = {
             'features': features_bdhw,
             'confs': confs_b1hw,
@@ -272,7 +213,6 @@ class Element():
         return buffer
 
     def clear_buffer(self):
-        """清理内存，删除大的Buffer"""
         if hasattr(self, 'buffer') and self.buffer:
             del self.buffer
         if hasattr(self, 'validation_buffer') and self.validation_buffer:
@@ -281,16 +221,11 @@ class Element():
         self.validation_buffer = None
 
     def to_device(self,device):
-        """
-        [修改] 将Element的核心组件和Buffer数据都移动到指定设备。
-        这是确保所有数据在同一设备上的关键。
-        """
         self.device = device
         self.rpc.to_gpu(device)
         self.train_transform.to(device)
         self.val_transform.to(device)
         
-        # 显式地移动Buffer字典中的每个张量
         if hasattr(self, 'buffer') and self.buffer:
             for key in self.buffer:
                 self.buffer[key] = self.buffer[key].to(device)
@@ -298,3 +233,4 @@ class Element():
         if hasattr(self, 'validation_buffer') and self.validation_buffer:
             for key in self.validation_buffer:
                 self.validation_buffer[key] = self.validation_buffer[key].to(device)
+

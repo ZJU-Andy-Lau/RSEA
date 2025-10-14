@@ -119,8 +119,12 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=10,
                         help='训练的总轮数 (epochs)。一个epoch代表模型完整看过一次所有数据。')
     
-    parser.add_argument('--batch_size', type=int, default=128,
-                        help='在梯度累积的每一步中，从单个Element抽取的patches数量。')
+    # --- [核心修改] 区分不同阶段的batch_size ---
+    parser.add_argument('--encoder_batch_size', type=int, default=8,
+                        help='特征提取阶段（处理大图）的批次大小。')
+    
+    parser.add_argument('--mapper_batch_size', type=int, default=128,
+                        help='Mapper训练阶段（处理patches）在梯度累积每一步的批次大小。')
 
     parser.add_argument('--validation_epoch_interval', type=int, default=1,
                         help='每隔多少个训练轮数 (epochs) 执行一次验证。')
