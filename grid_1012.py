@@ -528,8 +528,8 @@ class Grid():
             obj_patches = element_data['objs']
             centers = F.avg_pool2d(obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
             
-            pos_mask = (centers[:, 0] >= block.border[0]) & (centers[:, 0] < block.border[2]) & \
-                       (centers[:, 1] >= block.border[1]) & (centers[:, 1] < block.border[3])
+            pos_mask = (centers[:, 0] >= block.border[0] + 16.) & (centers[:, 0] < block.border[2] - 16.) & \
+                       (centers[:, 1] >= block.border[1] + 16.) & (centers[:, 1] < block.border[3] - 16.)
             
             valid_pos_indices = torch.where(pos_mask)[0]
             if valid_pos_indices.numel() > 0:
@@ -544,8 +544,8 @@ class Grid():
             val_obj_patches = val_patches['objs']
             val_centers = F.avg_pool2d(val_obj_patches, kernel_size=(16, 16)).squeeze(-1).squeeze(-1)
             
-            val_pos_mask = (val_centers[:, 0] >= block.border[0]) & (val_centers[:, 0] < block.border[2]) & \
-                           (val_centers[:, 1] >= block.border[1]) & (val_centers[:, 1] < block.border[3])
+            val_pos_mask = (val_centers[:, 0] >= block.border[0] + 16.) & (val_centers[:, 0] < block.border[2] - 16.) & \
+                           (val_centers[:, 1] >= block.border[1] + 16.) & (val_centers[:, 1] < block.border[3] - 16.)
                            
             val_indices_for_block = torch.where(val_pos_mask)[0].to(self.device)
 
