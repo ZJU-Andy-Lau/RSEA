@@ -268,7 +268,7 @@ class RSEA():
         fitter = AffineFitter()
 
         total_num = len(src)
-        afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = avg_sigma)
+        afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = avg_sigma.cpu().item())
         inliers = mask.ravel() == 1
 
         src = src[inliers]
