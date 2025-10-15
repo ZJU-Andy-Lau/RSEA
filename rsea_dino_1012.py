@@ -273,7 +273,7 @@ class RSEA():
             threshold = avg_sigma.cpu().item()
         else:
             threshold = self.options.residual_threshold
-        afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = avg_sigma.cpu().item())
+        afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = threshold)
         inliers = mask.ravel() == 1
 
         src = src[inliers]
