@@ -90,9 +90,12 @@ class Decoder(nn.Module):
 
     def forward(self, res):
         valid_score = self.score_head(res)
-        for block in self.blocks:
-            x = block(res)
-            res = res + x
+        if len(self.blocks) >= 1:
+            res = self.blocks[0](res)
+        if len(self.blocks) > 1:
+            for block in self.blocks[1:]:
+                x = block(res)
+                res = res + x
         xy_res = self.output_xy(res)
         height_res = self.output_height(res)
         
