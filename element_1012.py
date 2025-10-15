@@ -124,7 +124,7 @@ class Element():
                     rotated_local = cv2.warpAffine(self.local_raw, M, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT_101)
                     rotated_dem = cv2.warpAffine(self.dem, M, (W, H), flags=flags, borderMode=cv2.BORDER_REFLECT_101)
                     
-                    tl_x, tl_y = cx - crop_size // 2, cy - crop_size // 2
+                    tl_x, tl_y = int(cx - crop_size // 2), int(cy - crop_size // 2)
                     
                     crop_imgs.append(rotated_img[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
                     crop_locals.append(rotated_local[tl_y:tl_y + crop_size, tl_x:tl_x + crop_size])
