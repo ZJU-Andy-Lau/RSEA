@@ -453,7 +453,7 @@ class PretrainDataset(Dataset):
                           min_crop_side=500,
                           output_size=self.input_size,
                           downsample_ratio=self.DOWNSAMPLE,
-                          p_rotate=0.9,
+                          p_rotate=1.0,
                           max_angle_deg=180.0)
         # print(f"img:{imgs1.shape}\t{imgs1.min()}\t{imgs1.max()}")
         # print(f"obj:{obj1.shape}\t{obj1.min()}\t{obj1.max()}")
