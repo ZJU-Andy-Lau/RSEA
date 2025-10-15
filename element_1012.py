@@ -179,10 +179,10 @@ class Element():
             imgs_nchw_aug = torch.cat(imgs_nchw_aug, dim=0)
 
         locals_nhw2 = torch.from_numpy(crop_locals_nhw2)
-        locals_nhw2_down = downsample(locals_nhw2, self.SAMPLE_FACTOR, mode='avg')
+        locals_nhw2_down = downsample(locals_nhw2, self.SAMPLE_FACTOR, mode='avg',device=self.device).to(self.device)
         
         dems_nhw = torch.from_numpy(crop_dems_nhw)
-        dems_nhw_down = downsample(dems_nhw, self.SAMPLE_FACTOR, mode='avg')
+        dems_nhw_down = downsample(dems_nhw, self.SAMPLE_FACTOR, mode='avg',device=self.device).to(self.device)
 
         self.encoder.to(self.device)
         features_list, confs_list = [], []
@@ -202,7 +202,7 @@ class Element():
             locals_nhw2_down[..., 0].flatten().to(self.device), 
             dems_nhw_down.flatten().to(self.device)
         )
-        xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]]
+        xy = project_mercator(torch.stack([lats, lons], dim=-1))[:, [1, 0]].to(self.device)
         
         objs_bhw3 = torch.cat([xy, dems_nhw_down.flatten().to(self.device).unsqueeze(-1)], dim=-1).reshape(B, h, w, 3)
 
