@@ -30,7 +30,6 @@ import kornia.augmentation as K
 from matplotlib import pyplot as plt
 import random
 from typing import List,Dict
-from pykeops.torch import LazyTensor
 
 from rs_image import RSImage
 from element_1012 import Element

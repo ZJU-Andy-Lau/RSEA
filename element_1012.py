@@ -112,9 +112,9 @@ class Element():
             if H > 2 * half_diag and W > 2 * half_diag:
                 safe_top, safe_left = half_diag, half_diag
                 safe_bottom, safe_right = H - half_diag, W - half_diag
-                center_y = np.random.randint(safe_top, safe_bottom, n_random)
-                center_x = np.random.randint(safe_left, safe_right, n_random)
-                angles = np.random.uniform(-rotation_angle, rotation_angle, n_random)
+                center_y = np.random.randint(safe_top, safe_bottom, n_random).astype(float)
+                center_x = np.random.randint(safe_left, safe_right, n_random).astype(float)
+                angles = np.random.uniform(-rotation_angle, rotation_angle, n_random).astype(float)
 
                 for cy, cx, angle in zip(center_y, center_x, angles):
                     M = cv2.getRotationMatrix2D((cx, cy), angle, 1)
