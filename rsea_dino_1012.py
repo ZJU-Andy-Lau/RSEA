@@ -269,6 +269,10 @@ class RSEA():
         fitter = AffineFitter()
 
         total_num = len(src)
+        if self.options.residual_threshold is None or self.options.residual_threshold <= 0:
+            threshold = avg_sigma.cpu().item()
+        else:
+            threshold = self.options.residual_threshold
         afm,mask = cv2.estimateAffine2D(src.cpu().numpy(),tgt_mu.cpu().numpy(),method=cv2.RANSAC,ransacReprojThreshold = avg_sigma.cpu().item())
         inliers = mask.ravel() == 1
 

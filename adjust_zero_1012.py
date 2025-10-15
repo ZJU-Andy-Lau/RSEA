@@ -185,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--ransac_threshold', type=int, default=20,
                         help='default threshold for ransac')
     
-    parser.add_argument('--residual_threshold', type=int, default=50)
+    parser.add_argument('--residual_threshold', type=int, default=None)
     
     parser.add_argument('--ransac_iters_num', type=int, default=10000,
                         help='iterations of ransac')
