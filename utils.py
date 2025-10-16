@@ -23,6 +23,7 @@ from matplotlib.patches import ConnectionPatch
 from matplotlib import pyplot as plt
 import io
 from shapely.geometry import Polygon
+import math
 
 def get_current_time():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -244,6 +245,7 @@ def get_coord_mat(H,W,downsample:int = 0):
     return coord_array
 
 def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0.0):
+    # 检查输入是否有效
     if not isinstance(quadrilaterals, np.ndarray) or quadrilaterals.ndim != 3 or quadrilaterals.shape[1:] != (4, 2):
         raise ValueError("输入'quadrilaterals'必须是形状为 (N, 4, 2) 的Numpy数组。")
     if not isinstance(side_length, (int, float)) or side_length <= 0:
@@ -251,9 +253,27 @@ def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0.0):
     if quadrilaterals.shape[0] == 0:
         return np.empty((0, 2, 2)), None
 
+    def _order_points_for_polygon(points):
+        # 1. 计算质心
+        centroid = np.mean(points, axis=0)
+        
+        # 2. 计算每个点相对于质心的角度
+        angles = [math.atan2(p[1] - centroid[1], p[0] - centroid[0]) for p in points]
+        
+        # 3. 根据角度对点进行排序
+        sorted_points = sorted(zip(points, angles), key=lambda item: item[1])
+        
+        # 返回排序后的点坐标
+        return np.array([p for p, a in sorted_points])
+
     # --- 步骤 1: 将Numpy数组转换为Shapely多边形对象列表 ---
     try:
-        polygons = [Polygon(q) for q in quadrilaterals]
+        # 已修改：在创建多边形前，先对其顶点进行排序，确保多边形有效。
+        # .buffer(0) 仍然保留，作为处理其他潜在无效情况的最后防线。
+        polygons = [Polygon(_order_points_for_polygon(q)).buffer(0) for q in quadrilaterals]
+        polygons = [p for p in polygons if not p.is_empty]
+        if not polygons:
+             return np.empty((0, 2, 2)), None
     except Exception as e:
         raise ValueError(f"无法根据输入坐标创建多边形: {e}")
 
