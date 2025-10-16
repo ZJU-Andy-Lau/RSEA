@@ -22,6 +22,7 @@ from sklearn.preprocessing import MinMaxScaler
 from matplotlib.patches import ConnectionPatch
 from matplotlib import pyplot as plt
 import io
+from shapely.geometry import Polygon
 
 def get_current_time():
     return datetime.now().strftime("%Y%m%d%H%M%S")
@@ -241,6 +242,59 @@ def get_coord_mat(H,W,downsample:int = 0):
     if downsample > 0:
         coord_array = average_downsample_matrix(coord_array,downsample)
     return coord_array
+
+def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0.0):
+    if not isinstance(quadrilaterals, np.ndarray) or quadrilaterals.ndim != 3 or quadrilaterals.shape[1:] != (4, 2):
+        raise ValueError("输入'quadrilaterals'必须是形状为 (N, 4, 2) 的Numpy数组。")
+    if not isinstance(side_length, (int, float)) or side_length <= 0:
+        raise ValueError("输入'side_length'必须是一个正数。")
+    if quadrilaterals.shape[0] == 0:
+        return np.empty((0, 2, 2)), None
+
+    # --- 步骤 1: 将Numpy数组转换为Shapely多边形对象列表 ---
+    try:
+        polygons = [Polygon(q) for q in quadrilaterals]
+    except Exception as e:
+        raise ValueError(f"无法根据输入坐标创建多边形: {e}")
+
+    # --- 步骤 2: 计算所有多边形的交集 ---
+    intersection_area = polygons[0]
+    for i in range(1, len(polygons)):
+        intersection_area = intersection_area.intersection(polygons[i])
+        if intersection_area.is_empty:
+            return np.empty((0, 2, 2)), intersection_area
+
+    if intersection_area.is_empty:
+        return np.empty((0, 2, 2)), intersection_area
+
+    # --- 步骤 3 & 4: 在交集的边界框内进行网格迭代 ---
+    found_squares_coords = []
+    minx, miny, maxx, maxy = intersection_area.bounds
+
+    x = minx
+    while x + side_length <= maxx:
+        y = miny
+        while y + side_length <= maxy:
+            # --- 步骤 5: 创建候选正方形并检查是否被完全包含 ---
+            square_poly = Polygon([
+                (x, y),
+                (x + side_length, y),
+                (x + side_length, y + side_length),
+                (x, y + side_length)
+            ])
+
+            if intersection_area.contains(square_poly):
+                # 找到了一个有效的正方形。记录其左上角和右下角坐标，并应用偏移
+                top_left_offset = [x + offset_x, y + side_length + offset_y]
+                bottom_right_offset = [x + side_length + offset_x, y + offset_y]
+                found_squares_coords.append([top_left_offset, bottom_right_offset])
+            
+            y += side_length
+        x += side_length
+
+    diags = np.array(found_squares_coords) if found_squares_coords else np.empty((0, 2, 2))
+    
+    return diags
 
 def kaiming_init_weights(m):
     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):

@@ -16,7 +16,7 @@ import pandas as pd
 from model.encoder_dino_0927 import EncoderDino
 from model.solver import AffineFitter
 import cv2
-from utils import mercator2lonlat, project_mercator
+from utils import mercator2lonlat, project_mercator, find_grids
 import queue
 from rpc import RPCModelParameterTorch
 from tqdm import tqdm,trange
@@ -125,42 +125,6 @@ class RSEA():
         print(f"===============================Add image {img_id} done===============================")
     
     def create_grids(self,grid_size:int = 1000,max_grid_num:int = -1):
-        def find_grids(corners, grid_size):
-            x_left = np.maximum(corners[:, 0, 0],corners[:, 2, 0]) 
-            x_right = np.minimum(corners[:, 1, 0],corners[:, 3, 0])
-            y_top = np.minimum(corners[:, 0, 1],corners[:, 1, 1]  ) 
-            y_bottom = np.maximum(corners[:, 2, 1],corners[:, 3, 1]) 
-            
-            x_left_max = np.max(x_left)
-            x_right_min = np.min(x_right)
-            y_bottom_max = np.max(y_bottom)
-            y_top_min = np.min(y_top)
-            
-            W = x_right_min - x_left_max
-            H = y_top_min - y_bottom_max
-            
-            if W < grid_size or H < grid_size:
-                raise ValueError("Overlap area too small")
-            
-            cols = int(W // grid_size)
-            rows = int(H // grid_size)
-            
-            i_grid, j_grid = np.meshgrid(np.arange(cols), np.arange(rows), indexing='ij')
-            i_flat = i_grid.ravel()
-            j_flat = j_grid.ravel()
-            
-            x0 = x_left_max + i_flat * grid_size
-            y0 = y_top_min - j_flat * grid_size
-            x1 = x0 + grid_size
-            y1 = y0 - grid_size
-            
-            diags = np.stack([
-                np.stack([x0 + self.options.grid_offset_x, y0 + self.options.grid_offset_y], axis=1),
-                np.stack([x1 + self.options.grid_offset_x, y1 + self.options.grid_offset_y], axis=1)
-            ], axis=1)
-            
-            return diags
-
         if self.options.resume_training:
             grid_names = os.listdir(self.grid_root)
             grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
@@ -169,7 +133,7 @@ class RSEA():
             print(f"{len(grid_paths)} grids is going to resume creating")
         else:
             corners = np.stack([image.corner_xys for image in self.imgs])
-            grid_diags = find_grids(corners,grid_size) # M,2,2
+            grid_diags = find_grids(corners,grid_size,self.options.grid_offset_x,self.options.grid_offset_y) # M,2,2
             if max_grid_num > 0:
                 indices = [int((i + 1) * len(grid_diags) / (max_grid_num + 1.)) for i in range(max_grid_num)]
                 grid_diags = [grid_diags[i] for i in indices]
