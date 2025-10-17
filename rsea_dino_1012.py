@@ -77,24 +77,12 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
             encoder = EncoderDino(os.path.join(options.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
             encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
 
-            # --- [修改] Grid初始化逻辑 ---
-            if options.resume_training:
-                # 在恢复模式下，我们总是尝试从路径加载，Grid内部会处理检查点
-                grid = Grid(options = options,
-                            encoder = encoder,
-                            grid_path = output_path, # 使用output_path来加载
-                            output_path = output_path,
-                            device = device
-                            )
-            else:
-                # 在新训练模式下，从diag创建
-                grid = Grid(options = options,
-                            encoder = encoder,
-                            diag = diag,
-                            output_path = output_path,
-                            device = device
-                            )
-            # --- [修改] 结束 ---
+            grid = Grid(options = options,
+                        encoder = encoder,
+                        diag = diag,
+                        output_path = output_path,
+                        device = device
+                        )
             
             if not options.ref_image_idxs is None:
                 imgs = [imgs[i] for i in options.ref_image_idxs]
