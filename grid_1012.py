@@ -763,20 +763,21 @@ class Grid():
                     latest_val_loss_obj = val_loss_obj
 
             # --- [新增] 在每个Epoch结束时原子化保存检查点 ---
-            temp_checkpoint_path = checkpoint_path + '.tmp'
-            checkpoint_data = {
-                'epoch': epoch,
-                'current_total_iter': current_total_iter,
-                'mapper_state_dict': mapper.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'min_loss': min_loss,
-                'best_mapper_state_dict': best_mapper_state_dict,
-                'random_state': random.getstate(),
-                'torch_rng_state': torch.get_rng_state(),
-            }
-            torch.save(checkpoint_data, temp_checkpoint_path)
-            os.rename(temp_checkpoint_path, checkpoint_path)
+            if (epoch + 1) % self.options.save_checkpoints_interval == 0:
+                temp_checkpoint_path = checkpoint_path + '.tmp'
+                checkpoint_data = {
+                    'epoch': epoch,
+                    'current_total_iter': current_total_iter,
+                    'mapper_state_dict': mapper.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'scheduler_state_dict': scheduler.state_dict(),
+                    'min_loss': min_loss,
+                    'best_mapper_state_dict': best_mapper_state_dict,
+                    'random_state': random.getstate(),
+                    'torch_rng_state': torch.get_rng_state(),
+                }
+                torch.save(checkpoint_data, temp_checkpoint_path)
+                os.rename(temp_checkpoint_path, checkpoint_path)
         
         if not task_info: pbar.close()
         
