@@ -1,5 +1,6 @@
 from pyexpat import features
 import stat
+from datetime import datetime
 
 from scipy import cluster
 from utils import Status
@@ -14,7 +15,6 @@ import pandas as pd
 from model_new import Encoder,Decoder
 import os
 import cv2
-from datetime import datetime,timedelta
 import time
 from utils import get_coord_mat,project_mercator,mercator2lonlat,downsample,bilinear_interpolate,apply_polynomial,get_map_coef,visualize_subset_points
 
@@ -38,6 +38,16 @@ from rs_image import RSImage
 from element_1012 import Element
 from block import Block
 
+# --- [新增] 原子化写入辅助函数 ---
+def atomic_write_flag(path: str, content: str):
+    """使用原子操作写入标志文件，防止写入中断导致文件损坏。"""
+    temp_path = path + '.tmp'
+    with open(temp_path, 'w') as f:
+        f.write(content)
+    os.rename(temp_path, path)
+# --- [新增] 结束 ---
+
+
 def redirect_output(output_path:str,info:str):
     # 将打印信息重定向到日志文件
     with open(output_path,'a') as f:
@@ -58,16 +68,18 @@ class Grid():
         if diag is None and grid_path is None:
             raise ValueError("Grid初始化错误: 必须提供diag或grid_path")
         self.options.mapper_input_channel = self.encoder.output_channels
-        
+        self.output_path = output_path
+
         # 根据是新建还是加载来初始化Grid
-        if grid_path is None :
+        if grid_path is not None and os.path.exists(os.path.join(grid_path,'grid_data.pth')):
+             self.load_grid(grid_path)
+        elif diag is not None:
             self.diag = diag # [[x_min, y_max], [x_max, y_min]] in Mercator
             self.blocks = self.__devide_blocks__(self.options.block_size)
         else:
-            self.load_grid(grid_path)
-            
+             raise ValueError(f"无法初始化Grid: diag未提供，且在路径 {grid_path} 中未找到 'grid_data.pth'")
+
         self.border = np.array([self.diag[:,0].min(),self.diag[:,1].min(),self.diag[:,0].max(),self.diag[:,1].max()])
-        self.output_path = output_path
         self.elements:List[Element] = []
         self.transform = nn.Sequential(
             K.Normalize(
@@ -130,8 +142,8 @@ class Grid():
     def fprint(self,info:str):
         # 打印信息到日志文件
         output_path = os.path.join(self.output_path,'log.txt')
-        info += '\n'
-        redirect_output(output_path,info)
+        info_with_time = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {info}\n"
+        redirect_output(output_path,info_with_time)
 
     def get_overlap_image(self,img:RSImage,mode='bbox'):
         """根据Grid的地理范围，从一张大图中获取重叠区域的影像数据"""
@@ -288,15 +300,27 @@ class Grid():
         self.fprint(f"Block数据分配可视化图像已保存至 {save_path}")
 
     def train(self,task_info = None):
-        """Grid的训练总控函数"""
+        """
+        [重构] Grid的训练总控函数，增加Block级别完成状态检查
+        """
         self.to_device(self.device)
         self.get_height_map_coeffs()
         self.visualize_block_assignment()
+
         for block_idx in range(len(self.blocks)):
+            # --- [新增] 检查Block是否已训练完成 ---
+            completion_flag_path = os.path.join(self.output_path, f'block_{block_idx}_complete.flag')
+            if os.path.exists(completion_flag_path):
+                self.fprint(f"Block {block_idx} 已标记为完成，跳过训练。")
+                continue
+            # --- [新增] 结束 ---
+
             if self.blocks[block_idx].map_coeffs.get('h_min') is None:
                 self.fprint(f"错误: Block {block_idx} 未能成功计算高程范围，跳过训练。")
                 continue
-            self.train_mapper(block_idx,task_info)
+            
+            # 只有未完成的Block才会进入训练
+            self.train_mapper(block_idx, task_info)
         
         # 训练结束后清理内存
         for element in self.elements:
@@ -479,10 +503,10 @@ class Grid():
         mapper.train()
         return val_rmse, np.sqrt(val_loss_obj)
 
-    def train_mapper(self, block_idx: int, task_info=None, save_checkpoint=True):
-        """ [核心重构] 实现残差预测、完整Epoch遍历、修正负采样、简化RPC、增加可视化、调整噪声策略 """
+    def train_mapper(self, block_idx: int, task_info=None):
+        """ [重构] 实现完整的断点续训、进度跳过、原子化写入等功能 """
         
-        # --- 1. 初始化 ---
+        # --- 1. 初始化与路径定义 ---
         block = self.blocks[block_idx]
         mapper = block.mapper
         optimizer = AdamW(mapper.parameters(), lr=self.options.grid_train_lr_max)
@@ -495,14 +519,46 @@ class Grid():
         valid_score_weight = 10.0
         
         mapper.train()
-        min_loss = 1e8
-        best_mapper_state_dict = None
 
         vis_output_path = os.path.join(self.output_path, 'visualization')
         if self.options.visualization_epoch_interval > 0:
             os.makedirs(vis_output_path, exist_ok=True)
         
-        # --- 2. 数据源准备 ---
+        # --- [新增] 定义检查点和完成标志路径 ---
+        checkpoint_path = os.path.join(self.output_path, f'block_{block_idx}_checkpoint.pth')
+        completion_flag_path = os.path.join(self.output_path, f'block_{block_idx}_complete.flag')
+
+        # --- 2. [新增] 加载检查点 (如果存在且处于恢复模式) ---
+        start_epoch = 0
+        current_total_iter = 0
+        min_loss = 1e8
+        best_mapper_state_dict = None
+
+        if self.options.resume_training and os.path.exists(checkpoint_path):
+            self.fprint(f"检测到Block {block_idx}的检查点，正在恢复状态...")
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location=self.device)
+                
+                mapper.load_state_dict(checkpoint['mapper_state_dict'])
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                
+                start_epoch = checkpoint['epoch'] + 1
+                min_loss = checkpoint['min_loss']
+                best_mapper_state_dict = checkpoint['best_mapper_state_dict']
+                current_total_iter = checkpoint['current_total_iter']
+                
+                random.setstate(checkpoint['random_state'])
+                torch.set_rng_state(checkpoint['torch_rng_state'].cpu())
+                
+                self.fprint(f"Block {block_idx} 状态恢复完成，将从 Epoch {start_epoch + 1} 继续训练。")
+            except Exception as e:
+                self.fprint(f"警告: 加载Block {block_idx}的检查点失败: {e}。将从头开始训练此Block。")
+                start_epoch = 0
+                current_total_iter = 0
+        else:
+            self.fprint(f"未找到Block {block_idx}的检查点，将从头开始训练。")
+        
+        # --- 3. 数据源准备与索引构建 ---
         self.fprint(f"为Block {block_idx} 准备数据源...")
         all_element_patches = [elem.buffer for elem in self.elements]
         
@@ -515,7 +571,6 @@ class Grid():
                     for key in val_patches:
                         val_patches[key] = torch.cat([val_patches[key], element.validation_buffer[key]], dim=0)
 
-        # --- 3. 即时索引构建 (Just-in-Time Indexing) ---
         self.fprint(f"为Block {block_idx} 即时构建训练与验证索引...")
 
         train_indices_for_block = {}
@@ -565,20 +620,24 @@ class Grid():
                                      total_steps=total_training_steps,
                                      warmup_ratio=self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0,
                                      cooldown_ratio=self.options.grid_cooldown_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0)
+        
+        # 如果是恢复训练，需要将scheduler的状态也恢复
+        if self.options.resume_training and 'scheduler_state_dict' in locals().get('checkpoint', {}):
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
 
         self.fprint(f"Block {block_idx} 索引构建完成. 每个Epoch包含 {total_batches_per_epoch} 个批次. 总训练步数: {total_training_steps}")
 
         if task_info: 
-            self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':total_training_steps, 'progress': 0})
+            self.update_task_state(task_info, {'status':f"Grid {task_info['id']}:Block {block_idx + 1}/{len(self.blocks)} 训练", 'total':total_training_steps, 'progress': current_total_iter})
         else:
-            pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}")
+            pbar = tqdm(total=total_training_steps, desc=f"训练 Block {block_idx+1}", initial=current_total_iter)
         
         latest_val_loss_obj = float('nan')
         warmup_ratio = self.options.grid_warmup_epochs / self.options.num_epochs if self.options.num_epochs > 0 else 0
-        current_total_iter = 0
-
+        
         # --- 5. Epoch-based 训练循环 ---
-        for epoch in range(self.options.num_epochs):
+        for epoch in range(start_epoch, self.options.num_epochs):
             shuffled_indices_per_element = {
                 eid: indices[torch.randperm(len(indices))] 
                 for eid, indices in train_indices_for_block.items()
@@ -618,7 +677,6 @@ class Grid():
                 progress = min(1.,current_total_iter / (total_training_steps * warmup_ratio)) if total_training_steps > 0 and warmup_ratio > 0 else 1.0
                 current_noise_std = self.options.prior_noise_min + (self.options.prior_noise_max - self.options.prior_noise_min) * progress
                 
-                # [核心修改] 为h通道计算自适应的最大噪声
                 h_range = block.map_coeffs['h_max'] - block.map_coeffs['h_min']
                 h_noise_min = 0.1
                 h_noise_max = max(h_noise_min, h_range * self.options.height_noise_ratio)
@@ -645,7 +703,6 @@ class Grid():
 
                 loss_regression, loss_details = criterion(epoch, self.options.num_epochs, pred_mu_pos, pred_log_sigma_pos, obj_pos, conf_pos, local_pos, current_rpc)
                 
-                # 负样本处理
                 valid_score_neg = torch.empty(0, 1, 16, 16, device=self.device)
                 neg_indices = neg_indices_pool_for_block.get(element_id)
                 if neg_indices is not None and neg_indices.numel() > 0:
@@ -660,7 +717,6 @@ class Grid():
                     pos_perm = torch.randint(0, num_pos, (neg_sample_size,), device=self.device)
                     obj_for_neg = obj_batch[pos_perm]
 
-                    # [核心修改] 为负样本应用与正样本相同的噪声逻辑
                     random_scale_neg = torch.rand(obj_for_neg.shape[0], 1, 1, 1, device=obj_for_neg.device, dtype=obj_for_neg.dtype)
                     effective_stds_per_patch_neg = stds * random_scale_neg
                     coord_noise_neg = torch.randn_like(obj_for_neg) * effective_stds_per_patch_neg
@@ -687,14 +743,7 @@ class Grid():
                 is_last_batch_of_epoch = (batch_idx == len(all_batches_shuffled) - 1)
                 if self.options.visualization_epoch_interval > 0 and (epoch + 1) % self.options.visualization_epoch_interval == 0 and is_last_batch_of_epoch:
                     self.fprint(f"Epoch {epoch+1}: 生成训练阶段可视化图...")
-                    self._visualize_predictions(
-                        pred_mu_pos,
-                        obj_pos,
-                        epoch + 1,
-                        "train",
-                        block_idx,
-                        vis_output_path
-                    )
+                    self._visualize_predictions(pred_mu_pos, obj_pos, epoch + 1, "train", block_idx, vis_output_path)
                 
                 if total_loss_for_batch.item() < min_loss:
                     min_loss = total_loss_for_batch.item()
@@ -709,20 +758,41 @@ class Grid():
                     pbar.set_postfix(info)
             
             if (epoch + 1) % self.options.validation_epoch_interval == 0:
-                val_rmse, val_loss_obj = self.validate_and_visualize_block(
-                    mapper, block, block_idx, current_total_iter, filtered_val_patches,
-                    epoch=epoch + 1,
-                    vis_output_path=vis_output_path
-                )
+                val_rmse, val_loss_obj = self.validate_and_visualize_block(mapper, block, block_idx, current_total_iter, filtered_val_patches, epoch=epoch + 1, vis_output_path=vis_output_path)
                 if not np.isnan(val_rmse):
                     latest_val_loss_obj = val_loss_obj
+
+            # --- [新增] 在每个Epoch结束时原子化保存检查点 ---
+            temp_checkpoint_path = checkpoint_path + '.tmp'
+            checkpoint_data = {
+                'epoch': epoch,
+                'current_total_iter': current_total_iter,
+                'mapper_state_dict': mapper.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'min_loss': min_loss,
+                'best_mapper_state_dict': best_mapper_state_dict,
+                'random_state': random.getstate(),
+                'torch_rng_state': torch.get_rng_state(),
+            }
+            torch.save(checkpoint_data, temp_checkpoint_path)
+            os.rename(temp_checkpoint_path, checkpoint_path)
         
         if not task_info: pbar.close()
         
+        # --- [新增] 训练完成后，加载最佳模型，清理并标记完成 ---
         if best_mapper_state_dict is not None:
              mapper.load_state_dict(best_mapper_state_dict)
         block.status = self.STATES.WELL_TRAINED if min_loss < 25. else self.STATES.BAD_TRAINED
-        self.save_grid()
+        self.save_grid() # 将训练好的Block权重更新到主文件中
+
+        if os.path.exists(checkpoint_path):
+            os.remove(checkpoint_path)
+            self.fprint(f"Block {block_idx} 训练完成，临时检查点已删除。")
+        
+        atomic_write_flag(completion_flag_path, f"Completed at {datetime.now()}")
+        self.fprint(f"Block {block_idx} 已被标记为完成。")
+        # --- [新增] 结束 ---
 
     def save_grid(self):
         """保存Grid的状态，包括所有Blocks的模型权重"""
@@ -756,7 +826,7 @@ class Grid():
             block.mapper.load_state_dict(block_state_dict['mapper'])
             block.status = block_state_dict['status']
             self.blocks.append(block)        
-        print(f"Grid '{name}' 加载成功")
+        self.fprint(f"Grid '{name}' 状态加载成功")
 
     @torch.no_grad()
     def _extract_full_features(self, img_raw: np.ndarray) -> torch.Tensor:
@@ -923,4 +993,3 @@ class Grid():
         }
 
         return final_res
-

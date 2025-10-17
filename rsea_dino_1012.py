@@ -1,5 +1,9 @@
 import os
 import logging
+import json
+import shutil
+from datetime import datetime
+import traceback
 
 from sklearn import metrics
 
@@ -35,50 +39,113 @@ from grid_1012 import Grid
 
 from utils import visualize_subset_points
 
+# --- [新增] 原子化写入辅助函数 ---
+def atomic_write_flag(path: str, content: str):
+    """使用原子操作写入标志文件，防止写入中断导致文件损坏。"""
+    temp_path = path + '.tmp'
+    with open(temp_path, 'w') as f:
+        f.write(content)
+    os.rename(temp_path, path)
+
+def atomic_write_json(data: object, path: str):
+    """使用原子操作写入JSON文件。"""
+    temp_path = path + '.tmp'
+    with open(temp_path, 'w') as f:
+        json.dump(data, f, indent=4)
+    os.rename(temp_path, path)
+# --- [新增] 结束 ---
+
+
 def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs, options):
     device = torch.device(f'cuda:{rank}')
     while True:
+        task_config = None # 在循环开始时初始化，以便except块也能访问
         try:
+            # 1. 从队列获取任务
             task_config = task_queue.get(timeout = 1)
             if task_config is None:
                 break
-        except queue.Empty:
-            break
 
-        if options.resume_training:
-            task_id,grid_path,output_path = task_config
-            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
+            # 2. 【try块的核心内容】
+            #    这里是原有的所有处理单个Grid的逻辑
+            task_id, grid_def, output_path = task_config
+            grid_id = grid_def['grid_id']
+            diag = np.array(grid_def['diag'])
+            
+            task_state[task_id]['status'] = f"Grid {grid_id} 状态：正在初始化"
             os.makedirs(output_path,exist_ok=True)
             encoder = EncoderDino(os.path.join(options.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
             encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
-            grid = Grid(options = options,
-                        encoder = encoder,
-                        grid_path = grid_path,
-                        output_path = output_path,
-                        device = device
-                        )
-        else:
-            task_id,diag,output_path = task_config
-            task_state[task_id]['status'] = f"Grid {task_id} 状态：正在初始化"
-            os.makedirs(output_path,exist_ok=True)
-            encoder = EncoderDino(os.path.join(options.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
-            encoder.load_adapter(os.path.join(options.encoder_path,'adapter.pth'))
-            grid = Grid(options = options,
-                        encoder = encoder,
-                        diag = diag,
-                        output_path = output_path,
-                        device = device
-                        )
-        if not options.ref_image_idxs is None:
-            imgs = [imgs[i] for i in options.ref_image_idxs]
-        for img in imgs:
-            grid.add_img(img = img)
-        grid.to_device(device)
-        grid.create_elements(task_info = {'state':task_state,'id':task_id})
-        grid.train(task_info = {'state':task_state,'id':task_id})
+
+            # --- [修改] Grid初始化逻辑 ---
+            if options.resume_training:
+                # 在恢复模式下，我们总是尝试从路径加载，Grid内部会处理检查点
+                grid = Grid(options = options,
+                            encoder = encoder,
+                            grid_path = output_path, # 使用output_path来加载
+                            output_path = output_path,
+                            device = device
+                            )
+            else:
+                # 在新训练模式下，从diag创建
+                grid = Grid(options = options,
+                            encoder = encoder,
+                            diag = diag,
+                            output_path = output_path,
+                            device = device
+                            )
+            # --- [修改] 结束 ---
+            
+            if not options.ref_image_idxs is None:
+                imgs = [imgs[i] for i in options.ref_image_idxs]
+            for img in imgs:
+                grid.add_img(img = img)
+            grid.to_device(device)
+            grid.create_elements(task_info = {'state':task_state,'id':task_id})
+            
+            # 核心训练过程
+            grid.train(task_info = {'state':task_state,'id':task_id})
+
+            # 训练成功后，写入完成标志
+            completion_flag_path = os.path.join(output_path, 'grid_training_complete.flag')
+            atomic_write_flag(completion_flag_path, f"Completed at {datetime.now()}")
+            task_state[task_id]['status'] = f"Grid {grid_id} [bold green]训练完成[/bold green]"
+
+        except queue.Empty:
+            # 这不是错误，只是队列空了，正常退出
+            break
+            
+        except Exception as e:
+            # 3. 【except块】捕获所有其他类型的异常
+            print(f"\n捕获到工作进程中的异常: {e}\n") # 在主终端打印一个简短提示
+
+            if task_config:
+                # 如果成功获取了任务配置，就将错误记录到对应的Grid目录
+                task_id, grid_def, output_path = task_config
+                grid_id = grid_def['grid_id']
+
+                # 格式化完整的错误追溯信息
+                error_message = f"--- Grid {grid_id} 训练过程中发生未处理的异常 ---\n"
+                error_message += traceback.format_exc() # 获取完整的堆栈信息
+
+                # 定义错误日志路径并写入
+                error_log_path = os.path.join(output_path, 'error.log')
+                with open(error_log_path, 'a') as f:
+                    f.write(f"[{datetime.now()}]\n{error_message}\n\n")
+
+                # 更新UI状态，明确指出错误
+                task_state[task_id]['status'] = f"Grid {grid_id} [bold red]发生错误[/bold red]"
+                task_state[task_id]['info'] = {'error': '详见该Grid目录下的error.log'}
+            
+            else:
+                # 如果在获取任务之前就出错了（可能性极小），打印到主进程
+                print(f"工作进程在获取任务前发生严重错误:\n{traceback.format_exc()}")
+            
+            # 在记录错误后，让这个工作进程继续尝试处理队列中的下一个任务
+            continue
 
 def dict2str(d: dict):
-    """[核心修改] 更新字典到字符串的转换，以适应新的日志格式"""
+    """更新字典到字符串的转换，以适应新的日志格式"""
     if not d:
         return ""
     
@@ -110,6 +177,10 @@ class RSEA():
         self.root = options.root
         self.grid_root = os.path.join(self.root,"grids")
         os.makedirs(self.grid_root,exist_ok=True)
+
+        # --- [新增] 定义Grid清单文件路径 ---
+        self.manifest_path = os.path.join(self.root, 'grid_manifest.json')
+        # --- [新增] 结束 ---
         
         if not os.path.isdir(self.root):
             raise ValueError("Output path is not a folder")
@@ -127,21 +198,64 @@ class RSEA():
         print(f"===============================Add image {img_id} done===============================")
     
     def create_grids(self,grid_size:int = 1000,max_grid_num:int = -1):
+        # --- [重构] Grid定义与任务分发的完整逻辑 ---
+        grid_definitions = []
         if self.options.resume_training:
-            grid_names = os.listdir(self.grid_root)
-            grid_names = sorted(grid_names, key=lambda s: int(s.split('_')[1]))
-            grid_paths = [os.path.join(self.grid_root,i) for i in grid_names]
-            grid_num = len(grid_paths)
-            print(f"{len(grid_paths)} grids is going to resume creating")
+            print("\n================== [恢复训练模式] ==================")
+            if not os.path.exists(self.manifest_path):
+                raise FileNotFoundError(f"恢复模式错误: 未找到Grid清单文件 {self.manifest_path}。请先以非恢复模式运行一次以生成清单。")
+            print(f"从清单文件 {self.manifest_path} 加载Grid定义...")
+            with open(self.manifest_path, 'r') as f:
+                grid_definitions = json.load(f)
+            print(f"成功加载 {len(grid_definitions)} 个Grid的定义。")
         else:
+            print("\n================== [全新训练模式] ==================")
+            if os.path.exists(self.manifest_path):
+                print(f"警告: 检测到旧的Grid清单和目录。本次运行将覆盖它们以开始全新的训练。")
+                if os.path.exists(self.grid_root):
+                    shutil.rmtree(self.grid_root)
+                os.makedirs(self.grid_root, exist_ok=True)
+            
+            # 确保影像顺序的确定性
+            self.imgs.sort(key=lambda img: img.root)
+            print(f"已对 {len(self.imgs)} 张参考影像进行确定性排序。")
+
             corners = np.stack([image.corner_xys for image in self.imgs])
             grid_diags = find_grids(corners,grid_size,self.options.grid_offset_x,self.options.grid_offset_y) # M,2,2
             if max_grid_num > 0:
                 indices = [int((i + 1) * len(grid_diags) / (max_grid_num + 1.)) for i in range(max_grid_num)]
                 grid_diags = [grid_diags[i] for i in indices]
-            grid_num = len(grid_diags)
-            self.imgs[0].vis_grid(grid_diags,os.path.join(self.root,'all_grids.png'))
-            print(f"{len(grid_diags)} grids is going to be created")
+            
+            if self.imgs:
+                self.imgs[0].vis_grid(grid_diags,os.path.join(self.root,'all_grids.png'))
+            print(f"计算生成 {len(grid_diags)} 个Grid。")
+
+            for i, diag in enumerate(grid_diags):
+                grid_definitions.append({
+                    'grid_id': f'grid_{i+1}',
+                    'diag': diag.tolist()
+                })
+            
+            print(f"正在将Grid定义原子化写入清单文件 {self.manifest_path}...")
+            atomic_write_json(grid_definitions, self.manifest_path)
+        
+        # --- 任务队列准备 ---
+        tasks_to_run = []
+        for grid_def in grid_definitions:
+            grid_id = grid_def['grid_id']
+            grid_output_path = os.path.join(self.grid_root, grid_id)
+            completion_flag = os.path.join(grid_output_path, 'grid_training_complete.flag')
+            if os.path.exists(completion_flag):
+                print(f"Grid {grid_id} 已训练完成，将被跳过。")
+                continue
+            tasks_to_run.append(grid_def)
+
+        grid_num = len(tasks_to_run)
+        if grid_num == 0:
+            print("所有Grid均已训练完成，没有需要执行的任务。")
+            return
+        print(f"共检测到 {grid_num} 个Grid需要训练或恢复训练。")
+        # --- [重构] 结束 ---
 
         try:
             mp.set_start_method("spawn", force=True)
@@ -151,14 +265,14 @@ class RSEA():
             task_queue = manager.Queue()
             task_states = manager.dict()
 
-            for i in range(grid_num):
+            for i, grid_def in enumerate(tasks_to_run):
                 task_id = i + 1
-                if self.options.resume_training:
-                    task_queue.put((task_id,grid_paths[i],os.path.join(self.grid_root,f"grid_{task_id}")))
-                else:
-                    task_queue.put((task_id,grid_diags[i],os.path.join(self.grid_root,f"grid_{task_id}")))
+                grid_id = grid_def['grid_id']
+                output_path = os.path.join(self.grid_root, grid_id)
+                # 统一任务格式
+                task_queue.put((task_id, grid_def, output_path))
                 task_states[task_id] = {
-                    "status":f"Grid {task_id}:等待分配GPU",
+                    "status":f"Grid {grid_id}:等待分配GPU",
                     "progress":0,
                     "total":1,
                     "info":{}
@@ -180,7 +294,14 @@ class RSEA():
                 TextColumn("[bold yellow]{task.fields[metrics]}"),
                 expand=True
             )
-            task_progress_ids = [progress.add_task(f"{i+1}", total=1, metrics = "") for i in range(grid_num)]
+            
+            # 使用Grid ID作为任务描述
+            progress_task_ids = {}
+            for i, grid_def in enumerate(tasks_to_run):
+                task_id = i + 1
+                grid_id = grid_def['grid_id']
+                progress_task_ids[task_id] = progress.add_task(f"{grid_id}", total=1, metrics = "")
+
             progress_table = Table.grid(expand=True)
             progress_table.add_row(progress)
 
@@ -196,7 +317,7 @@ class RSEA():
                         task_id = i + 1
                         state = task_states[task_id]
                         progress.update(
-                            task_id=task_progress_ids[i],
+                            task_id=progress_task_ids[task_id],
                             completed=state['progress'],
                             total=state['total'],
                             description=state['status'],
@@ -209,7 +330,7 @@ class RSEA():
         except Exception as e:
             print(f"格网多进程训练出错：\n{e}")
         
-        print(f"======================================All Grids created successfully, {len(self.grids)} grids created in total======================================\n\n\n\n\n\n\n\n\n\n")
+        print(f"======================================All Grids created successfully======================================\n\n")
     
     def __overlap__(self,tl1:np.ndarray,tl2:np.ndarray,br1:np.ndarray,br2:np.ndarray):
         """
