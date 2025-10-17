@@ -69,6 +69,8 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
                         output_path = output_path,
                         device = device
                         )
+        if not options.ref_image_idxs is None:
+            imgs = [imgs[i] for i in options.ref_image_idxs]
         for img in imgs:
             grid.add_img(img = img)
         grid.to_device(device)

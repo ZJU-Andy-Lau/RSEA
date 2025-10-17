@@ -25,6 +25,8 @@ if __name__ == '__main__':
     
     parser.add_argument('--ref_image_num',type=int,default=-1)
 
+    parser.add_argument('--ref_image_idxs',type=str,default=None)
+
     parser.add_argument('--dino_path', type=str, default='weights',
                         help='file containing pre-trained encoder weights')
 
@@ -219,6 +221,9 @@ if __name__ == '__main__':
     ref_image_folders = os.listdir(ref_images_root)
     if options.ref_image_num > 0:
         ref_image_folders = ref_image_folders[:options.ref_image_num]
+    
+    if not options.ref_image_idxs is None:
+        options.ref_image_idxs = [int(i) for i in options.ref_image_idxs.split(',')]
 
     if options.create_grids:
         # 基于ref_images创建网格
