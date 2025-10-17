@@ -85,8 +85,10 @@ def train_grid_worker(rank:int, task_queue, task_state, encoder_state_dict, imgs
                         )
             
             if not options.ref_image_idxs is None:
-                imgs = [imgs[i] for i in options.ref_image_idxs]
-            for img in imgs:
+                select_imgs = [imgs[i] for i in options.ref_image_idxs]
+            else:
+                select_imgs = imgs
+            for img in select_imgs:
                 grid.add_img(img = img)
             grid.to_device(device)
             grid.create_elements(task_info = {'state':task_state,'id':task_id})
