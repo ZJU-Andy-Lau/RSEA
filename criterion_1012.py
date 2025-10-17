@@ -28,9 +28,14 @@ def calculate_affine_loss_differentiable(src_points, dst_points):
     A = torch.cat([src_points, ones], dim=1)
 
     try:
-        solution = torch.linalg.lstsq(A, dst_points)
-        params = solution.solution
+        # [核心修改] 使用正规方程 (A^T A)x = A^T b 求解最小二乘问题，以避免调用 lstsq 引发的 cusolver 错误
+        # This is mathematically equivalent to the original lstsq solution.
+        AtA = A.T @ A
+        AtB = A.T @ dst_points
+        params = torch.linalg.solve(AtA, AtB)
+
     except torch.linalg.LinAlgError:
+        # 如果矩阵奇异或发生其他线性代数错误，则返回0损失
         return torch.tensor(0.0, device=src_points.device, dtype=src_points.dtype)
 
     src_points_transformed = A @ params
