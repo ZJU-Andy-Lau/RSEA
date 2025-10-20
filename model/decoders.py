@@ -59,9 +59,12 @@ class Decoder(nn.Module):
         return nn.Sequential(
             nn.Conv2d(channels,channels * 2,1,1,0),
             nn.ReLU(),
+            nn.Dropout(p=.1),
             nn.Conv2d(channels * 2,channels * 2,1,1,0),
             nn.ReLU(),
-            nn.Conv2d(channels * 2,channels,1,1,0)
+            nn.Dropout(p=.1),
+            nn.Conv2d(channels * 2,channels,1,1,0),
+            nn.ReLU(),
         )
 
     def __init__(self,in_channels=512,block_num=5,use_bn=False):
