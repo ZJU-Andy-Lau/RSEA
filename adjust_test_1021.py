@@ -13,6 +13,9 @@ from model.encoder_dino_0927 import EncoderDino
 import scheduler
 from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
 
+import warnings
+warnings.filterwarnings("ignore")
+
 class Window():
     def __init__(self,img:np.ndarray,local:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch):
         self.img = img
@@ -21,8 +24,8 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
-        self.affine_matrix = torch.tensor([[1.0,0.0,0.0],
-                                            [0.0,1.0,0.0]])
+        self.affine_matrix = torch.tensor([[1.0,0.0,1.0],
+                                            [0.0,1.0,1.0]])
     
     def to_gpu(self):
         self.local = self.local.cuda()
@@ -110,7 +113,8 @@ def fit_affine(args,window_0:Window,window_1:Window):
 
         if (iter + 1) % 10 == 0:
             af = params.reshape(-1).detach().cpu().numpy()
-            print(f"iter:{iter}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2f} \t af:{af}")
+            with np.printoptions(precision=3, suppress=True):
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2e} \t af:{af}")
         
         
         scheduler.step()
