@@ -266,6 +266,20 @@ if __name__ == '__main__':
     window_1.conf = conf_1.squeeze().flatten(0,1)
     window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
     window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
+    
+
+    feat_0_vis = window_0.feature.cpu().numpy().reshape(h,w,-1)
+    feat_1_vis = window_1.feature.cpu().numpy().reshape(h,w,-1)
+    conf_0_vis = window_0.conf.cpu().numpy().reshape(h,w)
+    conf_1_vis = window_1.conf.cpu().numpy().reshape(h,w)
+    feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
+    conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,img_0_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
+    conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,img_1_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
+    cv2.imwrite(os.path.join(debug_output_path,'feat_vis.png'),feat_vis_img)
+    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_0.png'),conf_cont_0)
+    cv2.imwrite(os.path.join(debug_output_path,'conf_div_0.png'),conf_div_0)
+    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_1.png'),conf_cont_1)
+    cv2.imwrite(os.path.join(debug_output_path,'conf_div_1.png'),conf_div_1)
 
     mask_0 = window_0.conf >= args.conf_threshold
     window_0.feature = window_0.feature[mask_0]
@@ -288,20 +302,6 @@ if __name__ == '__main__':
     print(f"local:{window_0.local.shape}")
     print(f"dem:{window_0.dem.shape}")
     print("\n")
-    
-
-    feat_0_vis = window_0.feature.cpu().numpy().reshape(h,w,-1)
-    feat_1_vis = window_1.feature.cpu().numpy().reshape(h,w,-1)
-    conf_0_vis = window_0.conf.cpu().numpy().reshape(h,w)
-    conf_1_vis = window_1.conf.cpu().numpy().reshape(h,w)
-    feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
-    conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,img_0_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-    conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,img_1_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-    cv2.imwrite(os.path.join(debug_output_path,'feat_vis.png'),feat_vis_img)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_0.png'),conf_cont_0)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_div_0.png'),conf_div_0)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_1.png'),conf_cont_1)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_div_1.png'),conf_div_1)
 
     fit_affine(args,window_0,window_1)
 
