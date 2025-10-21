@@ -93,7 +93,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
                                                     max_lr=args.max_lr,
                                                     total_steps=args.max_iter
                                                     )
-    for iter in args.max_iter:
+    for iter in range(args.max_iter):
         optimizer.zero_grad()
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,params)
         query_feature = window_1.feature.flatten(0,1) # N,D
