@@ -113,7 +113,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
 
         if (iter + 1) % 10 == 0:
             af = params.reshape(-1).detach().cpu().numpy()
-            with np.printoptions(precision=3, suppress=True):
+            with np.printoptions(precision=5, suppress=False):
                 print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2e} \t af:{af}")
         
         
