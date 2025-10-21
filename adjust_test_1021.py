@@ -81,7 +81,7 @@ def feature_sampling(feature:torch.Tensor, point_base:LazyTensor, query:torch.Te
     feature_sample_p3d = feature[idxs]
     feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
 
-    return feature_sample_pd
+    return feature_sample_pd,valid_mask
 
 
 def fit_affine(args,window_0:Window,window_1:Window):
@@ -99,8 +99,8 @@ def fit_affine(args,window_0:Window,window_1:Window):
     for iter in range(args.max_iter):
         optimizer.zero_grad()
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,params)
-        query_feature = window_1.feature # N,D
-        sample_feature = feature_sampling(window_0.feature,window_0.point_base,query_local,args.kmin_k) # N,D
+        sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.point_base,query_local,args.kmin_k) # N,D
+        query_feature = window_1.feature[valid_mask] # N,D
         loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 100.
         
         loss.backward()
