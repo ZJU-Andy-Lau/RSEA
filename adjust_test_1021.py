@@ -64,8 +64,8 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     return warped_local
 
 def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
-    point_base = LazyTensor(local.unsqueeze(0))
-    query_lazy = LazyTensor(query.unsqueeze(1))
+    point_base = LazyTensor(local.contiguous().unsqueeze(0))
+    query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
     dists,idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
 
@@ -110,7 +110,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
 
         if (iter + 1) % 10 == 0:
             af = params.reshape(-1).detach().cpu().numpy()
-            print(f"iter:{iter}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]} \t af:{af}")
+            print(f"iter:{iter}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2f} \t af:{af}")
         
         
         scheduler.step()
