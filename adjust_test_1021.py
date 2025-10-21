@@ -260,12 +260,12 @@ if __name__ == '__main__':
     h,w = feature_0.shape[-2:]
     window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
     window_0.conf = conf_0.squeeze().flatten(0,1)
-    window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1)
-    window_0.dem = downsample_average(window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1)
+    window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
+    window_0.dem = downsample_average(window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
     window_1.feature = feature_1[0].permute(1,2,0).flatten(0,1)
     window_1.conf = conf_1.squeeze().flatten(0,1)
-    window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1)
-    window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1)
+    window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
+    window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
 
     mask_0 = window_0.conf >= args.conf_threshold
     window_0.feature = window_0.feature[mask_0]
