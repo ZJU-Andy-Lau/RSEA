@@ -24,8 +24,8 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
-        self.affine_matrix = torch.tensor([[1.0,0.0,1.0],
-                                            [0.0,1.0,1.0]])
+        self.affine_matrix = torch.tensor([[1.0,0.0,0.0],
+                                            [0.0,1.0,0.0]])
     
     def to_gpu(self):
         self.local = self.local.cuda()
@@ -149,6 +149,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--select_imgs',type=str,default='0,1') #前期只测试两张图像配准
 
+    parser.add_argument('--init_offset_line',type=float,default=0.)
+
+    parser.add_argument('--init_offset_samp',type=float,default=0.)
+
     args = parser.parse_args()
 
     debug_output_path = os.path.join(args.root,'debug_output')
@@ -183,6 +187,9 @@ if __name__ == '__main__':
 
     cv2.imwrite(os.path.join(debug_output_path,'img_raw_0.png'),img_0_raw)
     cv2.imwrite(os.path.join(debug_output_path,'img_raw_1.png'),img_1_raw)
+
+    window_1.affine_matrix[0,2] += args.init_offset_line
+    window_1.affine_matrix[1,2] += args.init_offset_samp
 
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
