@@ -61,7 +61,7 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     trans_local = local_homo @ affine_matrix.T
     lats,lons = rpc_src.RPC_PHOTO2OBJ(trans_local[:,1],trans_local[:,0],dem)
     samps,lines = rpc_dst.RPC_OBJ2PHOTO(lats,lons,dem)
-    warped_local = torch.stack([lines,samps],dim=-1)
+    warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32)
     return warped_local
 
 def feature_sampling(feature:torch.Tensor, point_base:LazyTensor, query:torch.Tensor,k = 16):
