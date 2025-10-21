@@ -865,7 +865,7 @@ def vis_feat_twin(feat1,feat2):
 
     return image_array
     
-def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
+def vis_conf(conf:np.ndarray,img:np.ndarray,ds,div = .5,output_path = None):
     points = (get_coord_mat(conf.shape[0],conf.shape[1]) * ds + ds * .5).reshape(-1,2)
     scores = conf.reshape(-1)
     canvas_cont = deepcopy(img)
@@ -876,7 +876,7 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
         green = int(score * 255)
         return (red , green, 0)
     
-    def score_to_color_div(score,div = .5):
+    def score_to_color_div(score,div):
         if score >= div:
             return (0,255,0)
         else:
@@ -885,7 +885,7 @@ def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
     for p,score in zip(points,scores):
         p = p.astype(int)
         color_cont = score_to_color_cont(score)
-        color_div = score_to_color_div(score)
+        color_div = score_to_color_div(score,div)
 
         cv2.circle(canvas_cont,(p[1],p[0]),radius=1,color=color_cont,thickness=-1)
         cv2.circle(canvas_div,(p[1],p[0]),radius=1,color=color_div,thickness=-1)
