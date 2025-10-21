@@ -80,7 +80,7 @@ def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tenso
     idxs = idxs[valid_mask]
 
     dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,k
-    reverse_dists_ratio = 1. / dists_ratio
+    reverse_dists_ratio = 1. / (dists_ratio + 1e-6)
     weights = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
 
     feature_sample_p3d = feature[idxs]
@@ -112,9 +112,9 @@ def fit_affine(args,window_0:Window,window_1:Window):
         optimizer.step()
 
         if (iter + 1) % 10 == 0:
-            af = params.reshape(-1).detach().cpu().numpy()
+            af = params.detach().cpu().numpy()
             with np.printoptions(precision=5, suppress=False):
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2e} \t af:{af}")
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2e} \n af:{af}")
         
         
         scheduler.step()
