@@ -68,7 +68,7 @@ def feature_sampling(feature:torch.Tensor, point_base:LazyTensor, query:torch.Te
 
     query_lazy = LazyTensor(query.unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
-    dists,idxs = dist_ij.Kmin_argKmin(k = k, dim=1)
+    dists,idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
 
     valid_mask = (dists.min(dim=1).values < 8)
     dists = dists[valid_mask]
