@@ -88,7 +88,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
     window_0.to_gpu()
     window_1.to_gpu()
     params = nn.Parameter(window_1.affine_matrix).cuda()
-    optimizer = torch.optim.Adam([params],lr = args.lr_max)
+    optimizer = torch.optim.Adam([params],lr = args.max_lr)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
                                                     max_lr=args.max_lr,
                                                     total_steps=args.max_iter
@@ -127,7 +127,7 @@ if __name__ == '__main__':
     parser.add_argument('--encoder_path', type=str, default='weights/pretrain_swt_cnn_r2_0409_large/backbone.pth',
                         help='file containing pre-trained encoder weights')
     
-    parser.add_argument('--lr_max', type=float, default=0.0001,
+    parser.add_argument('--max_lr', type=float, default=0.0001,
                         help='highest learning rate')
 
     parser.add_argument('--max_iter', type=int, default=1000)
