@@ -24,14 +24,16 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
-        self.affine_matrix = torch.tensor([[1.0,0.0,0.0],
-                                            [0.0,1.0,0.0]])
+        self.R = torch.tensor([[1.0,0.0],
+                                [0.0,1.0]])
+        self.T = torch.tensor([0.,0.])
     
     def to_gpu(self):
         self.local = self.local.cuda()
         self.dem = self.dem.cuda()
         self.rpc.to_gpu()
-        self.affine_matrix = self.affine_matrix.cuda()
+        self.R = self.R.cuda()
+        self.T = self.T.cuda()
         
 
 def load_imgs(args):
@@ -95,31 +97,42 @@ def fit_affine(args,window_0:Window,window_1:Window):
     """
     window_0.to_gpu()
     window_1.to_gpu()
-    params = nn.Parameter(window_1.affine_matrix).cuda()
-    optimizer = torch.optim.Adam([params[:,2]],lr = args.max_lr)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
-                                                    max_lr=args.max_lr,
-                                                    total_steps=args.max_iter
-                                                    )
+    R = nn.Parameter(window_1.R).cuda()
+    T = nn.Parameter(window_1.T).cuda()
+    optimizer_r = torch.optim.Adam([T],lr = args.max_lr * 0.00001)
+    optimizer_t = torch.optim.Adam([T],lr = args.max_lr)
+    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r,
+                                                        max_lr=args.max_lr * 0.00001,
+                                                        total_steps=args.max_iter
+                                                        )
+    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t,
+                                                        max_lr=args.max_lr,
+                                                        total_steps=args.max_iter
+                                                        )
+    
     for iter in range(args.max_iter):
-        optimizer.zero_grad()
-        query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,params)
+        optimizer_r.zero_grad()
+        optimizer_t.zero_grad()
+        af_mat = torch.concatenate([R,T.unsqueeze(-1)],dim=-1)
+        query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,af_mat)
         sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.local,query_local,args.kmin_k) # N,D
         query_feature = window_1.feature[valid_mask] # N,D
-        loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 100.
+        loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 1000.
         
         loss.backward()
-        optimizer.step()
+        optimizer_r.step()
+        optimizer_t.step()
 
         if (iter + 1) % 10 == 0:
-            af = params.detach().cpu().numpy()
+            af = af_mat.detach().cpu().numpy()
             with np.printoptions(precision=5, suppress=False):
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]:.2e} \n af:{af}")
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler_t.get_lr()[0]:.2e} \n af:{af}")
         
         
-        scheduler.step()
+        scheduler_r.step()
+        scheduler_t.step()
     
-    final_affine_matrix = params.detach().cpu().numpy()
+    final_affine_matrix = af_mat.detach().cpu().numpy()
 
     print(f"final affine matrix: \n {final_affine_matrix}")
         
@@ -188,8 +201,8 @@ if __name__ == '__main__':
     cv2.imwrite(os.path.join(debug_output_path,'img_raw_0.png'),img_0_raw)
     cv2.imwrite(os.path.join(debug_output_path,'img_raw_1.png'),img_1_raw)
 
-    window_1.affine_matrix[0,2] += args.init_offset_line
-    window_1.affine_matrix[1,2] += args.init_offset_samp
+    window_1.T[0] += args.init_offset_line
+    window_1.T[1] += args.init_offset_samp
 
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
