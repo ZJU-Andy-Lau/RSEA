@@ -56,7 +56,7 @@ def extract_feature(encoder:EncoderDino,img_raw:np.ndarray):
 def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorch,rpc_dst:RPCModelParameterTorch,affine_matrix:torch.Tensor):
     local = local.reshape(-1,2)
     dem = dem.reshape(-1)
-    ones = torch.ones(local.shape[0],1)
+    ones = torch.ones(local.shape[0],1).to(device=local.device,dtype=local.dtype)
     local_homo = torch.cat([local,ones],dim=-1)
     trans_local = local_homo @ affine_matrix.T
     lats,lons = rpc_src.RPC_PHOTO2OBJ(trans_local[:,1],trans_local[:,0],dem)
@@ -100,12 +100,14 @@ def fit_affine(args,window_0:Window,window_1:Window):
         sample_feature = feature_sampling(window_0.feature,window_0.local,query_local,args.sharpness) # N,D
         loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 100.
         
+        loss.backward()
+        optimizer.step()
+
         if (iter + 1) % 10 == 0:
             af = params.reshape(-1).detach().cpu().numpy()
             print(f"iter:{iter}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler.get_lr()[0]} \t af:{af}")
         
-        loss.backward()
-        optimizer.step()
+        
         scheduler.step()
     
     final_affine_matrix = params.detach().cpu().numpy()
