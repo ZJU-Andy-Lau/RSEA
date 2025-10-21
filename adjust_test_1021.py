@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from torchvision import transforms
+from pykeops.torch import LazyTensor
 import numpy as np
 import cv2
 from rs_image import RSImage
@@ -20,6 +21,7 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
+        self.point_base = None
         self.affine_matrix = torch.tensor([[1.0,0.0,0.0],
                                             [0.0,1.0,0.0]])
     
@@ -54,8 +56,6 @@ def extract_feature(encoder:EncoderDino,img_raw:np.ndarray):
     return feature,conf
 
 def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorch,rpc_dst:RPCModelParameterTorch,affine_matrix:torch.Tensor):
-    local = local.reshape(-1,2)
-    dem = dem.reshape(-1)
     ones = torch.ones(local.shape[0],1).to(device=local.device,dtype=local.dtype)
     local_homo = torch.cat([local,ones],dim=-1)
     trans_local = local_homo @ affine_matrix.T
@@ -64,22 +64,25 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1)
     return warped_local
 
-def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tensor,sharpness = 10.0):
-    h, w, d = feature.shape
+def feature_sampling(feature:torch.Tensor, point_base:LazyTensor, query:torch.Tensor,k = 16):
 
-    feature_flat = feature.reshape(h * w, d)
-    local_flat = local.reshape(h * w, 2)
+    query_lazy = LazyTensor(query.unsqueeze(1))
+    dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
+    dists,idxs = dist_ij.Kmin_argKmin(k = k, dim=1)
 
-    dist_sq = torch.sum(
-        (local_flat.unsqueeze(1) - query.unsqueeze(0))**2,
-        dim=-1
-    )
+    valid_mask = (dists.min(dim=1).values < 8)
+    dists = dists[valid_mask]
+    idxs = idxs[valid_mask]
 
-    attention_weights = torch.nn.functional.softmax(-dist_sq * sharpness, dim=0)
+    dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,3
+    reverse_dists_ratio = 1. / dists_ratio
+    weights = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
 
-    sampled_feature = attention_weights.T @ feature_flat
+    feature_sample_p3d = feature[idxs]
+    feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
 
-    return sampled_feature
+    return feature_sample_pd
+
 
 def fit_affine(args,window_0:Window,window_1:Window):
     """
@@ -96,8 +99,8 @@ def fit_affine(args,window_0:Window,window_1:Window):
     for iter in range(args.max_iter):
         optimizer.zero_grad()
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,params)
-        query_feature = window_1.feature.flatten(0,1) # N,D
-        sample_feature = feature_sampling(window_0.feature,window_0.local,query_local,args.sharpness) # N,D
+        query_feature = window_1.feature # N,D
+        sample_feature = feature_sampling(window_0.feature,window_0.point_base,query_local,args.kmin_k) # N,D
         loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 100.
         
         loss.backward()
@@ -134,7 +137,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--max_iter', type=int, default=1000)
 
-    parser.add_argument('--sharpness',type=float,default=10.0)
+    parser.add_argument('--kmin_k',type=int,default=16)
 
     parser.add_argument('--window_size', type=int, default=2000,help='window size in meter(m)')
 
@@ -179,14 +182,20 @@ if __name__ == '__main__':
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     feature_0,conf_0 = extract_feature(encoder,img_0_raw)
     feature_1,conf_1 = extract_feature(encoder,img_1_raw)
-    window_0.feature = feature_0[0].permute(1,2,0)
-    window_0.conf = conf_0.squeeze()
-    window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR)
-    window_0.dem = downsample_average(window_0.dem,encoder.SAMPLE_FACTOR)
-    window_1.feature = feature_1[0].permute(1,2,0)
-    window_1.conf = conf_1.squeeze()
-    window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR)
-    window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR)
+    window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
+    window_0.conf = conf_0.squeeze().flatten(0,1)
+    window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1)
+    window_0.dem = downsample_average(window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1)
+    window_1.feature = feature_1[0].permute(1,2,0).flatten(0,1)
+    window_1.conf = conf_1.squeeze().flatten(0,1)
+    window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1)
+    window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1)
+
+    window_0.to_gpu()
+    window_1.to_gpu()
+
+    window_0.point_base = LazyTensor(window_0.local.unsqueeze(0))
+    window_1.point_base = LazyTensor(window_1.local.unsqueeze(0))
 
     print("=======================window info=======================")
     print(f"sample factor:{encoder.SAMPLE_FACTOR}")
