@@ -145,8 +145,12 @@ if __name__ == '__main__':
 
     img_0,img_1 = load_imgs(args)
 
+    print("images loaded")
+
     corners = np.stack([img_0.corner_xys,img_1.corner_xys],axis=0)
-    grid_diag = find_grids(corners,args.window_size,grid_num=1)
+    grid_diag = find_grids(corners,args.window_size,grid_num=1)[0]
+
+    print(f"grid:{grid_diag}")
 
     resample_size = 1024
     corners_sampline_0 = img_0.xy_to_sampline(np.array([grid_diag[0],
