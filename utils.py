@@ -831,7 +831,7 @@ def vis_feat_twin(feat1,feat2):
     # feat2 = feat2.permute(1,2,0).flatten(0,1).cpu().numpy()
     feat1 = feat1.reshape(-1,C)
     feat2 = feat2.reshape(-1,C)
-    feat = np.concat([feat1,feat2],axis=0)
+    feat = np.concatenate([feat1,feat2],axis=0)
     # tsne = TSNE(n_components=3, random_state=42,metric='cosine')
     # feat = tsne.fit_transform(feat)
     pca = PCA(n_components=3)
