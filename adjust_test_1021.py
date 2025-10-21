@@ -215,6 +215,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--init_offset_samp',type=float,default=0.)
 
+    parser.add_argument('--grid_offset_x',type=float,default=0)
+
+    parser.add_argument('--grid_offset_y',type=float,default=0)
+
     args = parser.parse_args()
 
     debug_output_path = os.path.join(args.root,'debug_output')
@@ -225,7 +229,7 @@ if __name__ == '__main__':
     print("images loaded")
 
     corners = np.stack([img_0.corner_xys,img_1.corner_xys],axis=0)
-    grid_diag = find_grids(corners,args.window_size,grid_num=1)[0]
+    grid_diag = find_grids(corners,args.window_size,offset_x=args.grid_offset_x,offset_y=args.grid_offset_y,grid_num=1)[0]
 
     print(f"grid:{grid_diag}")
 
