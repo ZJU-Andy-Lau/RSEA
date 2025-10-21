@@ -182,6 +182,7 @@ if __name__ == '__main__':
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     feature_0,conf_0 = extract_feature(encoder,img_0_raw)
     feature_1,conf_1 = extract_feature(encoder,img_1_raw)
+    h,w = feature_0.shape[-2:]
     window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
     window_0.conf = conf_0.squeeze().flatten(0,1)
     window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1)
@@ -206,10 +207,10 @@ if __name__ == '__main__':
     print("\n")
     
 
-    feat_0_vis = window_0.feature.cpu().numpy()
-    feat_1_vis = window_1.feature.cpu().numpy()
-    conf_0_vis = window_0.conf.cpu().numpy()
-    conf_1_vis = window_1.conf.cpu().numpy()
+    feat_0_vis = window_0.feature.cpu().numpy().reshape(h,w,-1)
+    feat_1_vis = window_1.feature.cpu().numpy().reshape(h,w,-1)
+    conf_0_vis = window_0.conf.cpu().numpy().reshape(h,w)
+    conf_1_vis = window_1.conf.cpu().numpy().reshape(h,w)
     feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
     conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,img_0_raw,encoder.SAMPLE_FACTOR)
     conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,img_1_raw,encoder.SAMPLE_FACTOR)
