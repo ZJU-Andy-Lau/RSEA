@@ -117,7 +117,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,af_mat)
         sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.local,query_local,args.kmin_k) # N,D
         query_feature = window_1.feature[valid_mask] # N,D
-        loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 1000.
+        loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 10000.
         
         loss.backward()
         optimizer_r.step()
