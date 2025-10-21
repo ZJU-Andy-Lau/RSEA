@@ -244,7 +244,7 @@ def get_coord_mat(H,W,downsample:int = 0):
         coord_array = average_downsample_matrix(coord_array,downsample)
     return coord_array
 
-def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0.0):
+def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0., grid_num = -1):
     # 检查输入是否有效
     if not isinstance(quadrilaterals, np.ndarray) or quadrilaterals.ndim != 3 or quadrilaterals.shape[1:] != (4, 2):
         raise ValueError("输入'quadrilaterals'必须是形状为 (N, 4, 2) 的Numpy数组。")
@@ -313,6 +313,9 @@ def find_grids(quadrilaterals, side_length, offset_x=0.0, offset_y=0.0):
         x += side_length
 
     diags = np.array(found_squares_coords) if found_squares_coords else np.empty((0, 2, 2))
+
+    if grid_num > 0:
+        diags = diags[:grid_num]
     
     return diags
 
@@ -821,6 +824,46 @@ def vis_feat_pca(feat:np.ndarray,output_path = None):
         cv2.imwrite(output_path,feat)
     else:
         return feat
+
+def vis_feat_twin(feat1,feat2):
+    H,W,C = feat1.shape
+    # feat1 = feat1.permute(1,2,0).flatten(0,1).cpu().numpy()
+    # feat2 = feat2.permute(1,2,0).flatten(0,1).cpu().numpy()
+    feat1 = feat1.reshape(-1,C)
+    feat2 = feat2.reshape(-1,C)
+    feat = np.concat([feat1,feat2],axis=0)
+    # tsne = TSNE(n_components=3, random_state=42,metric='cosine')
+    # feat = tsne.fit_transform(feat)
+    pca = PCA(n_components=3)
+    
+    feat = pca.fit_transform(feat)
+    # feat = feat[:,:3]
+    feat = (feat - feat.min()) / (feat.max() - feat.min())
+    feat1 = feat[:H*W]
+    feat2 = feat[H*W:]
+    feat1 = feat1.reshape(H,W,3)
+    feat2 = feat2.reshape(H,W,3)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+
+    # 在第一个子图中显示第一张图片
+    ax1.imshow(feat1)
+    ax1.axis('off')  # 关闭坐标轴
+    ax1.set_title('Image 1')
+
+    # 在第二个子图中显示第二张图片
+    ax2.imshow(feat2)
+    ax2.axis('off')  # 关闭坐标轴
+    ax2.set_title('Image 2')
+
+    # 调整布局
+    plt.tight_layout()
+    fig.canvas.draw()
+    width, height = fig.canvas.get_width_height()
+    image_buffer = fig.canvas.buffer_rgba()
+    image_array = np.frombuffer(image_buffer, dtype=np.uint8)
+    image_array = image_array.reshape(height, width, 4)[...,:3]
+
+    return image_array
     
 def vis_conf(conf:np.ndarray,img:np.ndarray,ds,output_path = None):
     points = (get_coord_mat(conf.shape[0],conf.shape[1]) * ds + ds * .5).reshape(-1,2)
