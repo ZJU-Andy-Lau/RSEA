@@ -208,6 +208,8 @@ if __name__ == '__main__':
     cv2.imwrite(os.path.join(debug_output_path,'conf_cont_1.png'),conf_cont_1)
     cv2.imwrite(os.path.join(debug_output_path,'conf_div_1.png'),conf_div_1)
 
+    fit_affine(args,window_0,window_1)
+
 
 
 
