@@ -21,7 +21,6 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
-        self.point_base = None
         self.affine_matrix = torch.tensor([[1.0,0.0,0.0],
                                             [0.0,1.0,0.0]])
     
@@ -64,17 +63,20 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32)
     return warped_local
 
-def feature_sampling(feature:torch.Tensor, point_base:LazyTensor, query:torch.Tensor,k = 16):
-
+def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
+    point_base = LazyTensor(local.unsqueeze(0))
     query_lazy = LazyTensor(query.unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
     dists,idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
+
+    locals_kmin = local[idxs] # n,k,2
+    dists = torch.cdist(query.unsqueeze(1),locals_kmin,p=2).squeeze(1)
 
     valid_mask = (dists.min(dim=1).values < 8)
     dists = dists[valid_mask]
     idxs = idxs[valid_mask]
 
-    dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,3
+    dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,k
     reverse_dists_ratio = 1. / dists_ratio
     weights = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
 
@@ -99,7 +101,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
     for iter in range(args.max_iter):
         optimizer.zero_grad()
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,params)
-        sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.point_base,query_local,args.kmin_k) # N,D
+        sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.local,query_local,args.kmin_k) # N,D
         query_feature = window_1.feature[valid_mask] # N,D
         loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 100.
         
@@ -194,9 +196,6 @@ if __name__ == '__main__':
 
     window_0.to_gpu()
     window_1.to_gpu()
-
-    window_0.point_base = LazyTensor(window_0.local.unsqueeze(0))
-    window_1.point_base = LazyTensor(window_1.local.unsqueeze(0))
 
     print("=======================window info=======================")
     print(f"sample factor:{encoder.SAMPLE_FACTOR}")
