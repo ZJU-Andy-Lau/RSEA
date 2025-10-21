@@ -99,10 +99,10 @@ def fit_affine(args,window_0:Window,window_1:Window):
     window_1.to_gpu()
     R = nn.Parameter(window_1.R).cuda()
     T = nn.Parameter(window_1.T).cuda()
-    optimizer_r = torch.optim.Adam([T],lr = args.max_lr * 0.00001)
+    optimizer_r = torch.optim.Adam([T],lr = args.max_lr * 0.0001)
     optimizer_t = torch.optim.Adam([T],lr = args.max_lr)
     scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r,
-                                                        max_lr=args.max_lr * 0.00001,
+                                                        max_lr=args.max_lr * 0.0001,
                                                         total_steps=args.max_iter
                                                         )
     scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t,
@@ -132,11 +132,58 @@ def fit_affine(args,window_0:Window,window_1:Window):
         scheduler_r.step()
         scheduler_t.step()
     
+    window_1.rpc.Update_Adjust(af_mat.detach())
     final_affine_matrix = af_mat.detach().cpu().numpy()
 
     print(f"final affine matrix: \n {final_affine_matrix}")
         
+def check_error(images:list[RSImage]):        
+        def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
+            R = 6371000 
+            lat1 = coords1[:, 0]
+            lon1 = coords1[:, 1]
+            lat2 = coords2[:, 0]
+            lon2 = coords2[:, 1]
 
+            lat1_rad = np.radians(lat1)
+            lon1_rad = np.radians(lon1)
+            lat2_rad = np.radians(lat2)
+            lon2_rad = np.radians(lon2)
+
+            dlat = lat2_rad - lat1_rad
+            dlon = lon2_rad - lon1_rad
+
+            a = np.sin(dlat / 2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2)**2
+            c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+            distance = R * c
+            
+            return distance
+        
+        error_flag = False
+        for image in images:
+            if image.tie_points is None:
+                print(f"image {image.id} has no tie points")
+                error_flag = True
+        if error_flag:
+            print("error check aborted")
+            return
+        
+        coords = []
+        distances = []
+        for image in images:
+            lines = image.tie_points[:,0]
+            samps = image.tie_points[:,1]
+            heights = image.dem[lines,samps]
+            lats,lons = image.rpc.RPC_PHOTO2OBJ(samps,lines,heights,'numpy')
+            coords.append(np.stack([lats,lons],axis=-1))
+        n = len(coords)
+        for i in range(n-1):
+            for j in range(i+1,n):
+                distances.append(haversine_distance(coords[i],coords[j]))
+        
+        distances = np.stack(distances,axis=-1).reshape(-1)    
+
+        return distances
 
 if __name__ == '__main__':
 
@@ -245,7 +292,9 @@ if __name__ == '__main__':
 
     fit_affine(args,window_0,window_1)
 
-
+    errors = check_error([img_0,img_1])
+    info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
+    print(info)
 
 
     
