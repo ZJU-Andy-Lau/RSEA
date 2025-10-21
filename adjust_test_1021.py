@@ -185,6 +185,14 @@ if __name__ == '__main__':
     window_1.conf = conf_1.squeeze()
     window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR)
     window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR)
+
+    print("=======================window info=======================")
+    print(f"sample factor:{encoder.SAMPLE_FACTOR}")
+    print(f"feature:{window_0.feature.shape}")
+    print(f"conf:{window_0.conf.shape}")
+    print(f"local:{window_0.local.shape}")
+    print(f"dem:{window_0.dem.shape}")
+    print("\n")
     
 
     feat_0_vis = window_0.feature.cpu().numpy()
