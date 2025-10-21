@@ -96,7 +96,7 @@ def fit_affine(args,window_0:Window,window_1:Window):
     window_0.to_gpu()
     window_1.to_gpu()
     params = nn.Parameter(window_1.affine_matrix).cuda()
-    optimizer = torch.optim.Adam([params],lr = args.max_lr)
+    optimizer = torch.optim.Adam([params[:,2]],lr = args.max_lr)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer,
                                                     max_lr=args.max_lr,
                                                     total_steps=args.max_iter
