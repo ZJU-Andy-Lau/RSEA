@@ -155,7 +155,7 @@ def fit_affine(args,window_pairs:list[Window_Pair]):
     
     R = nn.Parameter(torch.tensor([[1.0,0.0],
                                 [0.0,1.0]]).cuda())
-    T = nn.Parameter(torch.tensor([0.,0.]).cuda())
+    T = nn.Parameter(torch.tensor([args.init_offset_line,args.init_offset_samp]).cuda())
     optimizer_r = torch.optim.Adam([R],lr = args.max_lr * 0.000001)
     optimizer_t = torch.optim.Adam([T],lr = args.max_lr)
     scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r,
