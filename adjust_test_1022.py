@@ -8,7 +8,7 @@ from torchvision import transforms
 from pykeops.torch import LazyTensor
 import numpy as np
 import cv2
-from rs_image import RSImage
+from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
 import scheduler
@@ -25,16 +25,84 @@ class Window():
         self.rpc = rpc
         self.feature = None
         self.conf = None
-        self.R = torch.tensor([[1.0,0.0],
-                                [0.0,1.0]])
-        self.T = torch.tensor([0.,0.])
+        
     
     def to_gpu(self):
         self.local = self.local.cuda()
         self.dem = self.dem.cuda()
         self.rpc.to_gpu()
-        self.R = self.R.cuda()
-        self.T = self.T.cuda()
+
+    
+
+class Window_Pair():
+    def __init__(self,args,diag:np.ndarray,img_0:RSImage,img_1:RSImage,id:int):
+        self.id = id
+        resample_size = 1024
+        corners_sampline_0 = img_0.xy_to_sampline(np.array([diag[0],
+                                                            [diag[1,0],diag[0,1]],
+                                                            diag[1],
+                                                            [diag[0,0],diag[1,1]]]))
+        corners_sampline_1 = img_1.xy_to_sampline(np.array([diag[0],
+                                                            [diag[1,0],diag[0,1]],
+                                                            diag[1],
+                                                            [diag[0,0],diag[1,1]]]))
+        
+        img_0_raw,local_0 = img_0.resample_image_by_sampline(corners_sampline_0,(resample_size,resample_size),need_local=True)
+        img_1_raw,local_1 = img_1.resample_image_by_sampline(corners_sampline_1,(resample_size,resample_size),need_local=True)
+        dem_0 = img_0.resample_dem_by_sampline(corners_sampline_0,(resample_size,resample_size))
+        dem_1 = img_1.resample_dem_by_sampline(corners_sampline_1,(resample_size,resample_size))
+
+        self.window_0 = Window(img_0_raw,local_0,dem_0,img_0.rpc)
+        self.window_1 = Window(img_1_raw,local_1,dem_1,img_1.rpc)
+
+        self.debug_output_path = os.path.join(args.debug_output_path,f'window_pair_{self.id}')
+        os.makedirs(self.debug_output_path,exist_ok=True)
+
+        cv2.imwrite(os.path.join(self.debug_output_path,'img_raw_0.png'),img_0_raw)
+        cv2.imwrite(os.path.join(self.debug_output_path,'img_raw_1.png'),img_1_raw)
+
+    @torch.no_grad()
+    def __extract_one_img_feature__(self,encoder:EncoderDino,img_raw:np.ndarray):
+        encoder = encoder.cuda().eval()
+        transform = transforms.Compose([
+                    transforms.ToTensor(),
+                    transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
+                    ])
+        img_tensor = transform(img_raw)
+        img_tensor = img_tensor[None].cuda()
+        feature,conf = encoder(img_tensor)
+        
+        return feature,conf
+
+    def extract_features(self,encoder:EncoderDino):
+        feature_0,conf_0 = self.__extract_one_img_feature__(encoder,self.window_0.img)
+        feature_1,conf_1 = self.__extract_one_img_feature__(encoder,self.window_1.img)
+        h,w = feature_0.shape[-2:]
+        self.window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
+        self.window_0.conf = conf_0.squeeze().flatten(0,1)
+        self.window_0.local = downsample_average(self.window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_0.feature.device)
+        self.window_0.dem = downsample_average(self.window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_0.feature.device)
+        self.window_1.feature = feature_1[0].permute(1,2,0).flatten(0,1)
+        self.window_1.conf = conf_1.squeeze().flatten(0,1)
+        self.window_1.local = downsample_average(self.window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_1.feature.device)
+        self.window_1.dem = downsample_average(self.window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_1.feature.device)
+
+        feat_0_vis = self.window_0.feature.cpu().numpy().reshape(h,w,-1)
+        feat_1_vis = self.window_1.feature.cpu().numpy().reshape(h,w,-1)
+        conf_0_vis = self.window_0.conf.cpu().numpy().reshape(h,w)
+        conf_1_vis = self.window_1.conf.cpu().numpy().reshape(h,w)
+        feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
+        conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,self.window_0.img,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
+        conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,self.window_1.img,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
+        cv2.imwrite(os.path.join(self.debug_output_path,'feat_vis.png'),feat_vis_img)
+        cv2.imwrite(os.path.join(self.debug_output_path,'conf_cont_0.png'),conf_cont_0)
+        cv2.imwrite(os.path.join(self.debug_output_path,'conf_div_0.png'),conf_div_0)
+        cv2.imwrite(os.path.join(self.debug_output_path,'conf_cont_1.png'),conf_cont_1)
+        cv2.imwrite(os.path.join(self.debug_output_path,'conf_div_1.png'),conf_div_1)
+
+        self.window_0.to_gpu()
+        self.window_1.to_gpu()
+
         
 
 def load_imgs(args):
@@ -44,21 +112,6 @@ def load_imgs(args):
     img_1 = RSImage(args,os.path.join(args.root,img_folders[select_img_idxs[1]]),1)
     return img_0,img_1
 
-@torch.no_grad()
-def extract_feature(encoder:EncoderDino,img_raw:np.ndarray):
-    """
-    img_raw:(H,W,3)
-    """
-    encoder = encoder.cuda().eval()
-    transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
-                ])
-    img_tensor = transform(img_raw)
-    img_tensor = img_tensor[None].cuda()
-    feature,conf = encoder(img_tensor)
-    
-    return feature,conf
 
 def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorch,rpc_dst:RPCModelParameterTorch,affine_matrix:torch.Tensor):
     ones = torch.ones(local.shape[0],1).to(device=local.device,dtype=local.dtype)
@@ -95,14 +148,13 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
     return feature_sample_pd,conf_sample_p,valid_mask
 
 
-def fit_affine(args,window_0:Window,window_1:Window):
+def fit_affine(args,window_pairs:list[Window_Pair]):
     """
     把window_1 warp到 window_0
     """
-    window_0.to_gpu()
-    window_1.to_gpu()
-    R = nn.Parameter(window_1.R).cuda()
-    T = nn.Parameter(window_1.T).cuda()
+    R = nn.Parameter(torch.tensor([[1.0,0.0],
+                                [0.0,1.0]]))
+    T = nn.Parameter(torch.tensor([0.,0.]))
     optimizer_r = torch.optim.Adam([R],lr = args.max_lr * 0.0001)
     optimizer_t = torch.optim.Adam([T],lr = args.max_lr)
     scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r,
@@ -113,33 +165,36 @@ def fit_affine(args,window_0:Window,window_1:Window):
                                                         max_lr=args.max_lr,
                                                         total_steps=args.max_iter
                                                         )
-    
     for iter in range(args.max_iter):
         optimizer_r.zero_grad()
         optimizer_t.zero_grad()
         af_mat = torch.concatenate([R,T.unsqueeze(-1)],dim=-1)
-        query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,af_mat)
-        sample_feature,sample_conf,valid_mask = feature_sampling(window_0.feature,window_0.conf,window_0.local,query_local,args.kmin_k) # N,D
-        query_feature = window_1.feature[valid_mask] # N,D
-        query_conf = window_1.conf[valid_mask]
-        conf_cov = query_conf * sample_conf
-        
-        weight = conf_cov / conf_cov.mean()
-        loss = (torch.norm(query_feature - sample_feature,dim=-1) * weight).mean() * 10000.
-        
-        loss.backward()
+        total_loss = 0
+        for window_pair in window_pairs:
+            window_0,window_1 = window_pair.window_0,window_pair.window_1
+            query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,af_mat)
+            sample_feature,sample_conf,valid_mask = feature_sampling(window_0.feature,window_0.conf,window_0.local,query_local,args.kmin_k) # N,D
+            query_feature = window_1.feature[valid_mask] # N,D
+            query_conf = window_1.conf[valid_mask]
+            conf_cov = query_conf * sample_conf
+            
+            weight = conf_cov / conf_cov.mean()
+            loss = (torch.norm(query_feature - sample_feature,dim=-1) * weight).mean() * 10000.
+            total_loss = total_loss + loss
+        total_loss = total_loss / len(window_pairs)
+        total_loss.backward()
         optimizer_r.step()
         optimizer_t.step()
 
         if (iter + 1) % 10 == 0:
             af = af_mat.detach().cpu().numpy()
             with np.printoptions(precision=5, suppress=False):
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{loss.item():.4f} \t lr:{scheduler_t.get_lr()[0]:.2e} \n af:{af}")
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{total_loss.item():.4f} \t lr:{scheduler_t.get_lr()[0]:.2e} \n af:{af}")
         
         
         scheduler_r.step()
         scheduler_t.step()
-    
+
     window_1.rpc.Update_Adjust(af_mat.detach())
     final_affine_matrix = af_mat.detach().cpu().numpy()
 
@@ -227,84 +282,34 @@ if __name__ == '__main__':
 
     parser.add_argument('--grid_offset_y',type=float,default=0)
 
+    parser.add_argument('--grid_num',type=int,default=1)
+
     args = parser.parse_args()
 
-    debug_output_path = os.path.join(args.root,'debug_output')
-    os.makedirs(debug_output_path,exist_ok=True)
+    args.debug_output_path = os.path.join(args.root,'debug_output')
+    os.makedirs(args.debug_output_path,exist_ok=True)
 
     img_0,img_1 = load_imgs(args)
 
     print("images loaded")
 
-    corners = np.stack([img_0.corner_xys,img_1.corner_xys],axis=0)
-    grid_diag = find_grids(corners,args.window_size,offset_x=args.grid_offset_x,offset_y=args.grid_offset_y,grid_num=1)[0]
-
-    print(f"grid:{grid_diag}")
-
-    resample_size = 1024
-    corners_sampline_0 = img_0.xy_to_sampline(np.array([grid_diag[0],
-                                                        [grid_diag[1,0],grid_diag[0,1]],
-                                                        grid_diag[1],
-                                                        [grid_diag[0,0],grid_diag[1,1]]]))
-    corners_sampline_1 = img_1.xy_to_sampline(np.array([grid_diag[0],
-                                                        [grid_diag[1,0],grid_diag[0,1]],
-                                                        grid_diag[1],
-                                                        [grid_diag[0,0],grid_diag[1,1]]]))
-    
-    img_0_raw,local_0 = img_0.resample_image_by_sampline(corners_sampline_0,(resample_size,resample_size),need_local=True)
-    img_1_raw,local_1 = img_1.resample_image_by_sampline(corners_sampline_1,(resample_size,resample_size),need_local=True)
-    dem_0 = img_0.resample_dem_by_sampline(corners_sampline_0,(resample_size,resample_size))
-    dem_1 = img_1.resample_dem_by_sampline(corners_sampline_1,(resample_size,resample_size))
-
-    window_0 = Window(img_0_raw,local_0,dem_0,img_0.rpc)
-    window_1 = Window(img_1_raw,local_1,dem_1,img_1.rpc)
-
-    cv2.imwrite(os.path.join(debug_output_path,'img_raw_0.png'),img_0_raw)
-    cv2.imwrite(os.path.join(debug_output_path,'img_raw_1.png'),img_1_raw)
-
-    window_1.T[0] += args.init_offset_line
-    window_1.T[1] += args.init_offset_samp
-
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-    feature_0,conf_0 = extract_feature(encoder,img_0_raw)
-    feature_1,conf_1 = extract_feature(encoder,img_1_raw)
-    h,w = feature_0.shape[-2:]
-    window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
-    window_0.conf = conf_0.squeeze().flatten(0,1)
-    window_0.local = downsample_average(window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
-    window_0.dem = downsample_average(window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
-    window_1.feature = feature_1[0].permute(1,2,0).flatten(0,1)
-    window_1.conf = conf_1.squeeze().flatten(0,1)
-    window_1.local = downsample_average(window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
-    window_1.dem = downsample_average(window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(window_0.feature.device)
+
+    print("Encoder Loaded")
+
+    corners = np.stack([img_0.corner_xys,img_1.corner_xys],axis=0)
+    diags = find_grids(corners,args.window_size,offset_x=args.grid_offset_x,offset_y=args.grid_offset_y,grid_num=args.grid_num)
+
+    window_pairs = []
+    for id,diag in enumerate(diags):
+        window_pair = Window_Pair(args,diag,img_0,img_1,id)
+        window_pair.extract_features(encoder)
+        window_pairs.append(window_pair)
+        print(f"Window pair {id} created")
+
     
-
-    feat_0_vis = window_0.feature.cpu().numpy().reshape(h,w,-1)
-    feat_1_vis = window_1.feature.cpu().numpy().reshape(h,w,-1)
-    conf_0_vis = window_0.conf.cpu().numpy().reshape(h,w)
-    conf_1_vis = window_1.conf.cpu().numpy().reshape(h,w)
-    feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
-    conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,img_0_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-    conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,img_1_raw,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-    cv2.imwrite(os.path.join(debug_output_path,'feat_vis.png'),feat_vis_img)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_0.png'),conf_cont_0)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_div_0.png'),conf_div_0)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_cont_1.png'),conf_cont_1)
-    cv2.imwrite(os.path.join(debug_output_path,'conf_div_1.png'),conf_div_1)
-
-    window_0.to_gpu()
-    window_1.to_gpu()
-
-    print("=======================window info=======================")
-    print(f"sample factor:{encoder.SAMPLE_FACTOR}")
-    print(f"feature:{window_0.feature.shape}")
-    print(f"conf:{window_0.conf.shape}")
-    print(f"local:{window_0.local.shape}")
-    print(f"dem:{window_0.dem.shape}")
-    print("\n")
-
-    fit_affine(args,window_0,window_1)
+    fit_affine(args,window_pairs)
 
     errors = check_error([img_0,img_1])
     info = f"error:\nmax:{errors.max()}\nmin:{errors.min()}\nmean:{errors.mean()}\nmedian:{np.median(errors)}\n<1px:{(errors < 1.).sum() * 1. / len(errors)}\n<3px:{(errors < 3.).sum() * 1. / len(errors)}\n<5px:{(errors < 5.).sum() * 1. / len(errors)}"
