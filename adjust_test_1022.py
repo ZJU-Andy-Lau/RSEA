@@ -448,7 +448,7 @@ if __name__ == '__main__':
             print("\nStarting final error check on Rank 0...")
             errors = check_error([img_0,img_1])
             if errors is not None:
-                info = f"Error Report:\nmax: {errors.max():.4f} m\nmin: {errors.min():.4f} m\nmean: {errors.mean():.4f} m\nmedian: {np.median(errors):.4f} m\n<1px: {((errors < 0.5).sum() * 1. / len(errors)) * 100:.2f} %\n<3px: {((errors < 1.5).sum() * 1. / len(errors)) * 100:.2f} %\n<5px: {((errors < 2.5).sum() * 1. / len(errors)) * 100:.2f} %"
+                info = f"Error Report:\nmax: {errors.max():.4f} m\nmin: {errors.min():.4f} m\nmean: {errors.mean():.4f} m\nmedian: {np.median(errors):.4f} m\n<1m: {((errors < 1.).sum() * 1. / len(errors)) * 100:.2f} %\n<3m: {((errors < 3.).sum() * 1. / len(errors)) * 100:.2f} %\n<5m: {((errors < 5.).sum() * 1. / len(errors)) * 100:.2f} %"
                 print(info)
         else:
             print("Optimization finished, but no final matrix was returned from rank 0.")
