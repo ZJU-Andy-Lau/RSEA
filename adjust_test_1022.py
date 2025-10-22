@@ -224,8 +224,8 @@ def fit_affine(args, local_window_pairs:list[Window_Pair], local_rank:int, world
         optimizer_r.zero_grad()
         optimizer_t.zero_grad()
         
-        # 从DDP模型获取仿射矩阵 (调用 forward())
-        af_mat = model_ddp()
+        # 解决方案二: 直接调用 .module 的 forward 方法，绕过DDP的外部包装器
+        af_mat = model_ddp.module()
         
         local_total_loss = torch.tensor(0.0, device=local_rank)
         
@@ -456,3 +456,4 @@ if __name__ == '__main__':
 
     # 清理DDP进程组
     dist.destroy_process_group()
+
