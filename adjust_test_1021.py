@@ -1,5 +1,6 @@
 import os
 import argparse
+from matplotlib.rcsetup import validate_markevery
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -68,7 +69,7 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32)
     return warped_local
 
-def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
+def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
     point_base = LazyTensor(local.contiguous().unsqueeze(0))
     query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
@@ -88,7 +89,10 @@ def feature_sampling(feature:torch.Tensor, local:torch.Tensor, query:torch.Tenso
     feature_sample_p3d = feature[idxs]
     feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
 
-    return feature_sample_pd,valid_mask
+    conf_sample_p3 = conf[idxs]
+    conf_sample_p = torch.sum(conf_sample_p3 * weights,dim=1).to(torch.float32)
+
+    return feature_sample_pd,conf_sample_p,valid_mask
 
 
 def fit_affine(args,window_0:Window,window_1:Window):
@@ -115,9 +119,13 @@ def fit_affine(args,window_0:Window,window_1:Window):
         optimizer_t.zero_grad()
         af_mat = torch.concatenate([R,T.unsqueeze(-1)],dim=-1)
         query_local = warp_local(window_1.local,window_1.dem,window_1.rpc,window_0.rpc,af_mat)
-        sample_feature,valid_mask = feature_sampling(window_0.feature,window_0.local,query_local,args.kmin_k) # N,D
+        sample_feature,sample_conf,valid_mask = feature_sampling(window_0.feature,window_0.conf,window_0.local,query_local,args.kmin_k) # N,D
         query_feature = window_1.feature[valid_mask] # N,D
-        loss = torch.norm(query_feature - sample_feature,dim=-1).mean() * 10000.
+        query_conf = window_1.conf[valid_mask]
+        conf_cov = query_conf * sample_conf
+        
+        weight = conf_cov / conf_cov.mean()
+        loss = (torch.norm(query_feature - sample_feature,dim=-1) * weight).mean() * 10000.
         
         loss.backward()
         optimizer_r.step()
@@ -284,17 +292,6 @@ if __name__ == '__main__':
     cv2.imwrite(os.path.join(debug_output_path,'conf_div_0.png'),conf_div_0)
     cv2.imwrite(os.path.join(debug_output_path,'conf_cont_1.png'),conf_cont_1)
     cv2.imwrite(os.path.join(debug_output_path,'conf_div_1.png'),conf_div_1)
-
-    mask_0 = window_0.conf >= args.conf_threshold
-    window_0.feature = window_0.feature[mask_0]
-    window_0.conf = window_0.conf[mask_0]
-    window_0.local = window_0.local[mask_0]
-    window_0.dem = window_0.dem[mask_0]
-    mask_1 = window_1.conf >= args.conf_threshold
-    window_1.feature = window_1.feature[mask_1]
-    window_1.conf = window_1.conf[mask_1]
-    window_1.local = window_1.local[mask_1]
-    window_1.dem = window_1.dem[mask_1]
 
     window_0.to_gpu()
     window_1.to_gpu()
