@@ -173,7 +173,7 @@ def residual2conf(residual,t = 6.):
     conf = torch.full(residual.shape,.5,device=residual.device,dtype=residual.dtype)
     conf[residual > t] = .1
     conf[(residual < t) & (residual >= 0)] = .9
-    conf[residual < 0] = .5
+    conf[residual < 0] = .1
     return conf
 
 def detect_nan(items:list):
