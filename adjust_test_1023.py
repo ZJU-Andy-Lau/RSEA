@@ -191,7 +191,9 @@ class Window_Pair():
 def load_imgs_bundle(args) -> List[RSImage]:
     """加载所有影像，但只加载元数据。"""
     base_path = os.path.join(args.root, 'adjust_images')
+    select_img_idxs = [int(i) for i in args.select_imgs.split(',')]
     img_folders = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))])
+    img_folders = [img_folders[i] for i in select_img_idxs]
     
     images = []
     print(f"Found {len(img_folders)} image folders.")
@@ -501,8 +503,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--window_size', type=int, default=2000,help='window size in meter(m)')
 
-    # 'select_imgs' 已失效, 现在会自动加载所有影像
-    # parser.add_argument('--select_imgs',type=str,default='0,1') 
+    parser.add_argument('--select_imgs',type=str,default='0,1') 
 
     parser.add_argument('--init_offset_line',type=float,default=0.)
 
