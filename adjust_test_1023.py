@@ -535,7 +535,11 @@ if __name__ == '__main__':
         for (i, j) in overlapping_pairs:
             # 使用两张影像的 corners 计算重叠区的 grids
             corners = np.stack([images[i].corner_xys, images[j].corner_xys], axis=0)
-            diags = find_grids(corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y, grid_num=args.grid_num)
+            diags = find_grids(corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y)
+            print(f"Select {args.grid_num} grids from total {len(diags)} grids")
+            if args.grid_num > 0:
+                indices = [int((i + 1) * len(diags) / (args.grid_num + 1.)) for i in range(args.grid_num)]
+                diags = [diags[i] for i in indices]
             
             for diag in diags:
                 all_tasks.append( (i, j, diag, task_id) ) # (i, j, diag, global_task_id)
