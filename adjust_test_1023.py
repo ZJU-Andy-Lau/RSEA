@@ -12,7 +12,7 @@ import cv2
 # 使用恢复的、高效的 RSImage 类
 from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
-from model.encoder_dino_0927 import EncoderDino
+from model.encoder_dino_0927_test import EncoderDino
 import scheduler
 from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
 
@@ -50,7 +50,6 @@ class AffineModel(nn.Module):
         # "forward" 就返回仿射矩阵
         return torch.concatenate([self.R, self.T.unsqueeze(-1)], dim=-1)
 
-# (新模块) Step 2+: 定义全局平差模型
 class BundleAffineModel(nn.Module):
     """
     管理所有N-1个可学习仿射变换的模型。
@@ -189,7 +188,6 @@ class Window_Pair():
         self.window_1.to_gpu()
 
         
-# (新函数)
 def load_imgs_bundle(args) -> List[RSImage]:
     """加载所有影像 (包含完整的图像数据)。"""
     base_path = os.path.join(args.root, 'adjust_images')
@@ -210,7 +208,6 @@ def load_imgs_bundle(args) -> List[RSImage]:
     print(f"[Rank {dist.get_rank()}] Successfully loaded {len(images)} images into memory.")
     return images
 
-# (新函数)
 def find_overlapping_pairs(images: List[RSImage]) -> List[Tuple[int, int]]:
     """通过检查地理坐标BBox，找出所有重叠的影像对。"""
     bboxes = []
@@ -282,8 +279,6 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
-
-# (修正) DDP Step 4: fit_affine_bundle 函数定义, 接收 DDP 模型和优化器
 def fit_affine_bundle(args, 
                       local_tasks: list, 
                       images: List[RSImage], 
@@ -305,8 +300,6 @@ def fit_affine_bundle(args,
     if num_images < 2 and local_rank == 0:
         print("Error: Need at least 2 images for bundle adjustment.")
         return
-
-    # (修正) 内部的模型、优化器定义已删除
     
     # 4. 迭代优化
     for iter in range(args.max_iter):
@@ -413,8 +406,7 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     distance = R * c
     
     return distance
-        
-# (新函数)
+
 def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     """计算单对影像 (i, j) 之间的连接点误差"""
     
@@ -447,7 +439,6 @@ def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     distances = haversine_distance(coords_i, coords_j)
     return distances
 
-# (新函数)
 def check_all_pairs_error(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> np.ndarray:
     """在所有重叠对上计算并汇总误差"""
     all_distances = []
@@ -490,7 +481,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--window_size', type=int, default=2000,help='window size in meter(m)')
 
-    # 'select_imgs' 已失效, 现在会自动加载所有影像
     parser.add_argument('--select_imgs',type=str,default='0,1') 
 
     parser.add_argument('--init_offset_line',type=float,default=0.)
@@ -513,7 +503,6 @@ if __name__ == '__main__':
     if local_rank == 0:
         os.makedirs(args.debug_output_path,exist_ok=True)
 
-    # (修正) 每个进程都加载 *所有* 影像的 *完整* 数据
     images = load_imgs_bundle(args)
     if len(images) < 2:
         if local_rank == 0:
@@ -580,9 +569,6 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Rank {local_rank}] !! FAILED to create task {global_task_id} (pair {i},{j}). Error: {e}")
 
-    # (修正) 删除了错误的、重复的 fit_affine_bundle 调用
-
-    # (修正) 在 main 中定义 DDP 模型、优化器、调度器
     model = BundleAffineModel(len(images), args.init_offset_line, args.init_offset_samp).to(local_rank)
     model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
     
@@ -591,10 +577,9 @@ if __name__ == '__main__':
     optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
     optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
     
-    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter)
-    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter)
-    
-    # (修正) 这是唯一的、正确的调用
+    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter,pct_start=0.1)
+    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=0.1)
+
     fit_affine_bundle(args, 
                       local_tasks_with_data, 
                       images, 
