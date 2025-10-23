@@ -141,7 +141,7 @@ class Adapter(nn.Module):
         self.pos_encoder = PositionalEncoding(dim=output_channels)
         
         self.unitize = unitize
-        
+
         self.self_attention_block = AttentionBlock(dim=output_channels, num_heads=8)
         self.norm = nn.LayerNorm(output_channels)
 
@@ -174,11 +174,12 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False,unitize = True):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False,unitize = True,upsample_times = 2):
         super().__init__()
         self.verbose = verbose
         self.layers = layers
-        self.SAMPLE_FACTOR = 4
+        self.SAMPLE_FACTOR = 16 // (2 ** upsample_times)
+        self.upsample_times = upsample_times
         self.input_channels = 3
         self.output_channels = output_channels
 
@@ -197,11 +198,9 @@ class EncoderDino(nn.Module):
         feat_backbone = feat_backbone.reshape(B,H // 16,W // 16,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
 
-        feat = F.interpolate(feat,scale_factor=2,mode='bilinear')
-        conf = F.interpolate(conf,scale_factor=2,mode='bilinear')
-
-        feat = F.interpolate(feat,scale_factor=2,mode='bilinear')
-        conf = F.interpolate(conf,scale_factor=2,mode='bilinear')
+        for i in range(self.upsample_times):
+            feat = F.interpolate(feat,scale_factor=2,mode='bilinear')
+            conf = F.interpolate(conf,scale_factor=2,mode='bilinear')
         
         return feat,conf
     

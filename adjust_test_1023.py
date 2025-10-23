@@ -9,11 +9,13 @@ from torchvision import transforms
 from pykeops.torch import LazyTensor
 import numpy as np
 import cv2
-from rs_image_1022 import RSImage
+# (修改) 导入 rs_image_1023.py 以匹配您上传的文件
+from rs_image_1023 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
 import scheduler
-from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
+# (修改) 导入 vis_feat_pca 替换 vis_feat_twin
+from utils import find_grids, vis_feat_pca, vis_conf, downsample_average
 
 # DDP相关的库
 import torch.distributed as dist
@@ -186,9 +188,10 @@ class Window():
             conf_vis = self.conf.cpu().numpy().reshape(h, w)
             conf_cont, conf_div = vis_conf(conf_vis, self.img, encoder.SAMPLE_FACTOR, div=args.conf_threshold)
             
-            # (修改) 保存唯一的特征和置信度图
-            # 注意：vis_feat_twin 不再适用，我们只保存单张
-            # 暂不保存单张特征图，只保存置信度图
+            # (修改) 保存唯一的特征(PCA)和置信度图
+            # 使用 vis_feat_pca 替换 vis_feat_twin
+            feat_pca_vis_img = vis_feat_pca(feat_vis)
+            cv2.imwrite(os.path.join(self.debug_output_path, f'feat_pca_{self.image_id}.png'), feat_pca_vis_img)
             cv2.imwrite(os.path.join(self.debug_output_path, f'conf_cont_{self.image_id}.png'), conf_cont)
             cv2.imwrite(os.path.join(self.debug_output_path, f'conf_div_{self.image_id}.png'), conf_div)
 
@@ -590,7 +593,7 @@ if __name__ == '__main__':
         exit()
 
     # (修改) 所有进程都加载特征提取器
-    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
@@ -620,10 +623,18 @@ if __name__ == '__main__':
         
         # (修改) 生成 窗口创建任务 M * N
         window_creation_tasks = [(i, k) for i in range(M) for k in range(N)]
+        # (修改) 增加注释，解释为何要随机打乱
+        # 随机打乱任务列表以实现 DDP 负载均衡
+        # 这可以防止某个GPU被分配到连续的、计算/IO密集型任务（例如都属于同一个大影像）
+        # 从而避免该GPU成为“掉队者”，导致所有其他GPU在同步点（如all_gather）空等
         random.shuffle(window_creation_tasks)
         
         # (修改) 生成 损失计算任务 (M*(M-1)/2) * N
         loss_calculation_tasks = [(i, j, k) for k in range(N) for i in range(M) for j in range(i + 1, M)]
+        # (修改) 增加注释，解释为何要随机打乱
+        # 随机打乱损失计算任务以实现 DDP 负载均衡
+        # 这确保了每个GPU在优化循环的每一步中都处理混合的格网(k)和影像对(i,j)
+        # 避免了内存访问热点（例如一个GPU只访问grid_0的数据）和计算负载不均
         random.shuffle(loss_calculation_tasks)
         
         # (修改) 生成用于最终验证的重叠对列表
@@ -695,7 +706,7 @@ if __name__ == '__main__':
             print("Warning: Only one image loaded, no parameters to optimize.")
             
     # (修改) DDP Step 9: 调用优化循环
-    if len(my_loss_tasks) > 0 or len(images) > 1: # 确保 M > 1
+    if (len(my_loss_tasks) > 0 or dist.get_rank() == 0) and len(images) > 1: # 确保 M > 1
         fit_affine_bundle(args, 
                           my_loss_tasks, 
                           final_global_windows,
@@ -752,3 +763,4 @@ if __name__ == '__main__':
     
     # 清理DDP进程组
     dist.destroy_process_group()
+
