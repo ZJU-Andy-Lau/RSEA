@@ -12,7 +12,7 @@ import cv2
 # 使用恢复的、高效的 RSImage 类
 from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
-from model.encoder_dino_0927_test import EncoderDino
+from model.encoder_dino_0927 import EncoderDino
 import scheduler
 from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
 
