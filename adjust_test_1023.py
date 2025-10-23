@@ -9,7 +9,6 @@ from torchvision import transforms
 from pykeops.torch import LazyTensor
 import numpy as np
 import cv2
-# 使用恢复的、高效的 RSImage 类
 from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
@@ -19,7 +18,7 @@ from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
 # DDP相关的库
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -84,67 +83,82 @@ class BundleAffineModel(nn.Module):
             # 调用子模型的 forward()
             return self.models[index - 1]()
 
-
-class Window():
-    def __init__(self,img:np.ndarray,local:np.ndarray,dem:np.ndarray,rpc:RPCModelParameterTorch):
-        self.img = img
-        self.local = torch.from_numpy(local)
-        self.dem = torch.from_numpy(dem)
-        self.rpc = rpc
-        self.feature = None
-        self.conf = None
+# (新增) 辅助函数：用于在可视化图像上绘制网格
+def draw_grid(image: np.ndarray, grid_coords: np.ndarray, line_color=(0, 255, 0), thickness=1):
+    """
+    在图像上绘制网格线。
+    :param image: (H, W, 3) 图像
+    :param grid_coords: (grid_H, grid_W, 2) 坐标网格，(x, y) 或 (samp, line) 格式
+    """
+    vis_img = image.copy()
+    if vis_img.ndim == 2:
+        vis_img = cv2.cvtColor(vis_img, cv2.COLOR_GRAY2BGR)
         
+    grid_H, grid_W = grid_coords.shape[:2]
     
-    def to_gpu(self):
-        # 这里的 .cuda() 会自动使用 torch.cuda.set_device 设置的当前卡
-        self.local = self.local.cuda()
-        self.dem = self.dem.cuda()
-        self.rpc.to_gpu()
+    # 绘制水平线 (沿 W 方向)
+    for i in range(grid_H):
+        for j in range(grid_W - 1):
+            pt1 = (int(grid_coords[i, j, 0]), int(grid_coords[i, j, 1]))
+            pt2 = (int(grid_coords[i, j + 1, 0]), int(grid_coords[i, j + 1, 1]))
+            cv2.line(vis_img, pt1, pt2, line_color, thickness)
+            
+    # 绘制垂直线 (沿 H 方向)
+    for j in range(grid_W):
+        for i in range(grid_H - 1):
+            pt1 = (int(grid_coords[i, j, 0]), int(grid_coords[i, j, 1]))
+            pt2 = (int(grid_coords[i + 1, j, 0]), int(grid_coords[i + 1, j, 1]))
+            cv2.line(vis_img, pt1, pt2, line_color, thickness)
+            
+    return vis_img
 
-    
-
-class Window_Pair():
-    def __init__(self,args,diag:np.ndarray,img_0:RSImage,img_1:RSImage,id:int):
+# (修改) Window 类：替换 Window_Pair，现在代表单个影像在单个格网上的数据
+class Window():
+    def __init__(self, args, diag:np.ndarray, img:RSImage, grid_id:int, image_id:int):
         """
-        (平差版修改): img_0 和 img_1 现在是任意的 img_i 和 img_j
+        (重构版)
+        diag: 全局格网的地理坐标 (2, 2)
+        img: 这块窗口所属的 RSImage 对象
+        grid_id: 全局格网的索引
+        image_id: 影像的索引
         """
-        self.id = id
+        self.grid_id = grid_id
+        self.image_id = image_id
+        self.rpc = img.rpc
         resample_size = 1024
         
-        # 计算 img_i (img_0) 的角点
-        corners_sampline_0 = img_0.xy_to_sampline(np.array([diag[0],
-                                                            [diag[1,0],diag[0,1]],
-                                                            diag[1],
-                                                            [diag[0,0],diag[1,1]]]))
-        # 计算 img_j (img_1) 的角点
-        corners_sampline_1 = img_1.xy_to_sampline(np.array([diag[0],
-                                                            [diag[1,0],diag[0,1]],
-                                                            diag[1],
-                                                            [diag[0,0],diag[1,1]]]))
+        # 计算 img (image_id) 在格网 (grid_id) 上的角点
+        corners_sampline = img.xy_to_sampline(np.array([diag[0],
+                                                        [diag[1,0],diag[0,1]],
+                                                        diag[1],
+                                                        [diag[0,0],diag[1,1]]]))
         
-        # (修正) 现在从内存中的 self.image 重采样
-        img_0_raw,local_0 = img_0.resample_image_by_sampline(corners_sampline_0,(resample_size,resample_size),need_local=True)
-        img_1_raw,local_1 = img_1.resample_image_by_sampline(corners_sampline_1,(resample_size,resample_size),need_local=True)
+        # 重采样 img, local, dem
+        img_raw, local = img.resample_image_by_sampline(corners_sampline,(resample_size,resample_size),need_local=True)
+        dem = img.resample_dem_by_sampline(corners_sampline,(resample_size,resample_size))
+
+        self.img = img_raw  # 临时存储，提取特征后释放
+        self.local = torch.from_numpy(local) # (H, W, 2)
+        self.local_shape = local.shape[:2] # 存储原始形状 (H, W)
+        self.dem = torch.from_numpy(dem) # (H, W)
         
-        dem_0 = img_0.resample_dem_by_sampline(corners_sampline_0,(resample_size,resample_size))
-        dem_1 = img_1.resample_dem_by_sampline(corners_sampline_1,(resample_size,resample_size))
+        self.feature = None
+        self.conf = None
 
-        # Window_0 对应 img_i, Window_1 对应 img_j
-        self.window_0 = Window(img_0_raw,local_0,dem_0,img_0.rpc)
-        self.window_1 = Window(img_1_raw,local_1,dem_1,img_1.rpc)
-
-        self.debug_output_path = os.path.join(args.debug_output_path,f'window_pair_{self.id}')
+        # (修改) 调试路径现在包含 image_id 和 grid_id
+        self.debug_output_path = os.path.join(args.debug_output_path, f'window_i{self.image_id}_k{self.grid_id}')
         
         # 只在主进程上保存调试图像，避免文件写入冲突
         if dist.get_rank() == 0:
-            os.makedirs(self.debug_output_path,exist_ok=True)
-            cv2.imwrite(os.path.join(self.debug_output_path,f'img_raw_{img_0.id}.png'),img_0_raw)
-            cv2.imwrite(os.path.join(self.debug_output_path,f'img_raw_{img_1.id}.png'),img_1_raw)
+            os.makedirs(self.debug_output_path, exist_ok=True)
+            # 保存重采样的原始图像，供后续可视化使用
+            cv2.imwrite(os.path.join(self.debug_output_path, f'img_raw_{self.image_id}.png'), img_raw)
+            np.save(os.path.join(self.debug_output_path, f'local_{self.image_id}.npy'), local)
 
 
     @torch.no_grad()
-    def __extract_one_img_feature__(self,encoder:EncoderDino,img_raw:np.ndarray):
-        # encoder 会被移动到当前进程对应的GPU
+    def __extract_one_img_feature__(self, encoder:EncoderDino, img_raw:np.ndarray):
+        # (同旧版)
         encoder = encoder.cuda().eval()
         transform = transforms.Compose([
                     transforms.ToTensor(),
@@ -152,94 +166,88 @@ class Window_Pair():
                     ])
         img_tensor = transform(img_raw)
         img_tensor = img_tensor[None].cuda()
-        feature,conf = encoder(img_tensor)
+        feature, conf = encoder(img_tensor)
         
-        return feature,conf
+        return feature, conf
 
-    def extract_features(self,encoder:EncoderDino):
-        feature_0,conf_0 = self.__extract_one_img_feature__(encoder,self.window_0.img)
-        feature_1,conf_1 = self.__extract_one_img_feature__(encoder,self.window_1.img)
-        h,w = feature_0.shape[-2:]
-        self.window_0.feature = feature_0[0].permute(1,2,0).flatten(0,1)
-        self.window_0.conf = conf_0.squeeze().flatten(0,1)
-        self.window_0.local = downsample_average(self.window_0.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_0.feature.device)
-        self.window_0.dem = downsample_average(self.window_0.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_0.feature.device)
-        self.window_1.feature = feature_1[0].permute(1,2,0).flatten(0,1)
-        self.window_1.conf = conf_1.squeeze().flatten(0,1)
-        self.window_1.local = downsample_average(self.window_1.local,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_1.feature.device)
-        self.window_1.dem = downsample_average(self.window_1.dem,encoder.SAMPLE_FACTOR).flatten(0,1).to(self.window_1.feature.device)
+    def extract_features(self, encoder:EncoderDino):
+        # (修改) 只提取自己的特征
+        feature, conf = self.__extract_one_img_feature__(encoder, self.img)
+        h, w = feature.shape[-2:]
+        
+        self.feature = feature[0].permute(1,2,0).flatten(0,1)
+        self.conf = conf.squeeze().flatten(0,1)
+        self.local = downsample_average(self.local, encoder.SAMPLE_FACTOR).flatten(0,1)
+        self.dem = downsample_average(self.dem, encoder.SAMPLE_FACTOR).flatten(0,1)
 
         # 只在主进程上保存调试图像
         if dist.get_rank() == 0:
-            feat_0_vis = self.window_0.feature.cpu().numpy().reshape(h,w,-1)
-            feat_1_vis = self.window_1.feature.cpu().numpy().reshape(h,w,-1)
-            conf_0_vis = self.window_0.conf.cpu().numpy().reshape(h,w)
-            conf_1_vis = self.window_1.conf.cpu().numpy().reshape(h,w)
-            feat_vis_img = vis_feat_twin(feat_0_vis,feat_1_vis)
-            conf_cont_0,conf_div_0 = vis_conf(conf_0_vis,self.window_0.img,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-            conf_cont_1,conf_div_1 = vis_conf(conf_1_vis,self.window_1.img,encoder.SAMPLE_FACTOR,div=args.conf_threshold)
-            cv2.imwrite(os.path.join(self.debug_output_path,'feat_vis.png'),feat_vis_img)
-            cv2.imwrite(os.path.join(self.debug_output_path,'conf_cont_0.png'),conf_cont_0)
-            cv2.imwrite(os.path.join(self.debug_output_path,'conf_div_0.png'),conf_div_0)
-            cv2.imwrite(os.path.join(self.debug_output_path,'conf_cont_1.png'),conf_cont_1)
-            cv2.imwrite(os.path.join(self.debug_output_path,'conf_div_1.png'),conf_div_1)
+            feat_vis = self.feature.cpu().numpy().reshape(h, w, -1)
+            conf_vis = self.conf.cpu().numpy().reshape(h, w)
+            conf_cont, conf_div = vis_conf(conf_vis, self.img, encoder.SAMPLE_FACTOR, div=args.conf_threshold)
+            
+            # (修改) 保存唯一的特征和置信度图
+            # 注意：vis_feat_twin 不再适用，我们只保存单张
+            # 暂不保存单张特征图，只保存置信度图
+            cv2.imwrite(os.path.join(self.debug_output_path, f'conf_cont_{self.image_id}.png'), conf_cont)
+            cv2.imwrite(os.path.join(self.debug_output_path, f'conf_div_{self.image_id}.png'), conf_div)
 
-        self.window_0.to_gpu()
-        self.window_1.to_gpu()
+        # (关键) 释放原始图像占用的CPU/GPU内存
+        self.img = None
+    
+    def to_gpu(self):
+        # (修改) 将所有张量数据移动到当前进程的GPU
+        # 这里的 .cuda() 会自动使用 torch.cuda.set_device 设置的当前卡
+        self.local = self.local.cuda()
+        self.dem = self.dem.cuda()
+        self.rpc.to_gpu()
+        
+        # (新增) 确保特征和置信度也在当前GPU
+        # 这在 all_gather_object 之后至关重要，因为数据会先被同步到CPU
+        if self.feature is not None:
+            self.feature = self.feature.cuda()
+        if self.conf is not None:
+            self.conf = self.conf.cuda()
 
         
+# (删除) Window_Pair 类被移除
+
 def load_imgs_bundle(args) -> List[RSImage]:
-    """加载所有影像 (包含完整的图像数据)。"""
+    """加载所有影像 (包含完整的图像数据)。(逻辑不变)"""
     base_path = os.path.join(args.root, 'adjust_images')
     select_img_idxs = [int(i) for i in args.select_imgs.split(',')]
     img_folders = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))])
     img_folders = [img_folders[i] for i in select_img_idxs]
     
     images = []
-    print(f"[Rank {dist.get_rank()}] Found {len(img_folders)} image folders. Loading all...")
+    # (修改) 仅 Rank 0 打印加载信息
+    if dist.get_rank() == 0:
+        print(f"Found {len(img_folders)} image folders. Loading all...")
+        
     for idx, folder in enumerate(img_folders):
         img_path = os.path.join(base_path, folder)
         try:
             images.append(RSImage(args, img_path, idx))
-            print(f"[Rank {dist.get_rank()}] Loaded image {idx} from {folder}.")
+            if dist.get_rank() == 0:
+                print(f"Loaded image {idx} from {folder}.")
         except Exception as e:
-            print(f"[Rank {dist.get_rank()}] Failed to load image {idx} from {folder}: {e}")
+            if dist.get_rank() == 0:
+                print(f"Failed to load image {idx} from {folder}: {e}")
             
-    print(f"[Rank {dist.get_rank()}] Successfully loaded {len(images)} images into memory.")
+    if dist.get_rank() == 0:
+        print(f"Successfully loaded {len(images)} images into memory by all processes.")
     return images
 
-def find_overlapping_pairs(images: List[RSImage]) -> List[Tuple[int, int]]:
-    """通过检查地理坐标BBox，找出所有重叠的影像对。"""
-    bboxes = []
-    for img in images:
-        min_x = img.corner_xys[:, 0].min()
-        max_x = img.corner_xys[:, 0].max()
-        min_y = img.corner_xys[:, 1].min()
-        max_y = img.corner_xys[:, 1].max()
-        bboxes.append((min_x, min_y, max_x, max_y))
-
-    pairs = []
-    for i in range(len(images)):
-        for j in range(i + 1, len(images)):
-            b1 = bboxes[i]
-            b2 = bboxes[j]
-            
-            # 检查是否不相交
-            is_disjoint = (b1[2] < b2[0] or  # b1.maxX < b2.minX
-                           b1[0] > b2[2] or  # b1.minX > b2.maxX
-                           b1[3] < b2[1] or  # b1.maxY < b2.minY
-                           b1[1] > b2[3])   # b1.minY > b2.maxY
-            
-            if not is_disjoint:
-                pairs.append((i, j))
-                
-    print(f"Found {len(pairs)} overlapping pairs.")
-    return pairs
-
+# (删除) find_overlapping_pairs 函数不再需要，
+# find_grids 会处理公共重叠区，loss_calculation_tasks 会自动生成所有对。
 
 def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorch,rpc_dst:RPCModelParameterTorch,affine_matrix:torch.Tensor):
+    # (逻辑不变)
     # RPC内部计算是float64，但affine_matrix是float32，需要转换
     affine_matrix_double = affine_matrix.to(torch.double)
+    
+    # (修改) 确保 local 也是 float32
+    local = local.float()
     ones = torch.ones(local.shape[0],1).to(device=local.device,dtype=local.dtype)
     local_homo = torch.cat([local,ones],dim=-1)
     
@@ -252,6 +260,7 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     return warped_local
 
 def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
+    # (逻辑不变)
     point_base = LazyTensor(local.contiguous().unsqueeze(0))
     query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
@@ -279,9 +288,13 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
+# (修改) fit_affine_bundle 函数：
+# 现在接收 my_loss_tasks 和 global_windows_db
 def fit_affine_bundle(args, 
-                      local_tasks: list, 
+                      my_loss_tasks: List[Tuple[int, int, int]], 
+                      global_windows_db: Dict[Tuple[int, int], Window],
                       images: List[RSImage], 
+                      diags: List[np.ndarray],
                       model_ddp: DDP, 
                       optimizer_r: torch.optim.Adam, 
                       optimizer_t: torch.optim.Adam, 
@@ -289,18 +302,18 @@ def fit_affine_bundle(args,
                       scheduler_t, 
                       local_rank:int, 
                       world_size:int):
-    """
-    使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
-    local_tasks: [(i, j, window_pair_ij), ...]
-    images: [RSImage_0, RSImage_1, ...] (包含完整图像)
-    model_ddp, optimizers, schedulers: 从 main 传入
-    """
     
     num_images = len(images)
     if num_images < 2 and local_rank == 0:
         print("Error: Need at least 2 images for bundle adjustment.")
         return
     
+    # (新增) 可视化输出目录
+    vis_output_dir = None
+    if local_rank == 0:
+        vis_output_dir = os.path.join(args.debug_output_path, 'training_vis')
+        os.makedirs(vis_output_dir, exist_ok=True)
+
     # 4. 迭代优化
     for iter in range(args.max_iter):
         optimizer_r.zero_grad()
@@ -309,26 +322,36 @@ def fit_affine_bundle(args,
         local_total_loss = torch.tensor(0.0, device=local_rank)
         num_valid_pairs = 0
         
-        # 5. 只在 *本地* 的任务子集上循环
-        if len(local_tasks) == 0:
+        # 5. 只在 *本地* 的损失计算任务子集上循环
+        if len(my_loss_tasks) == 0:
             pass # loss为0，梯度也为0，是安全的
         else:
-            for (i, j, window_pair_ij) in local_tasks:
+            # for (i, j, window_pair_ij) in local_tasks:
+            # (修改) 遍历 (i, j, k) 任务
+            for (i, j, k) in my_loss_tasks:
                 
                 # 从 DDP 模型中获取 *当前* 的仿射矩阵
-                # 直接调用 .module.get_affine 绕过 DDP 包装器
                 A_i = model_ddp.module.get_affine(i)
                 A_j = model_ddp.module.get_affine(j)
                 
-                # 获取 Window_Pair 中的数据
-                window_i = window_pair_ij.window_0 # 对应 img_i
-                window_j = window_pair_ij.window_1 # 对应 img_j
+                # (修改) --- 从全局数据库中检索 Window ---
+                try:
+                    window_i = global_windows_db[(i, k)]
+                    window_j = global_windows_db[(j, k)]
+                except KeyError:
+                    # 理论上不应该发生
+                    print(f"[Rank {local_rank}] Warning: Could not find Window for pair (i={i}, k={k}) or (j={j}, k={k}). Skipping.")
+                    continue 
+
+                # (修改) --- 关键：将在 all_gather 后位于CPU的数据移至当前GPU ---
+                window_i.to_gpu()
+                window_j.to_gpu()
                 
                 # 获取RPC (RPC已在to_gpu()时移动到对应卡)
                 rpc_i = images[i].rpc
                 rpc_j = images[j].rpc
                 
-                # --- 计算对称损失 ---
+                # --- 计算对称损失 (此部分逻辑完全不变) ---
                 
                 # 1. Warp j -> i
                 warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
@@ -365,20 +388,71 @@ def fit_affine_bundle(args,
                 local_total_loss = local_total_loss / num_valid_pairs
             
         # 7. 反向传播 (DDP 在此处自动计算并同步所有进程的梯度平均值)
-        local_total_loss.backward()
+        # 确保即使 loss 为 0 也要反向传播，以同步所有进程
+        if torch.is_grad_enabled():
+            local_total_loss.backward()
         
         optimizer_r.step()
         optimizer_t.step()
 
-        # 8. 日志记录 (只在 rank 0 上打印)
+        # 8. 日志记录
         if (iter + 1) % 10 == 0:
             global_loss_sum = local_total_loss.clone().detach()
             dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
             global_avg_loss = global_loss_sum / world_size
 
             if local_rank == 0:
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss.item():.4f} \t lr:{scheduler_t.get_lr()[0]:.2e}")
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss.item():.4f} \t lr_T:{scheduler_t.get_lr()[0]:.2e}")
         
+        # (新增) 可视化逻辑
+        if (iter + 1) % 100 == 0 and local_rank == 0 and len(my_loss_tasks) > 0:
+            try:
+                # 选取本地的第一个任务进行可视化
+                vis_task = my_loss_tasks[0]
+                i, j, k = vis_task
+                
+                # 获取数据
+                window_i = global_windows_db[(i, k)]
+                window_j = global_windows_db[(j, k)]
+                A_i = model_ddp.module.get_affine(i).detach()
+                A_j = model_ddp.module.get_affine(j).detach()
+                
+                # 重新加载原始图像 (必须存在)
+                vis_path_i = window_i.debug_output_path
+                vis_path_j = window_j.debug_output_path
+                img_i_raw = cv2.imread(os.path.join(vis_path_i, f'img_raw_{i}.png'))
+                img_j_raw = cv2.imread(os.path.join(vis_path_j, f'img_raw_{j}.png'))
+                
+                # 重新加载原始 local 坐标
+                local_i_grid_np = np.load(os.path.join(vis_path_i, f'local_{i}.npy'))
+                local_j_grid_np = np.load(os.path.join(vis_path_j, f'local_{j}.npy'))
+                
+                if img_i_raw is None or img_j_raw is None:
+                    print(f"Visualization Error: Could not load raw images for i={i}, j={j}, k={k}")
+                else:
+                    # 计算 warped grid
+                    H, W = window_i.local_shape
+                    
+                    # 我们需要原始的 (H, W, 2) local 坐标，但 window_i.local 已经被降采样和展平
+                    # 因此我们使用 numpy 重新加载的
+                    local_i_flat_vis = torch.from_numpy(local_i_grid_np).flatten(0, 1).cuda().float()
+                    # dem 也需要重新降采样
+                    dem_i_flat_vis = downsample_average(torch.from_numpy(window_i.dem.cpu().numpy().reshape(H, W)), encoder.SAMPLE_FACTOR).flatten(0,1).cuda()
+                    
+                    warp_i_to_j = warp_local(local_i_flat_vis, dem_i_flat_vis, images[i].rpc, images[j].rpc, A_i)
+                    warp_i_to_j_grid = warp_i_to_j.reshape(H, W, 2).cpu().numpy()
+                    
+                    # 绘制
+                    vis_img_j_warped = draw_grid(img_j_raw, warp_i_to_j_grid[:, :, [1, 0]]) # (samp, line) -> (x, y)
+                    vis_img_j_orig = draw_grid(img_j_raw, local_j_grid_np[:, :, [1, 0]]) # (samp, line) -> (x, y)
+                    comparison_img = cv2.hconcat([vis_img_j_orig, vis_img_j_warped])
+                    
+                    cv2.imwrite(os.path.join(vis_output_dir, f'iter_{iter+1}_warp_{i}_to_{j}_grid_{k}.png'), comparison_img)
+                    print(f"Saved visualization for iter {iter+1}, pair ({i}, {j}), grid {k}.")
+
+            except Exception as e:
+                print(f"Visualization Error: {e}")
+
         scheduler_r.step()
         scheduler_t.step()
 
@@ -387,6 +461,7 @@ def fit_affine_bundle(args,
         print("Bundle adjustment optimization finished.")
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
+    # (逻辑不变)
     R = 6371000 
     lat1 = coords1[:, 0]
     lon1 = coords1[:, 1]
@@ -408,7 +483,7 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     return distance
 
 def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
-    """计算单对影像 (i, j) 之间的连接点误差"""
+    """计算单对影像 (i, j) 之间的连接点误差 (逻辑不变)"""
     
     if img_i.tie_points is None or img_j.tie_points is None:
         print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Missing tie points.")
@@ -440,7 +515,7 @@ def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     return distances
 
 def check_all_pairs_error(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> np.ndarray:
-    """在所有重叠对上计算并汇总误差"""
+    """在所有重叠对上计算并汇总误差 (逻辑不变)"""
     all_distances = []
     print("--- Global Error Report ---")
     for (i, j) in overlapping_pairs:
@@ -502,7 +577,11 @@ if __name__ == '__main__':
     args.debug_output_path = os.path.join(args.root,'debug_output')
     if local_rank == 0:
         os.makedirs(args.debug_output_path,exist_ok=True)
+    
+    # (修改) 确保所有进程都等待 Rank 0 创建好目录
+    dist.barrier()
 
+    # (修改) 所有进程都加载 RSImage 对象
     images = load_imgs_bundle(args)
     if len(images) < 2:
         if local_rank == 0:
@@ -510,120 +589,166 @@ if __name__ == '__main__':
         dist.destroy_process_group()
         exit()
 
-    # DDP Step 3: 任务生成与分片
-    all_tasks = [] # [(i, j, diag), ...]
-    overlapping_pairs = [] # [(i, j), ...]
-    
-    # 只在主进程 (rank 0) 上生成任务列表
-    if local_rank == 0:
-        print("Rank 0: Finding overlapping pairs...")
-        overlapping_pairs = find_overlapping_pairs(images)
-        
-        print("Rank 0: Generating all_tasks list from overlapping pairs...")
-        task_id = 0
-        for (i, j) in overlapping_pairs:
-            # 使用两张影像的 corners 计算重叠区的 grids
-            corners = np.stack([images[i].corner_xys, images[j].corner_xys], axis=0)
-            diags = find_grids(corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y)
-            print(f"Select {args.grid_num} grids from total {len(diags)} grids")
-            if args.grid_num > 0:
-                indices = [int((i + 1) * len(diags) / (args.grid_num + 1.)) for i in range(args.grid_num)]
-                diags = [diags[i] for i in indices]
-            
-            for diag in diags:
-                all_tasks.append( (i, j, diag, task_id) ) # (i, j, diag, global_task_id)
-                task_id += 1
-        
-        # 为了负载均衡，打乱任务列表
-        random.shuffle(all_tasks)
-        print(f"Rank 0: Found {len(all_tasks)} total tasks across {len(overlapping_pairs)} pairs.")
-
-    # 将任务列表广播给所有进程
-    tasks_to_broadcast = [all_tasks] if local_rank == 0 else [None]
-    dist.broadcast_object_list(tasks_to_broadcast, src=0)
-    all_tasks = tasks_to_broadcast[0]
-    
-    # 将重叠对列表也广播
-    pairs_to_broadcast = [overlapping_pairs] if local_rank == 0 else [None]
-    dist.broadcast_object_list(pairs_to_broadcast, src=0)
-    overlapping_pairs = pairs_to_broadcast[0]
-
-    # 每个进程根据自己的rank获取数据子集
-    my_tasks = all_tasks[local_rank::world_size] 
-
-    # 每个进程都加载特征提取器
+    # (修改) 所有进程都加载特征提取器
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
 
-    # 每个进程在自己的任务子集上创建 Window_Pair
-    local_tasks_with_data = [] # [(i, j, window_pair_ij), ...]
-    print(f"[Rank {local_rank}] Total tasks: {len(all_tasks)}, assigned: {len(my_tasks)}.")
-    for (i, j, diag, global_task_id) in my_tasks:
-        try:
-            window_pair = Window_Pair(args, diag, images[i], images[j], global_task_id)
-            window_pair.extract_features(encoder)
-            local_tasks_with_data.append( (i, j, window_pair) )
-            print(f"[Rank {local_rank}] Task {global_task_id} (pair {i},{j}) created on cuda:{local_rank}")
-        except Exception as e:
-            print(f"[Rank {local_rank}] !! FAILED to create task {global_task_id} (pair {i},{j}). Error: {e}")
+    # (修改) DDP Step 3: 任务生成(Rank 0)
+    diags = []
+    window_creation_tasks = [] # List[(i, k)]
+    loss_calculation_tasks = [] # List[(i, j, k)]
+    overlapping_pairs = [] # List[(i, j)]
+    
+    if local_rank == 0:
+        print("Rank 0: Generating global grids...")
+        # (修改) 收集所有影像的 corners
+        all_corners = np.stack([img.corner_xys for img in images], axis=0) # (M, 4, 2)
+        
+        # (修改) find_grids 现在基于所有影像的公共重叠区
+        diags = find_grids(all_corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y)
+        
+        print(f"Rank 0: Found {len(diags)} global grids common to all {len(images)} images.")
+        if args.grid_num > 0 and len(diags) > 0:
+            indices = [int((i + 1) * len(diags) / (args.grid_num + 1.)) for i in range(args.grid_num)]
+            diags = [diags[i] for i in indices]
+            print(f"Rank 0: Selected {len(diags)} grids based on grid_num={args.grid_num}.")
 
+        N = len(diags)
+        M = len(images)
+        
+        # (修改) 生成 窗口创建任务 M * N
+        window_creation_tasks = [(i, k) for i in range(M) for k in range(N)]
+        random.shuffle(window_creation_tasks)
+        
+        # (修改) 生成 损失计算任务 (M*(M-1)/2) * N
+        loss_calculation_tasks = [(i, j, k) for k in range(N) for i in range(M) for j in range(i + 1, M)]
+        random.shuffle(loss_calculation_tasks)
+        
+        # (修改) 生成用于最终验证的重叠对列表
+        overlapping_pairs = list(set([(i, j) for i, j, k in loss_calculation_tasks]))
+        
+        print(f"Rank 0: Generated {len(window_creation_tasks)} window creation tasks.")
+        print(f"Rank 0: Generated {len(loss_calculation_tasks)} loss calculation tasks.")
+        
+        data_to_broadcast = [diags, window_creation_tasks, loss_calculation_tasks, overlapping_pairs]
+    else:
+        data_to_broadcast = [None] * 4
+
+    # (修改) DDP Step 4: 广播任务列表
+    dist.broadcast_object_list(data_to_broadcast, src=0)
+    diags, window_creation_tasks, loss_calculation_tasks, overlapping_pairs = data_to_broadcast
+    
+    # (修改) DDP Step 5: 任务分片 (每个进程)
+    my_creation_tasks = window_creation_tasks[local_rank::world_size] 
+    my_loss_tasks = loss_calculation_tasks[local_rank::world_size]
+
+    # (修改) DDP Step 6: 并行特征提取
+    local_windows_storage: Dict[Tuple[int, int], Window] = {}
+    print(f"[Rank {local_rank}] Assigned {len(my_creation_tasks)} window creation tasks.")
+    
+    for (i, k) in my_creation_tasks:
+        try:
+            diag_k = diags[k]
+            window = Window(args, diag_k, images[i], grid_id=k, image_id=i)
+            window.extract_features(encoder)
+            local_windows_storage[(i, k)] = window # Key: (image_id, grid_id)
+        except Exception as e:
+            print(f"[Rank {local_rank}] !! FAILED to create window (i={i}, k={k}). Error: {e}")
+    
+    print(f"[Rank {local_rank}] Finished feature extraction. Gathering all windows...")
+    
+    # (修改) DDP Step 7: 全局数据同步
+    gathered_list = [None] * world_size
+    dist.all_gather_object(gathered_list, local_windows_storage)
+    
+    # (修改) 合并所有数据
+    final_global_windows: Dict[Tuple[int, int], Window] = {}
+    for d in gathered_list:
+        final_global_windows.update(d)
+    
+    del gathered_list, local_windows_storage # 释放内存
+    print(f"[Rank {local_rank}] All {len(final_global_windows)} windows gathered.")
+
+    # (修改) DDP Step 8: 模型与优化器设置 (逻辑不变)
     model = BundleAffineModel(len(images), args.init_offset_line, args.init_offset_samp).to(local_rank)
     model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
     
+    # (修改) 确保在模型中存在参数时才创建优化器
     all_R_params = [m.R for m in model_ddp.module.models]
     all_T_params = [m.T for m in model_ddp.module.models]
-    optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
-    optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
     
-    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter,pct_start=0.1)
-    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=0.1)
+    optimizer_r = None
+    optimizer_t = None
+    scheduler_r = None
+    scheduler_t = None
+    
+    if all_T_params: # 仅当有可优化的参数时 (M > 1)
+        optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
+        optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
+        
+        scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter,pct_start=0.1)
+        scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=0.1)
+    else:
+        if local_rank == 0:
+            print("Warning: Only one image loaded, no parameters to optimize.")
+            
+    # (修改) DDP Step 9: 调用优化循环
+    if len(my_loss_tasks) > 0 or len(images) > 1: # 确保 M > 1
+        fit_affine_bundle(args, 
+                          my_loss_tasks, 
+                          final_global_windows,
+                          images, 
+                          diags,
+                          model_ddp, 
+                          optimizer_r, 
+                          optimizer_t, 
+                          scheduler_r, 
+                          scheduler_t, 
+                          local_rank, 
+                          world_size)
+    else:
+        if local_rank == 0:
+            print("No loss tasks to run. Skipping optimization.")
 
-    fit_affine_bundle(args, 
-                      local_tasks_with_data, 
-                      images, 
-                      model_ddp, 
-                      optimizer_r, 
-                      optimizer_t, 
-                      scheduler_r, 
-                      scheduler_t, 
-                      local_rank, 
-                      world_size)
-
-    # 同步点，确保所有进程都完成了优化
+    # (修改) DDP Step 10: 同步与最终验证
     dist.barrier()
     
     # 只在主进程上进行最终的模型更新和精度验证
     if local_rank == 0:
         print("\n" + "="*30)
         print("All processes finished optimization.")
-        print("Applying final affine matrices to RPC models (Rank 0)...")
         
-        for i in range(1, len(images)):
-            # 从 Rank 0 的模型中获取最终仿射矩阵
-            final_A_i = model_ddp.module.get_affine(i).detach()
-            print(f"Final affine matrix for image {i}: \n {final_A_i.cpu().numpy()}")
-            # 更新 image[i] 的 RPC 对象
-            images[i].rpc.Update_Adjust(final_A_i)
+        if len(images) > 1:
+            print("Applying final affine matrices to RPC models (Rank 0)...")
             
-        print("\nStarting final error check on Rank 0...")
-        all_errors = check_all_pairs_error(images, overlapping_pairs)
-        
-        if len(all_errors) > 0 and all_errors.mean() != 0.0:
+            for i in range(1, len(images)):
+                # 从 Rank 0 的模型中获取最终仿射矩阵
+                final_A_i = model_ddp.module.get_affine(i).detach()
+                print(f"Final affine matrix for image {i}: \n {final_A_i.cpu().numpy()}")
+                # 更新 image[i] 的 RPC 对象
+                images[i].rpc.Update_Adjust(final_A_i)
+                
+            print("\nStarting final error check on Rank 0...")
+            # (修改) 使用从 Rank 0 广播来的 overlapping_pairs
+            all_errors = check_all_pairs_error(images, overlapping_pairs)
             
-            print("\n--- Global Error Report (Summary) ---")
-            print(f"Total tie points checked: {len(all_errors)}")
-            print(f"Mean Error:   {all_errors.mean():.4f} m")
-            print(f"Median Error: {np.median(all_errors):.4f} m")
-            print(f"Max Error:    {all_errors.max():.4f} m")
-            print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
-            print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-            print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-            print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            if len(all_errors) > 0 and all_errors.mean() != 0.0:
+                
+                print("\n--- Global Error Report (Summary) ---")
+                print(f"Total tie points checked: {len(all_errors)}")
+                print(f"Mean Error:   {all_errors.mean():.4f} m")
+                print(f"Median Error: {np.median(all_errors):.4f} m")
+                print(f"Max Error:    {all_errors.max():.4f} m")
+                print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
+                print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+                print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+                print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            else:
+                print("No valid tie points found. Final error check skipped.")
         else:
-            print("No valid tie points found. Final error check skipped.")
+            print("Only one image. No adjustments or error checks performed.")
     
     # 清理DDP进程组
     dist.destroy_process_group()
-
