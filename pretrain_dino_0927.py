@@ -195,7 +195,7 @@ def compute_loss(args,epoch,data,encoder:EncoderDino,decoder:DecoderFinetune,cri
     loss_dis = torch.norm(pred1_sample_P3 - pred2_sample_P3,dim=-1).mean()
     loss_obj_sample = .5 * torch.norm(pred1_sample_P3 - obj1_sample_P3,dim=-1).mean() + .5 * torch.norm(pred2_sample_P3 - obj2_sample_P3,dim=-1).mean()
     if not only_decoder:
-        loss = loss + loss_dis * 2. + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
+        loss = loss + loss_dis + loss_obj_sample              # * (.5 + .5 * epoch / args.max_epoch)
     else:
         loss = loss + loss_dis * 0.  + loss_obj_sample * 0.
     
@@ -313,7 +313,7 @@ def pretrain(args):
     # if args.resume_training:
     #     encoder = EncoderDino(dino_weight_path=os.path.join(args.checkpoints_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     # else:
-    encoder = EncoderDino(dino_weight_path=args.dino_weight_path,adapter_pos_embed = args.pos_embed)
+    encoder = EncoderDino(dino_weight_path=args.dino_weight_path,adapter_pos_embed = args.pos_embed,unitize=False)
     # projector = ProjectHead(encoder.output_channels,128)
     adapter_optimizer = optim.AdamW(params=encoder.adapter.parameters(),lr = args.lr_encoder_max)
     # backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)

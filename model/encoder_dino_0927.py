@@ -125,7 +125,7 @@ class FeatureInteractionModule(nn.Module):
         return F.normalize(out_a,dim=1), F.normalize(out_b,dim=1)
     
 class Adapter(nn.Module):
-    def __init__(self,input_channels = 512,output_channels = 512,pos_embed = False):
+    def __init__(self,input_channels = 512,output_channels = 512,pos_embed = False,unitize = True):
         super().__init__()
         self.input_channels = input_channels
         self.output_channels = output_channels
@@ -140,7 +140,8 @@ class Adapter(nn.Module):
         self.pos_embed = pos_embed
         self.pos_encoder = PositionalEncoding(dim=output_channels)
         
-        # 自注意力模块，借鉴CasP中的TransformerBlock设计
+        self.unitize = unitize
+        
         self.self_attention_block = AttentionBlock(dim=output_channels, num_heads=8)
         self.norm = nn.LayerNorm(output_channels)
 
@@ -162,7 +163,9 @@ class Adapter(nn.Module):
             feat_seq = raw_feat.flatten(2).transpose(1,2)
         attn_output = self.self_attention_block(feat_seq, feat_seq, feat_seq)
         attended_sequence = self.norm(feat_seq + attn_output)
-        feat = F.normalize(attended_sequence.transpose(1, 2).view(B, D, H, W),dim=1)
+        feat = attended_sequence.transpose(1, 2).view(B, D, H, W)
+        if self.unitize:
+            feat = F.normalize(feat,dim=1)
         conf = self.conf_head(x)
         # feat = F.normalize(feat,dim=1)
         return feat,conf
@@ -171,7 +174,7 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False,unitize = True):
         super().__init__()
         self.verbose = verbose
         self.layers = layers
@@ -183,7 +186,7 @@ class EncoderDino(nn.Module):
         self.backbone.eval()
         self.backbone.requires_grad_(False)
 
-        self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels,pos_embed=adapter_pos_embed)
+        self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels,pos_embed=adapter_pos_embed,unitize=unitize)
 
 
     def forward(self, x):
