@@ -9,8 +9,8 @@ from torchvision import transforms
 from pykeops.torch import LazyTensor
 import numpy as np
 import cv2
-# 使用新的 RSImage 类
-from rs_image_1023 import RSImage
+# 使用恢复的、高效的 RSImage 类
+from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
 import scheduler
@@ -74,7 +74,10 @@ class BundleAffineModel(nn.Module):
         if index == 0:
             # 返回一个固定的、float32的单位仿射矩阵
             # 它需要和 model 在同一个 device 上 (通过第一个模型获取)
-            device = self.models[0].R.device
+            # (修正) 确保在模型为空时也能工作
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if len(self.models) > 0:
+                device = self.models[0].R.device
             return torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 
                                 dtype=torch.float32, device=device)
         else:
@@ -120,9 +123,8 @@ class Window_Pair():
                                                             diag[1],
                                                             [diag[0,0],diag[1,1]]]))
         
-        # 按需从 img_i 重采样
+        # (修正) 现在从内存中的 self.image 重采样
         img_0_raw,local_0 = img_0.resample_image_by_sampline(corners_sampline_0,(resample_size,resample_size),need_local=True)
-        # 按需从 img_j 重采样
         img_1_raw,local_1 = img_1.resample_image_by_sampline(corners_sampline_1,(resample_size,resample_size),need_local=True)
         
         dem_0 = img_0.resample_dem_by_sampline(corners_sampline_0,(resample_size,resample_size))
@@ -189,24 +191,23 @@ class Window_Pair():
         
 # (新函数)
 def load_imgs_bundle(args) -> List[RSImage]:
-    """加载所有影像，但只加载元数据。"""
+    """加载所有影像 (包含完整的图像数据)。"""
     base_path = os.path.join(args.root, 'adjust_images')
     select_img_idxs = [int(i) for i in args.select_imgs.split(',')]
     img_folders = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))])
     img_folders = [img_folders[i] for i in select_img_idxs]
     
     images = []
-    print(f"Found {len(img_folders)} image folders.")
+    print(f"[Rank {dist.get_rank()}] Found {len(img_folders)} image folders. Loading all...")
     for idx, folder in enumerate(img_folders):
         img_path = os.path.join(base_path, folder)
-        print(f"Loading metadata for image {idx} from {img_path}")
         try:
             images.append(RSImage(args, img_path, idx))
+            print(f"[Rank {dist.get_rank()}] Loaded image {idx} from {folder}.")
         except Exception as e:
-            print(f"Failed to load image {idx} from {folder}: {e}")
-            print("Please ensure folder contains rpc.txt, dem.npy, and image.png")
+            print(f"[Rank {dist.get_rank()}] Failed to load image {idx} from {folder}: {e}")
             
-    print(f"Successfully loaded metadata for {len(images)} images.")
+    print(f"[Rank {dist.get_rank()}] Successfully loaded {len(images)} images into memory.")
     return images
 
 # (新函数)
@@ -282,42 +283,31 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
     return feature_sample_pd,conf_sample_p,valid_mask
 
 
-# (新函数) DDP Step 4: 重构 fit_affine 为平差版本
-def fit_affine_bundle(args, local_tasks: list, images: List[RSImage], local_rank:int, world_size:int):
+# (修正) DDP Step 4: fit_affine_bundle 函数定义, 接收 DDP 模型和优化器
+def fit_affine_bundle(args, 
+                      local_tasks: list, 
+                      images: List[RSImage], 
+                      model_ddp: DDP, 
+                      optimizer_r: torch.optim.Adam, 
+                      optimizer_t: torch.optim.Adam, 
+                      scheduler_r, 
+                      scheduler_t, 
+                      local_rank:int, 
+                      world_size:int):
     """
     使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
     local_tasks: [(i, j, window_pair_ij), ...]
-    images: [RSImage_0, RSImage_1, ...] (只含元数据)
+    images: [RSImage_0, RSImage_1, ...] (包含完整图像)
+    model_ddp, optimizers, schedulers: 从 main 传入
     """
     
     num_images = len(images)
-    if num_images < 2:
+    if num_images < 2 and local_rank == 0:
         print("Error: Need at least 2 images for bundle adjustment.")
         return
 
-    # 1. 初始化全局模型并移动到当前进程的GPU
-    model = BundleAffineModel(num_images, args.init_offset_line, args.init_offset_samp).to(local_rank)
+    # (修正) 内部的模型、优化器定义已删除
     
-    # 2. 用DDP包装模型
-    # 必须设置 find_unused_parameters=True
-    # 因为一个批次可能不包含所有影像的损失，导致部分参数梯度为None
-    model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
-    
-    # 3. 优化器优化 DDP 模型的 *所有* 子参数
-    all_R_params = [m.R for m in model_ddp.module.models]
-    all_T_params = [m.T for m in model_ddp.module.models]
-
-    optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
-    optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
-    
-    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r,
-                                                        max_lr=args.max_lr * 0.000001,
-                                                        total_steps=args.max_iter
-                                                        )
-    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t,
-                                                        max_lr=args.max_lr,
-                                                        total_steps=args.max_iter
-                                                        )
     # 4. 迭代优化
     for iter in range(args.max_iter):
         optimizer_r.zero_grad()
@@ -402,9 +392,6 @@ def fit_affine_bundle(args, local_tasks: list, images: List[RSImage], local_rank
     # 优化循环结束
     if local_rank == 0:
         print("Bundle adjustment optimization finished.")
-    
-    # 不需要返回矩阵，因为DDP模型在所有进程上都是同步的
-    # 结果应用将在 main 函数的 rank 0 进程中进行
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     R = 6371000 
@@ -503,6 +490,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--window_size', type=int, default=2000,help='window size in meter(m)')
 
+    # 'select_imgs' 已失效, 现在会自动加载所有影像
     parser.add_argument('--select_imgs',type=str,default='0,1') 
 
     parser.add_argument('--init_offset_line',type=float,default=0.)
@@ -525,7 +513,7 @@ if __name__ == '__main__':
     if local_rank == 0:
         os.makedirs(args.debug_output_path,exist_ok=True)
 
-    # 每个进程都加载 *所有* 影像的 *元数据*
+    # (修正) 每个进程都加载 *所有* 影像的 *完整* 数据
     images = load_imgs_bundle(args)
     if len(images) < 2:
         if local_rank == 0:
@@ -558,7 +546,6 @@ if __name__ == '__main__':
         print(f"Rank 0: Found {len(all_tasks)} total tasks across {len(overlapping_pairs)} pairs.")
 
     # 将任务列表广播给所有进程
-    # DDP 要求广播的数据在一个列表内
     tasks_to_broadcast = [all_tasks] if local_rank == 0 else [None]
     dist.broadcast_object_list(tasks_to_broadcast, src=0)
     all_tasks = tasks_to_broadcast[0]
@@ -574,7 +561,6 @@ if __name__ == '__main__':
     # 每个进程都加载特征提取器
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-    # encoder 会在 extract_features 中被移动到对应的GPU
     if local_rank == 0:
         print("Encoder Loaded by all processes")
 
@@ -590,69 +576,67 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[Rank {local_rank}] !! FAILED to create task {global_task_id} (pair {i},{j}). Error: {e}")
 
-    # 调用修改后的 fit_affine_bundle
-    fit_affine_bundle(args, local_tasks_with_data, images, local_rank, world_size)
+    # (修正) 删除了错误的、重复的 fit_affine_bundle 调用
+
+    # (修正) 在 main 中定义 DDP 模型、优化器、调度器
+    model = BundleAffineModel(len(images), args.init_offset_line, args.init_offset_samp).to(local_rank)
+    model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
+    
+    all_R_params = [m.R for m in model_ddp.module.models]
+    all_T_params = [m.T for m in model_ddp.module.models]
+    optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
+    optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
+    
+    scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter)
+    scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter)
+    
+    # (修正) 这是唯一的、正确的调用
+    fit_affine_bundle(args, 
+                      local_tasks_with_data, 
+                      images, 
+                      model_ddp, 
+                      optimizer_r, 
+                      optimizer_t, 
+                      scheduler_r, 
+                      scheduler_t, 
+                      local_rank, 
+                      world_size)
 
     # 同步点，确保所有进程都完成了优化
     dist.barrier()
-
+    
     # 只在主进程上进行最终的模型更新和精度验证
     if local_rank == 0:
         print("\n" + "="*30)
         print("All processes finished optimization.")
         print("Applying final affine matrices to RPC models (Rank 0)...")
-
-        final_model = BundleAffineModel(len(images)).to(local_rank)
-
-
-        model = BundleAffineModel(len(images), args.init_offset_line, args.init_offset_samp).to(local_rank)
-        model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
         
-        all_R_params = [m.R for m in model_ddp.module.models]
-        all_T_params = [m.T for m in model_ddp.module.models]
-        optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
-        optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
-        
-        scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter)
-        scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter)
-        
-        # 调用修改后的 fit_affine
-        fit_affine_bundle(args, local_tasks_with_data, images, model_ddp, optimizer_r, optimizer_t, scheduler_r, scheduler_t, local_rank, world_size)
-
-        # 同步点，确保所有进程都完成了优化
-        dist.barrier()
-        
-        # 只在主进程上进行最终的模型更新和精度验证
-        if local_rank == 0:
-            print("\n" + "="*30)
-            print("All processes finished optimization.")
-            print("Applying final affine matrices to RPC models (Rank 0)...")
+        for i in range(1, len(images)):
+            # 从 Rank 0 的模型中获取最终仿射矩阵
+            final_A_i = model_ddp.module.get_affine(i).detach()
+            print(f"Final affine matrix for image {i}: \n {final_A_i.cpu().numpy()}")
+            # 更新 image[i] 的 RPC 对象
+            images[i].rpc.Update_Adjust(final_A_i)
             
-            for i in range(1, len(images)):
-                # 从 Rank 0 的模型中获取最终仿射矩阵
-                final_A_i = model_ddp.module.get_affine(i).detach()
-                print(f"Final affine matrix for image {i}: \n {final_A_i.cpu().numpy()}")
-                # 更新 image[i] 的 RPC 对象
-                images[i].rpc.Update_Adjust(final_A_i)
-                
-            print("\nStarting final error check on Rank 0...")
-            all_errors = check_all_pairs_error(images, overlapping_pairs)
-            
-            if len(all_errors) > 0:
-                # 假设像素大小为 0.5m
-                pixel_error_0_5m = all_errors / 0.5
-                
-                print("\n--- Global Error Report (Summary) ---")
-                print(f"Total tie points checked: {len(all_errors)}")
-                print(f"Mean Error:   {all_errors.mean():.4f} m")
-                print(f"Median Error: {np.median(all_errors):.4f} m")
-                print(f"Max Error:    {all_errors.max():.4f} m")
-                print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
-                print(f"< 1.0 pix (0.5m): {((all_errors < 0.5).sum() * 1. / len(all_errors)) * 100:.2f} %")
-                print(f"< 2.0 pix (1.0m): {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-                print(f"< 3.0 pix (1.5m): {((all_errors < 1.5).sum() * 1. / len(all_errors)) * 100:.2f} %")
-            else:
-                print("No valid tie points found. Final error check skipped.")
+        print("\nStarting final error check on Rank 0...")
+        all_errors = check_all_pairs_error(images, overlapping_pairs)
         
+        if len(all_errors) > 0 and all_errors.mean() != 0.0:
+            # 假设像素大小为 0.5m, 你可以根据需要修改
+            pixel_size_m = 0.5 
+            
+            print("\n--- Global Error Report (Summary) ---")
+            print(f"Total tie points checked: {len(all_errors)}")
+            print(f"Mean Error:   {all_errors.mean():.4f} m")
+            print(f"Median Error: {np.median(all_errors):.4f} m")
+            print(f"Max Error:    {all_errors.max():.4f} m")
+            print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
+            print(f"< 1.0 pix ({pixel_size_m:.2f}m): {((all_errors < pixel_size_m * 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 2.0 pix ({pixel_size_m*2:.2f}m): {((all_errors < pixel_size_m * 2.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 3.0 pix ({pixel_size_m*3:.2f}m): {((all_errors < pixel_size_m * 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+        else:
+            print("No valid tie points found. Final error check skipped.")
+    
     # 清理DDP进程组
     dist.destroy_process_group()
+

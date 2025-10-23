@@ -20,72 +20,45 @@ class RSImage():
         """
         root: path to folder which contains 'image.png','dem.npy','rpc.txt',
         id: index of this image
-        
-        [平差版修改]: 
-        不再加载 self.image。只存储路径 self.image_path。
-        H 和 W 通过元数据读取。
         """
         self.options = options
         self.root = root
         self.id = id
+        # self.image = self.__load_image__(os.path.join(root,'image.tif'))
         
-        self.image_path = os.path.join(root,'image.png') # 存储路径
-        
-        if not os.path.exists(self.image_path):
-            raise FileNotFoundError(f"Image file not found: {self.image_path}")
-            
-        self.dem_path = os.path.join(root,'dem.npy')
-        if not os.path.exists(self.dem_path):
-            raise FileNotFoundError(f"DEM file not found: {self.dem_path}")
-            
-        self.rpc_path = os.path.join(root,'rpc.txt')
-        if not os.path.exists(self.rpc_path):
-            raise FileNotFoundError(f"RPC file not found: {self.rpc_path}")
-
-        self.dem = np.load(self.dem_path)
-        
-        tie_point_path = os.path.join(root,'tie_points.txt')
-        if os.path.exists(tie_point_path):
-            self.tie_points = self.__load_tie_points__(tie_point_path)
+        self.image = cv2.imread(os.path.join(root,'image.png'),cv2.IMREAD_GRAYSCALE)
+        # if options.use_clahe:
+        #     self.image = clahe.apply(self.image)
+        self.image = np.stack([self.image] * 3,axis=-1)
+        self.dem = np.load(os.path.join(root,'dem.npy'))
+        if os.path.exists(os.path.join(root,'tie_points.txt')):
+            self.tie_points = self.__load_tie_points__(os.path.join(root,'tie_points.txt'))
         else:
             self.tie_points = None
 
         if size_limit > 0:
-            # size_limit 在这个版本中较难处理，暂时忽略
-            # self.dem = self.dem[:size_limit,:size_limit]
-            pass
+            self.image = self.image[:size_limit,:size_limit]
+            self.dem = self.dem[:size_limit,:size_limit]
 
-        # 通过读取文件元数据获取H, W
-        self.H, self.W = self.__get_image_dims__(self.image_path)
+        self.H,self.W = self.image.shape[:2]
         
         if self.dem.shape[0] != self.H or self.dem.shape[1] != self.W:
              print(f"Warning: Image {self.id} DEM shape ({self.dem.shape}) does not match image shape ({self.H, self.W}). Resizing DEM.")
              self.dem = cv2.resize(self.dem, (self.W, self.H), interpolation=cv2.INTER_LINEAR)
-
-
+        
         self.rpc = RPCModelParameterTorch()
-        self.rpc.load_from_file(self.rpc_path)
+        self.rpc.load_from_file(os.path.join(root,'rpc.txt'))
         self.rpc.to_gpu()
+        # if os.path.exists(os.path.join(root,'dem.tif')):
+        #     self.dem = self.__sample_dem__(os.path.join(root,'dem.tif'))
+        # else:
+        #     self.dem = None
         
         self.corner_xys = self.__get_corner_xys__() #[tl,tr,bl,br] [x,y]
         self.overlap_grids = []
         self.R = torch.tensor([[1.0,0.0],
                                 [0.0,1.0]])
         self.T = torch.tensor([0.,0.])
-
-    def __get_image_dims__(self, path) -> Tuple[int, int]:
-        """(新函数) Helper: 只读取图像的H, W，不加载数据。"""
-        try:
-            # 尝试用 rasterio (更适合遥感)
-            with rasterio.open(path) as src:
-                return src.height, src.width
-        except Exception as e:
-            # 回退到 cv2
-            print(f"Rasterio failed ({e}), falling back to OpenCV for image dims.")
-            img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-            if img is None:
-                raise IOError(f"Failed to read image dimensions from {path}")
-            return img.shape[0], img.shape[1]
 
     def __load_image__(self,path) -> np.ndarray:
         print("Loading Image")
@@ -150,12 +123,7 @@ class RSImage():
         samp_start = (br_sampline[0] - tl_sampline[0] - W) // 2 + tl_sampline[0]
         tl_sampline = np.array([samp_start,line_start],dtype=int)
         br_sampline = np.array([samp_start + W,line_start + H],dtype=int)
-        
-        # [平差版修改]: 按需读取
-        image_data = cv2.imread(self.image_path, cv2.IMREAD_GRAYSCALE)
-        image_data = np.stack([image_data] * 3,axis=-1)
-        
-        return image_data[tl_sampline[1]:br_sampline[1],tl_sampline[0]:br_sampline[0]]
+        return self.image[tl_sampline[1]:br_sampline[1],tl_sampline[0]:br_sampline[0]]
     
     @torch.no_grad()
     def get_dem_by_sampline(self,tl_sampline:np.ndarray,br_sampline:np.ndarray,div_factor:int = 16):
@@ -193,21 +161,7 @@ class RSImage():
 
     @torch.no_grad()
     def resample_image_by_sampline(self,corner_samplines:np.ndarray,target_shape:Tuple[int,int],need_local:bool = False):
-        """
-        [平差版修改]: 按需加载图像数据，重采样后立刻释放。
-        """
-        # 1. 按需加载图像数据
-        image_data = cv2.imread(self.image_path, cv2.IMREAD_GRAYSCALE)
-        if image_data is None:
-            raise IOError(f"Failed to read image for resampling: {self.image_path}")
-        image_data = np.stack([image_data] * 3,axis=-1)
-        
-        # 2. 执行重采样
-        img_resampled,local_hw2 = resample_from_quad(image_data,corner_samplines[:,[1,0]],target_shape)
-        
-        # 3. 释放内存
-        image_data = None 
-        
+        img_resampled,local_hw2 = resample_from_quad(self.image,corner_samplines[:,[1,0]],target_shape)
         if need_local:
             return img_resampled,local_hw2
         else:
@@ -215,7 +169,6 @@ class RSImage():
     
     @torch.no_grad()
     def resample_dem_by_sampline(self,corner_samplines:np.ndarray,target_shape:Tuple[int,int],need_local:bool = False):
-        # DEM 始终在内存中，逻辑不变
         dem_resampled,local_hw2 = resample_from_quad(self.dem,corner_samplines[:,[1,0]],target_shape)
         if need_local:
             return dem_resampled,local_hw2
@@ -223,9 +176,7 @@ class RSImage():
             return dem_resampled
         
     def vis_grid(self,diags:list[np.ndarray],output_path:str = None):
-        # [平差版修改]: 按需读取
-        vis_img = cv2.imread(self.image_path)
-        
+        vis_img = self.image.copy()
         for diag in diags:
             min_x,min_y,max_x,max_y = diag[:,0].min(),diag[:,1].min(),diag[:,0].max(),diag[:,1].max()
             corners = [self.xy_to_sampline(np.array([min_x,min_y])),
