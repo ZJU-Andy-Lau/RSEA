@@ -626,8 +626,6 @@ if __name__ == '__main__':
         all_errors = check_all_pairs_error(images, overlapping_pairs)
         
         if len(all_errors) > 0 and all_errors.mean() != 0.0:
-            # 假设像素大小为 0.5m, 你可以根据需要修改
-            pixel_size_m = 0.5 
             
             print("\n--- Global Error Report (Summary) ---")
             print(f"Total tie points checked: {len(all_errors)}")
@@ -635,9 +633,9 @@ if __name__ == '__main__':
             print(f"Median Error: {np.median(all_errors):.4f} m")
             print(f"Max Error:    {all_errors.max():.4f} m")
             print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
-            print(f"< 1.0 pix ({pixel_size_m:.2f}m): {((all_errors < pixel_size_m * 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-            print(f"< 2.0 pix ({pixel_size_m*2:.2f}m): {((all_errors < pixel_size_m * 2.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-            print(f"< 3.0 pix ({pixel_size_m*3:.2f}m): {((all_errors < pixel_size_m * 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
         else:
             print("No valid tie points found. Final error check skipped.")
     
