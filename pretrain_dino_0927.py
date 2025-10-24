@@ -319,7 +319,7 @@ def pretrain(args):
     # backbone_optimizer = optim.AdamW(params=encoder.unfreeze_backbone(layers=args.unfreeze_backbone_layers),lr = args.lr_encoder_max * 0.1)
 
     adapter_scheduler = MultiStageOneCycleLR(optimizer=adapter_optimizer,
-                                             total_steps=args.max_epoch - only_decoder_epoch,
+                                             total_steps=(args.max_epoch - only_decoder_epoch) * dataset_num,
                                              warmup_ratio=min(5. / args.max_epoch,.1),
                                              cooldown_ratio=.9)
     
@@ -472,6 +472,7 @@ def pretrain(args):
 
             # adapter_optimizer.step()
             decoder_optimizer.step()
+            adapter_optimizer.step()
             # scaler.step(adapter_optimizer)
             # for idx in dataset_idxs:
             #     scaler.step(optimizers[idx])
@@ -528,11 +529,12 @@ def pretrain(args):
 
                 print(f"epoch:{epoch} iter:{iter_idx+1}/{dataset_num}\t l_obj:{loss_obj_rec.item():.2f} \t l_obj_s:{loss_obj_sample_rec.item():.2f} \t l_dis:{loss_dis_rec.item():.2f} \t l_h:{loss_height_rec.item():.2f} \t l_r:{loss_relative_rec.item():.2f} \t l_conf:{loss_conf_rec.item():.2f} \t cm:{conf_mean.item():.2f} \t fd:{feat_dis.item():.2f} \t k:{k:.2f} \t l_f:{loss_feat_rec.item():.2f} \t sp:{sp_rec.item():.2f} \t sn:{sn_rec.item():.2f} \t en_lr:{adapter_optimizer.param_groups[0]['lr']:.2e}  de_lr:{optimizers[0].param_groups[0]['lr']:.2e} \t time:{str(datetime.timedelta(seconds=round(cost_time)))}  ETA:{str(datetime.timedelta(seconds=round(remain_time)))}")
 
-        if epoch >= only_decoder_epoch:
-            adapter_scheduler.step()
+
+            if epoch >= only_decoder_epoch:
+                adapter_scheduler.step()
             # backbone_scheduler.step()
 
-        adapter_optimizer.step()
+        
         # backbone_optimizer.step()
         
         for scheduler in schedulers:
