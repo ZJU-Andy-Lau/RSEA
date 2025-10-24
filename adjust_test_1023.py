@@ -425,6 +425,8 @@ def fit_affine_bundle(args,
                 if not torch.isnan(grid_avg_loss) and not torch.isinf(grid_avg_loss) and grid_avg_loss > 0:
                     local_total_loss = local_total_loss + grid_avg_loss
                     num_valid_grids += 1
+                else:
+                    print(f"[Rank{local_rank}]: Detect invalid loss:{grid_avg_loss.item()} in Grid {grid.id}")
 
             # 6. 计算本地平均 loss (按格网平均)
             if num_valid_grids > 0:
@@ -624,7 +626,7 @@ if __name__ == '__main__':
     my_tasks = all_tasks[local_rank::world_size] # my_tasks 是 [diag_k, diag_l, ...]
 
     # (保留) 每个进程都加载特征提取器
-    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
+    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
