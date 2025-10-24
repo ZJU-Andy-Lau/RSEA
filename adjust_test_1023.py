@@ -650,6 +650,15 @@ if __name__ == '__main__':
     
     # 只在主进程 (rank 0) 上生成任务列表
     if local_rank == 0:
+        print("Rank 0: Adding initial errors")
+        for i,img in enumerate(images):
+            R_noise = torch.rand((2,2)) * 1e-4
+            T_noise = torch.rand((2,)) * 5.
+            img.rpc.adjust_params[:,:2] += R_noise
+            img.rpc.adjust_params[:,2] += T_noise
+            img.rpc.Merge_Adjust()
+            print(f"Rank 0: image {i} add noise done")
+
         print("Rank 0: Finding overlapping pairs (for final validation)...")
         # (保留) 仍然需要这个来做最后的 check_all_pairs_error
         overlapping_pairs = find_overlapping_pairs(images)
