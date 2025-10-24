@@ -322,7 +322,7 @@ def fit_affine_bundle(args,
         optimizer_r.zero_grad()
         optimizer_t.zero_grad()
         
-        local_total_loss = torch.tensor(0.0, device=local_rank)
+        local_total_loss = 0
         num_valid_pairs = 0
         
         # 5. 只在 *本地* 的损失计算任务子集上循环
