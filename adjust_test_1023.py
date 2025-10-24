@@ -389,7 +389,10 @@ def fit_affine_bundle(args,
                       scheduler_r, 
                       scheduler_t, 
                       local_rank:int, 
-                      world_size:int):
+                      world_size:int,
+                      patience: int,           # [新] 新增
+                      min_loss_threshold: float  # [新] 新增
+                      ) -> List[Dict[str, torch.Tensor]]: # [新] 新增返回值
     """
     (已修改)
     使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
@@ -401,8 +404,19 @@ def fit_affine_bundle(args,
     num_images = len(images)
     if num_images < 2 and local_rank == 0:
         print("Error: Need at least 2 images for bundle adjustment.")
-        return
+        return [] # [新] 返回空列表
     
+    # --- [新] 初始化早停和最佳模型变量 ---
+    best_model_state = [] # 只有 Rank 0 会填充它
+    if local_rank == 0:
+        min_loss = float('inf')
+        patience_counter = 0
+        print(f"Starting optimization with patience={patience} and min_loss_threshold={min_loss_threshold}")
+        
+    # [新] 用于早停广播的信号张量 (所有进程都需要)
+    stop_signal = torch.tensor(0.0, device=local_rank)
+    # --- [新] 结束 ---
+
     # 4. 迭代优化
     for iter in range(args.max_iter):
         optimizer_r.zero_grad()
@@ -426,7 +440,8 @@ def fit_affine_bundle(args,
                     local_total_loss = local_total_loss + grid_avg_loss
                     num_valid_grids += 1
                 else:
-                    print(f"[Rank{local_rank}]: Detect invalid loss:{grid_avg_loss.item()} in Grid {grid.id}")
+                    if grid_avg_loss > 0: # 仅在非零时打印警告
+                        print(f"[Rank{local_rank}]: Detect invalid loss:{grid_avg_loss.item()} in Grid {grid.id}")
 
             # 6. 计算本地平均 loss (按格网平均)
             if num_valid_grids > 0:
@@ -439,17 +454,57 @@ def fit_affine_bundle(args,
         optimizer_r.step()
         optimizer_t.step()
 
-        # 8. 日志记录 (只在 rank 0 上打印)
-        if (iter + 1) % 10 == 0:
-            global_loss_sum = local_total_loss.clone().detach()
-            dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
-            global_avg_loss = global_loss_sum / world_size
+        # --- [新] 全局同步、检查点和早停逻辑 ---
+            
+        # 1. [新] 在所有进程上获取全局平均损失
+        global_loss_sum = local_total_loss.clone().detach()
+        dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
+        global_avg_loss = (global_loss_sum / world_size).item() # .item() 转换
+        
+        # 2. [新] Rank 0 进行决策
+        if local_rank == 0:
+            # 检查损失是否有显著改善
+            if (min_loss - global_avg_loss) > min_loss_threshold:
+                # 显著改善
+                min_loss = global_avg_loss
+                patience_counter = 0
+                
+                # [新] 保存最佳模型状态
+                best_model_state = []
+                # 遍历 nn.ModuleList
+                for sub_model in model_ddp.module.models: 
+                    # .data.clone() 确保复制的是值，而不是引用
+                    best_model_state.append({
+                        'R': sub_model.R.data.clone(), 
+                        'T': sub_model.T.data.clone()
+                    })
+            else:
+                # 没有显著改善
+                patience_counter += 1
 
-            if local_rank == 0:
+            # 检查是否需要早停
+            if patience_counter >= patience:
+                print(f"--- Early stopping triggered at iter {iter+1} ---")
+                print(f"Loss ({global_avg_loss:.4f}) did not improve by {min_loss_threshold} for {patience} iterations. Min loss: {min_loss:.4f}")
+                stop_signal.fill_(1.0) # 设置停止信号
+
+            # [修改] 日志记录
+            if (iter + 1) % 10 == 0:
                 lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 0.000001
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss.item():.4f} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
+                # 添加 min_loss 和 patience 
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
         
+        # 3. [新] Rank 0 将停止信号广播给所有其他进程
+        dist.broadcast(stop_signal, src=0)
+
+        # 4. [新] 所有进程检查停止信号
+        if stop_signal.item() == 1.0:
+            print(f"Rank {local_rank}: Received stop signal. Breaking optimization loop.")
+            break # 退出循环
+        
+        # --- [新] 逻辑结束 ---
+
         if scheduler_r:
             scheduler_r.step()
         if scheduler_t:
@@ -458,6 +513,9 @@ def fit_affine_bundle(args,
     # 优化循环结束
     if local_rank == 0:
         print("Bundle adjustment optimization finished.")
+
+    # [新] 返回 Rank 0 上的最佳模型状态
+    return best_model_state
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     R = 6371000 
@@ -566,6 +624,13 @@ if __name__ == '__main__':
 
     parser.add_argument('--grid_num',type=int,default=1)
 
+    # --- [新] 添加早停和最佳模型相关参数 ---
+    parser.add_argument('--patience', type=int, default=100, 
+                        help='Patience for early stopping (e.g., 100 iterations)')
+    parser.add_argument('--min_loss_threshold', type=float, default=1e-4, 
+                        help='Minimum improvement threshold for min_loss to reset patience (e.g., 1e-4)')
+    # --- [新] 结束 ---
+
     args = parser.parse_args()
 
     # DDP 初始化
@@ -673,21 +738,28 @@ if __name__ == '__main__':
         optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
         scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=0.1)
     
+    # [新] 用于保存最佳模型状态的变量
+    best_model_state = []
+
     if optimizer_r is None and optimizer_t is None and local_rank == 0:
         print("Warning: No parameters to optimize (only one image provided?). Skipping optimization.")
         # 如果没有可优化的参数（例如只有一张影像），则跳过fit
     else:
         # (修改) 调用已修改的 fit_affine_bundle
-        fit_affine_bundle(args, 
-                          local_shared_grids, # (修改) 传入新的数据列表
-                          images, 
-                          model_ddp, 
-                          optimizer_r, 
-                          optimizer_t, 
-                          scheduler_r, 
-                          scheduler_t, 
-                          local_rank, 
-                          world_size)
+        # [新] 捕获返回的最佳模型状态
+        best_model_state = fit_affine_bundle(args, 
+                                             local_shared_grids, # (修改) 传入新的数据列表
+                                             images, 
+                                             model_ddp, 
+                                             optimizer_r, 
+                                             optimizer_t, 
+                                             scheduler_r, 
+                                             scheduler_t, 
+                                             local_rank, 
+                                             world_size,
+                                             patience=args.patience, # [新] 传入新参数
+                                             min_loss_threshold=args.min_loss_threshold # [新] 传入新参数
+                                             )
 
     # (保留) 同步点，确保所有进程都完成了优化
     dist.barrier()
@@ -696,7 +768,26 @@ if __name__ == '__main__':
     if local_rank == 0:
         print("\n" + "="*30)
         print("All processes finished optimization.")
-        print("Applying final affine matrices to RPC models (Rank 0)...")
+        
+        # --- [新] 加载最佳模型状态 ---
+        if best_model_state: # 检查 best_model_state 是否有效（非空）
+            print(f"Loading best model state (from min_loss) back into model_ddp.module... (Total {len(best_model_state)} states)")
+            # 使用 torch.no_grad() 确保在加载状态时不计算梯度
+            with torch.no_grad():
+                # best_model_state 存储了 N-1 个模型的状态
+                for i, state in enumerate(best_model_state):
+                    # model_ddp.module.models[i] 对应 images[i+1]
+                    if i < len(model_ddp.module.models):
+                        model_ddp.module.models[i].R.data.copy_(state['R'])
+                        model_ddp.module.models[i].T.data.copy_(state['T'])
+                    else:
+                        print(f"Warning: Mismatch in best_model_state (len {len(best_model_state)}) and models (len {len(model_ddp.module.models)})")
+                        break
+        else:
+            print("Warning: No best model state saved (e.g., no improvement found or only 1 image). Using final iteration state.")
+        # --- [新] 结束 ---
+
+        print("Applying final (best) affine matrices to RPC models (Rank 0)...")
         
         for i in range(1, len(images)):
             # 从 Rank 0 的模型中获取最终仿射矩阵
