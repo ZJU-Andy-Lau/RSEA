@@ -556,7 +556,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--init_offset_line',type=float,default=0.)
 
-    parser.add_action('--init_offset_samp',type=float,default=0.)
+    parser.add_argument('--init_offset_samp',type=float,default=0.)
 
     parser.add_argument('--grid_offset_x',type=float,default=0)
 
