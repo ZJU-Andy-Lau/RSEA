@@ -652,8 +652,8 @@ if __name__ == '__main__':
     if local_rank == 0:
         print("Rank 0: Adding initial errors")
         for i,img in enumerate(images):
-            R_noise = torch.rand((2,2),device=img.rpc.adjust_params.device) * 1e-4
-            T_noise = torch.rand((2,),device=img.rpc.adjust_params.device) * 5.
+            R_noise = torch.rand((2,2),device=img.rpc.adjust_params.device) * 2e-4 - 1e-4
+            T_noise = torch.rand((2,),device=img.rpc.adjust_params.device) * 20. - 10.
             img.rpc.adjust_params[:,:2] += R_noise
             img.rpc.adjust_params[:,2] += T_noise
             print(f"Rank 0: image {i} init adjust_parmas: \n {img.rpc.adjust_params}")
