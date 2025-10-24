@@ -322,14 +322,30 @@ def fit_affine_bundle(args,
         optimizer_r.zero_grad()
         optimizer_t.zero_grad()
         
-        local_total_loss = 0
+        # (*** 关键修复 ***)
+        # 1. 获取模型中的任何一个可训练参数。
+        #    我们从 main 的逻辑知道，调用此函数时 len(images) > 1，
+        #    所以 model_ddp.module.models (长度为 M-1) 至少包含一个元素。
+        #    model_ddp.module.models[0] 对应 img_1 的参数。
+        any_param = model_ddp.module.models[0].T
+        
+        # 2. 初始化 local_total_loss。
+        #    我们将其乘以一个参数再乘以0.0。
+        #    这使得 local_total_loss 的值为 0.0，但 requires_grad=True，
+        #    并且它被连接到了PyTorch的计算图上。
+        #    这确保了即使这个GPU没有任何有效任务(num_valid_pairs=0)，
+        #    调用 .backward() 时，它也会正确地发送一个零梯度，
+        #    DDP同步才能成功，避免程序挂起或报错。
+        local_total_loss = (any_param.sum() * 0.0).to(device=local_rank, dtype=any_param.dtype)
+        
+        # (旧的错误代码) local_total_loss = torch.tensor(0.0, device=local_rank)
+        
         num_valid_pairs = 0
         
         # 5. 只在 *本地* 的损失计算任务子集上循环
         if len(my_loss_tasks) == 0:
-            pass # loss为0，梯度也为0，是安全的
+            pass # local_total_loss 仍然是 0.0，但 requires_grad=True
         else:
-            # for (i, j, window_pair_ij) in local_tasks:
             # (修改) 遍历 (i, j, k) 任务
             for (i, j, k) in my_loss_tasks:
                 
@@ -391,7 +407,8 @@ def fit_affine_bundle(args,
                 local_total_loss = local_total_loss / num_valid_pairs
             
         # 7. 反向传播 (DDP 在此处自动计算并同步所有进程的梯度平均值)
-        # 确保即使 loss 为 0 也要反向传播，以同步所有进程
+        # (修复) 现在 local_total_loss 总是 requires_grad (if M > 1),
+        # 所以所有进程都会调用 backward()，DDP同步会成功。
         if torch.is_grad_enabled():
             local_total_loss.backward()
         
@@ -439,8 +456,9 @@ def fit_affine_bundle(args,
                     # 我们需要原始的 (H, W, 2) local 坐标，但 window_i.local 已经被降采样和展平
                     # 因此我们使用 numpy 重新加载的
                     local_i_flat_vis = torch.from_numpy(local_i_grid_np).flatten(0, 1).cuda().float()
-                    # dem 也需要重新降采样
-                    dem_i_flat_vis = downsample_average(torch.from_numpy(window_i.dem.cpu().numpy().reshape(H, W)), encoder.SAMPLE_FACTOR).flatten(0,1).cuda()
+                    # dem 也需要重新降采样 (注意: self.dem 在 __init__ 中未被降采样, extract_features 中才被降采样)
+                    dem_i_original_shape = window_i.dem.cpu().numpy().reshape(H, W)
+                    dem_i_flat_vis = downsample_average(torch.from_numpy(dem_i_original_shape), encoder.SAMPLE_FACTOR).flatten(0,1).cuda()
                     
                     warp_i_to_j = warp_local(local_i_flat_vis, dem_i_flat_vis, images[i].rpc, images[j].rpc, A_i)
                     warp_i_to_j_grid = warp_i_to_j.reshape(H, W, 2).cpu().numpy()
@@ -593,7 +611,7 @@ if __name__ == '__main__':
         exit()
 
     # (修改) 所有进程都加载特征提取器
-    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
+    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
@@ -706,7 +724,8 @@ if __name__ == '__main__':
             print("Warning: Only one image loaded, no parameters to optimize.")
             
     # (修改) DDP Step 9: 调用优化循环
-    if (len(my_loss_tasks) > 0 or dist.get_rank() == 0) and len(images) > 1: # 确保 M > 1
+    # (修复) 确保所有 M > 1 的进程都进入 fit_affine_bundle
+    if len(images) > 1:
         fit_affine_bundle(args, 
                           my_loss_tasks, 
                           final_global_windows,
@@ -721,7 +740,7 @@ if __name__ == '__main__':
                           world_size)
     else:
         if local_rank == 0:
-            print("No loss tasks to run. Skipping optimization.")
+            print("Only one image. Skipping optimization.")
 
     # (修改) DDP Step 10: 同步与最终验证
     dist.barrier()
