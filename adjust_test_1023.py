@@ -39,12 +39,12 @@ class AffineModel(nn.Module):
     """
     将仿射变换参数R和T封装成一个PyTorch模块，以便DDP管理。
     """
-    def __init__(self, init_line=0.0, init_samp=0.0):
+    def __init__(self):
         super().__init__()
         # R 和 T 必须是 nn.Parameter 才能被DDP和优化器追踪
         # 为了DDP性能，我们使用 float32
         self.R = nn.Parameter(torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32))
-        self.T = nn.Parameter(torch.tensor([init_line, init_samp], dtype=torch.float32))
+        self.T = nn.Parameter(torch.tensor([0., 0.], dtype=torch.float32))
 
     def forward(self):
         # "forward" 就返回仿射矩阵
@@ -55,14 +55,14 @@ class BundleAffineModel(nn.Module):
     管理所有N-1个可学习仿射变换的模型。
     img_0 被假定为锚点(anchor)，其变换固定为单位矩阵。
     """
-    def __init__(self, num_images, init_line=0.0, init_samp=0.0):
+    def __init__(self, num_images):
         super().__init__()
         self.num_images = num_images
         
         # 我们有 N 张影像, 但只为 img_1 ... img_N-1 创建可学习模型
         self.models = nn.ModuleList()
         for _ in range(num_images - 1):
-            self.models.append(AffineModel(init_line, init_samp))
+            self.models.append(AffineModel())
             
     def get_affine(self, index: int) -> torch.Tensor:
         """
@@ -614,10 +614,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--select_imgs',type=str,default='0,1') 
 
-    parser.add_argument('--init_offset_line',type=float,default=0.)
-
-    parser.add_argument('--init_offset_samp',type=float,default=0.)
-
     parser.add_argument('--grid_offset_x',type=float,default=0)
 
     parser.add_argument('--grid_offset_y',type=float,default=0)
@@ -657,6 +653,24 @@ if __name__ == '__main__':
         print("Rank 0: Finding overlapping pairs (for final validation)...")
         # (保留) 仍然需要这个来做最后的 check_all_pairs_error
         overlapping_pairs = find_overlapping_pairs(images)
+
+        print("\nStarting initial error check on Rank 0...")
+        # (保留) 验证逻辑不变，它使用 'overlapping_pairs' 列表
+        all_errors = check_all_pairs_error(images, overlapping_pairs)
+        
+        if len(all_errors) > 0 and all_errors.mean() != 0.0:
+            
+            print("\n--- Global Error Report (Summary) ---")
+            print(f"Total tie points checked: {len(all_errors)}")
+            print(f"Mean Error:   {all_errors.mean():.4f} m")
+            print(f"Median Error: {np.median(all_errors):.4f} m")
+            print(f"Max Error:    {all_errors.max():.4f} m")
+            print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
+            print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+            print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+        else:
+            print("No valid tie points found. Final error check skipped.")
         
         print("Rank 0: Finding common grids from ALL images...")
         # (修改) 堆叠所有影像的 corners
@@ -718,7 +732,7 @@ if __name__ == '__main__':
 
 
     # (保留) DDP模型和优化器设置
-    model = BundleAffineModel(len(images), args.init_offset_line, args.init_offset_samp).to(local_rank)
+    model = BundleAffineModel(len(images)).to(local_rank)
     model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=False) # 如果所有参数都用到了，设为False
     
     all_R_params = [m.R for m in model_ddp.module.models]
