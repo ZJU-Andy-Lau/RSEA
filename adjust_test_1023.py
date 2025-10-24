@@ -656,6 +656,7 @@ if __name__ == '__main__':
             T_noise = torch.rand((2,)) * 5.
             img.rpc.adjust_params[:,:2] += R_noise
             img.rpc.adjust_params[:,2] += T_noise
+            print(f"Rank 0: image {i} init adjust_parmas: \n {img.rpc.adjust_params}")
             img.rpc.Merge_Adjust()
             print(f"Rank 0: image {i} add noise done")
 
