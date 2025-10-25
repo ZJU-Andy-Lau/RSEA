@@ -8,9 +8,6 @@ import os
 from rpc import RPCModelParameterTorch,load_rpc
 from shapely.geometry import Polygon, Point, MultiPoint
 from typing import List,Tuple,Optional,Dict
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !! 用户需要实现这个函数 (You need to implement this function)
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 def find_windows(image_shapes:List[np.ndarray],rpcs:List[RPCModelParameterTorch],heights:List[np.ndarray],margin = 3000,size=500):
     H,W = image_shapes[0][:2]
@@ -44,11 +41,6 @@ def get_windows(k: int, windows:np.ndarray):
                     例如 [[-1,-1],[-1,-1]]，程序会处理这种情况。
     """
     return windows[:,k]
-
-    # ----- 结束: 用户实现区域 (End: User Implementation Area) -----
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-# !! 上述 get_windows 函数需要你来实现
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 class ImageViewer(tk.Canvas):
     """
@@ -184,8 +176,8 @@ class ImageViewer(tk.Canvas):
 class TiePointPickerApp:
     def __init__(self, master):
         self.master = master
-        master.title("优化版遥感影像刺点工具")
-        master.geometry("1400x900")
+        master.title("优化版遥感影像刺点工具 (v2.0 带编辑功能)")
+        master.geometry("1600x900") # 增加了宽度以容纳新面板
 
         # --- 数据存储 ---
         self.image_paths = []
@@ -209,6 +201,10 @@ class TiePointPickerApp:
         self.current_window_k = tk.IntVar(value=0)
         self.img_idx_left = tk.IntVar(value=0)
         self.img_idx_right = tk.IntVar(value=1)
+        
+        # --- 【新增】编辑模式状态 ---
+        self.edit_mode = False
+        self.editing_group_index: Optional[int] = None
 
         self._setup_ui()
         self._bind_shortcuts()
@@ -218,8 +214,11 @@ class TiePointPickerApp:
         # --- 主框架 ---
         top_frame = ttk.Frame(self.master, padding=10)
         top_frame.pack(fill=tk.X)
-        display_frame = ttk.Frame(self.master, padding=10)
+        
+        # 【修改】将 display_frame 分为三栏
+        display_frame = ttk.Frame(self.master, padding=(10, 0, 10, 10))
         display_frame.pack(fill=tk.BOTH, expand=True)
+        
         status_frame = ttk.Frame(self.master, padding=10)
         status_frame.pack(fill=tk.X)
 
@@ -229,7 +228,7 @@ class TiePointPickerApp:
         self.k_spinbox = ttk.Spinbox(top_frame, from_=0, to=0, textvariable=self.current_window_k, width=5, command=self._on_window_k_change, state=tk.DISABLED)
         self.k_spinbox.pack(side=tk.LEFT, padx=5)
 
-        # --- 左侧影像面板 ---
+        # --- 左侧影像面板 (不变) ---
         left_panel = ttk.Frame(display_frame)
         left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         left_controls = ttk.Frame(left_panel)
@@ -244,7 +243,7 @@ class TiePointPickerApp:
         self.viewer_left.pack(fill=tk.BOTH, expand=True)
         self.viewer_left.bind("<Button-1>", lambda event: self._on_canvas_click(event, self.viewer_left, 0))
 
-        # --- 右侧影像面板 ---
+        # --- 右侧影像面板 (不变) ---
         right_panel = ttk.Frame(display_frame)
         right_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
         right_controls = ttk.Frame(right_panel)
@@ -259,10 +258,37 @@ class TiePointPickerApp:
         self.viewer_right.pack(fill=tk.BOTH, expand=True)
         self.viewer_right.bind("<Button-1>", lambda event: self._on_canvas_click(event, self.viewer_right, 1))
 
+        # --- 【新增】已标注点列表面板 ---
+        point_list_frame = ttk.Frame(display_frame, width=250)
+        point_list_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        point_list_frame.pack_propagate(False) # 固定宽度
+
+        ttk.Label(point_list_frame, text="已标注点 (影像0坐标)", anchor=tk.W).pack(fill=tk.X, pady=(0, 5))
+
+        tree_frame = ttk.Frame(point_list_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.point_list_tree = ttk.Treeview(tree_frame, columns=("coords",), show="tree headings", height=10)
+        self.point_list_tree.heading("#0", text="组 ID")
+        self.point_list_tree.heading("coords", text="坐标 (r, c)")
+        self.point_list_tree.column("#0", width=80, stretch=False)
+        self.point_list_tree.column("coords", width=120, stretch=True)
+
+        # 添加滚动条
+        scrollbar = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.point_list_tree.yview)
+        self.point_list_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.point_list_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        self.point_list_tree.bind("<<TreeviewSelect>>", self._on_point_list_select)
+
+        self.edit_button = ttk.Button(point_list_frame, text="启动编辑", command=self._toggle_edit_mode, state=tk.DISABLED)
+        self.edit_button.pack(fill=tk.X, pady=5)
+
         # --- 状态与保存 ---
         self.status_label = ttk.Label(status_frame, text="状态: 未加载影像", anchor=tk.W)
         self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.save_button = ttk.Button(status_frame, text="保存当前组 (Ctrl+S)", command=self._save_current_group, state=tk.DISABLED)
+        self.save_button = ttk.Button(status_frame, text="保存新组 (Ctrl+S)", command=self._save_current_group, state=tk.DISABLED)
         self.save_button.pack(side=tk.RIGHT, padx=5)
         self.undo_button = ttk.Button(status_frame, text="撤销上个点 (Ctrl+Z)", command=self._undo_last_point, state=tk.DISABLED)
         self.undo_button.pack(side=tk.RIGHT, padx=5)
@@ -278,6 +304,168 @@ class TiePointPickerApp:
         self.master.bind("<Down>", lambda event: self._finetune_point(1, 0))
         self.master.bind("<Left>", lambda event: self._finetune_point(0, -1))
         self.master.bind("<Right>", lambda event: self._finetune_point(0, 1))
+
+    # --- 【新增】功能函数 ---
+
+    def _populate_point_list(self):
+        """清空并重新填充已保存点的列表。"""
+        for item in self.point_list_tree.get_children():
+            self.point_list_tree.delete(item)
+
+        if not self.saved_points or self.num_images == 0:
+            return
+
+        try:
+            num_groups = len(self.saved_points[0])
+            for group_index in range(num_groups):
+                # 使用影像0的坐标作为参考
+                r, c = self.saved_points[0][group_index]
+                # 关键：iid 存储 group_index，text 显示 group_id
+                self.point_list_tree.insert("", "end", iid=str(group_index), text=f"Group {group_index + 1}", values=(f"({r}, {c})",))
+        except IndexError:
+            print("警告: saved_points 列表为空或结构不一致。")
+        except Exception as e:
+            print(f"填充列表时出错: {e}")
+
+    def _on_point_list_select(self, event=None):
+        """处理列表点击：非编辑模式下跳转，并激活编辑按钮。"""
+        selected_item_id = self.point_list_tree.focus()
+        if not selected_item_id:
+            self.edit_button.config(state=tk.DISABLED)
+            return
+
+        self.edit_button.config(state=tk.NORMAL)
+        
+        if self.edit_mode:
+            # 编辑模式下，不执行跳转（因为列表点击已被解绑，理论上不会到这里）
+            return
+
+        # 非编辑模式，执行跳转功能
+        try:
+            group_index = int(selected_item_id)
+            r, c = self.saved_points[0][group_index]
+
+            # 查找包含该点 (影像0) 的窗口 K
+            for k in range(self.windows.shape[1]):
+                r1, c1 = self.windows[0, k, 0] # 影像0, 窗口k, 左上角
+                r2, c2 = self.windows[0, k, 1] # 影像0, 窗口k, 右下角
+                if r1 <= r < r2 and c1 <= c < c2:
+                    if self.current_window_k.get() != k:
+                        self.current_window_k.set(k) # 会自动触发 _on_window_k_change
+                    else:
+                        # 如果已经在正确的K，手动重绘点（例如切换组时）
+                        self._redraw_all_points()
+                    return
+            
+            messagebox.showinfo("未找到窗口", f"Group {group_index + 1} 的点 (影像0: {r},{c}) 不在任何自动生成的窗口内。")
+
+        except Exception as e:
+            print(f"跳转到点时出错: {e}")
+
+    def _toggle_edit_mode(self):
+        """切换“启动编辑”和“完成编辑”的状态。"""
+        
+        # --- 情况 1: 启动编辑 ---
+        if not self.edit_mode:
+            selected_item_id = self.point_list_tree.focus()
+            if not selected_item_id:
+                messagebox.showwarning("未选择", "请先从右侧列表中选择一个点组。")
+                return
+
+            if any(p is not None for p in self.current_group_points):
+                messagebox.showwarning("操作冲突", "请先保存或撤销当前正在标注的新点，然后再开始编辑。")
+                return
+            
+            group_index = int(selected_item_id)
+
+            # 1. 进入编辑模式
+            self.edit_mode = True
+            self.editing_group_index = group_index
+
+            # 2. 加载数据到缓冲区
+            try:
+                point_group_to_edit = [self.saved_points[i][group_index] for i in range(self.num_images)]
+                self.current_group_points = list(point_group_to_edit)
+            except Exception as e:
+                messagebox.showerror("加载错误", f"加载点组 {group_index+1} 失败: {e}")
+                self.edit_mode = False
+                self.editing_group_index = None
+                return
+
+            # 3. 激活微调
+            left_img_idx = self.img_idx_left.get()
+            self.selected_point_info = {"image_idx": left_img_idx, "panel_id": 0}
+            if left_img_idx < len(self.current_group_points):
+                self.viewer_left.focus_set()
+            
+            # 4. 更新UI
+            self.edit_button.config(text="完成编辑")
+            # 【修复】通过解绑事件来禁用 Treeview
+            self.point_list_tree.unbind("<<TreeviewSelect>>") # 编辑时禁用列表点击
+
+            print(f"已启动编辑模式: Group {group_index + 1}")
+
+        # --- 情况 2: 完成编辑 ---
+        else:
+            if any(p is None for p in self.current_group_points):
+                messagebox.showerror("错误", "编辑未完成，组内存在空点（可能被撤销）。请重新标点。")
+                return
+            
+            group_index = self.editing_group_index
+            if group_index is None: return # 安全检查
+
+            try:
+                # 1. 更新内存
+                for i in range(self.num_images):
+                    self.saved_points[i][group_index] = self.current_group_points[i]
+                
+                # 2. 更新文件
+                self._rewrite_all_point_files()
+
+                # 3. 退出编辑模式
+                self.edit_mode = False
+                self.editing_group_index = None
+                
+                # 4. 清理缓冲区
+                self.current_group_points = [None] * self.num_images
+                self.selected_point_info = None
+                
+                # 5. 更新UI
+                self.edit_button.config(text="启动编辑", state=tk.NORMAL)
+                # 【修复】通过重新绑定事件来启用 Treeview
+                self.point_list_tree.bind("<<TreeviewSelect>>", self._on_point_list_select) # 解禁列表点击
+                
+                # 6. 刷新列表显示
+                self._populate_point_list()
+                
+                messagebox.showinfo("保存成功", f"Group {group_index + 1} 已更新。")
+            
+            except Exception as e:
+                messagebox.showerror("保存失败", f"保存编辑失败: {e}")
+
+        # 统一更新
+        self._redraw_all_points()
+        self._update_status_label()
+        self._update_ui_state()
+
+    def _rewrite_all_point_files(self):
+        """
+        【新增】使用内存中的 saved_points 覆盖重写所有 .txt 文件。
+        """
+        print("正在重写所有点文件...")
+        try:
+            for img_idx in range(self.num_images):
+                filepath = self.point_files[img_idx]
+                points_to_save = self.saved_points[img_idx]
+                
+                with open(filepath, 'w') as f: # 'w' 模式 = 覆盖
+                    for r, c in points_to_save:
+                        f.write(f"{r} {c}\n")
+        except Exception as e:
+            print(f"重写文件失败: {e}")
+            messagebox.showerror("文件写入错误", f"无法重写点文件: {e}")
+
+    # --- 现有函数修改 ---
 
     def _load_images(self):
         paths = filedialog.askopenfilenames(
@@ -320,6 +508,9 @@ class TiePointPickerApp:
         
         self._reset_point_data()
         self._load_saved_points()
+        
+        # 【修改】加载点后，填充列表
+        self._populate_point_list()
 
         # 更新UI
         if self.windows.ndim > 1:
@@ -341,6 +532,15 @@ class TiePointPickerApp:
         self.num_images = 0
         self.full_loaded_images = []
         self._reset_point_data()
+        
+        # 【修改】重置时清空列表
+        if hasattr(self, 'point_list_tree'):
+             self._populate_point_list()
+             
+        # 【修改】重置编辑状态
+        self.edit_mode = False
+        self.editing_group_index = None
+
         self.viewer_left.set_image(None)
         self.viewer_right.set_image(None)
         self._update_ui_state()
@@ -355,19 +555,32 @@ class TiePointPickerApp:
 
     def _load_saved_points(self):
         """从每个影像的 .txt 文件加载点。"""
+        min_points = float('inf')
         for i, filepath in enumerate(self.point_files):
+            points = []
             if os.path.exists(filepath):
                 try:
                     with open(filepath, 'r') as f:
                         for line in f:
                             parts = line.strip().split()
                             if len(parts) >= 2:
-                                # 保存为整数坐标
                                 r, c = int(parts[0]), int(parts[1])
-                                self.saved_points[i].append((r, c))
+                                points.append((r, c))
                 except Exception as e:
                     print(f"读取点文件 {filepath} 时出错: {e}")
-        print("已加载的保存点:", self.saved_points)
+            self.saved_points[i] = points
+            min_points = min(min_points, len(points))
+        
+        if min_points == float('inf'): min_points = 0
+            
+        # 确保所有列表长度一致
+        if any(len(p) != min_points for p in self.saved_points):
+            messagebox.showwarning("数据不一致", "点文件中的点数量不一致。将截断为最短长度。")
+            self.saved_points = [p[:min_points] for p in self.saved_points]
+
+        # 更新组计数器
+        self.tie_point_group_counter = min_points + 1
+        print(f"已加载 {min_points} 组保存点。")
 
     def _on_window_k_change(self):
         if self.num_images == 0 or self.windows.ndim < 2 or self.windows.shape[1] == 0: return
@@ -402,6 +615,15 @@ class TiePointPickerApp:
 
     def _on_img_selection_change(self):
         if self.num_images == 0: return
+        
+        # 【新增】更新微调时的焦点
+        if self.edit_mode and self.selected_point_info:
+            panel_id = self.selected_point_info["panel_id"]
+            if panel_id == 0:
+                self.selected_point_info["image_idx"] = self.img_idx_left.get()
+            else:
+                self.selected_point_info["image_idx"] = self.img_idx_right.get()
+        
         self._display_images()
 
     def _display_images(self):
@@ -449,7 +671,12 @@ class TiePointPickerApp:
 
         # 绘制已保存的点 (绿色)
         if image_idx < len(self.saved_points):
-            for r, c in self.saved_points[image_idx]:
+            for group_idx, (r, c) in enumerate(self.saved_points[image_idx]):
+                
+                # 【修改】如果点正在被编辑，则跳过（由下面的逻辑绘制）
+                if self.edit_mode and self.editing_group_index == group_idx:
+                    continue
+                
                 if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
                     self._draw_single_point(viewer, r, c, patch_r1, patch_c1, "green")
 
@@ -460,7 +687,7 @@ class TiePointPickerApp:
                 r, c = point_coords
                 color = "blue"
                 if self.selected_point_info and self.selected_point_info["image_idx"] == image_idx:
-                    color = "red"
+                    color = "red" # 红色高亮
                 
                 if patch_r1 <= r < patch_r2 and patch_c1 <= c < patch_c2:
                     self._draw_single_point(viewer, r, c, patch_r1, patch_c1, color)
@@ -492,12 +719,19 @@ class TiePointPickerApp:
 
         image_idx = self.img_idx_left.get() if panel_id == 0 else self.img_idx_right.get()
         
-        if self.current_group_points[image_idx] is not None:
+        # 【修改】允许在编辑模式下覆盖
+        if self.current_group_points[image_idx] is not None and not self.edit_mode:
             messagebox.showwarning("刺点限制", f"影像 {image_idx} 在当前组中已经标过点了。\n请先撤销或保存。")
             return
 
         patch_x, patch_y = viewer.canvas_to_image_coords(event.x, event.y)
-        patch_r1, patch_c1 = self.patch_origin_coords[image_idx]
+        
+        patch_origin = self.patch_origin_coords.get(image_idx)
+        if not patch_origin:
+            print(f"警告: 影像 {image_idx} 没有加载切片，无法刺点。")
+            return
+            
+        patch_r1, patch_c1 = patch_origin
 
         abs_c = patch_c1 + patch_x
         abs_r = patch_r1 + patch_y
@@ -518,7 +752,7 @@ class TiePointPickerApp:
             "panel_id": panel_id
         }
         
-        viewer.focus_set()
+        viewer.focus_set() # 激活画布以接收键盘事件
         print(f"面板 {panel_id}, 影像 {image_idx}: 点击 -> 绝对坐标 ({selected_abs_r},{selected_abs_c})")
 
         self._redraw_all_points()
@@ -528,16 +762,37 @@ class TiePointPickerApp:
     def _undo_last_point(self):
         """撤销当前组中最近标记的一个点。"""
         if self.selected_point_info is None:
-            messagebox.showinfo("提示", "当前组中没有可以撤销的点。")
-            return
+            # 【修改】编辑模式下，可能没有 selected_point_info，但仍可撤销
+            if not self.edit_mode:
+                messagebox.showinfo("提示", "当前组中没有可以撤销的点。")
+                return
+            else:
+                # 在编辑模式下，如果缓冲区有内容，但没有焦点，则默认撤销最后一个
+                for i in range(self.num_images - 1, -1, -1):
+                    if self.current_group_points[i] is not None:
+                        self.current_group_points[i] = None
+                        print(f"已撤销影像 {i} 的刺点 (编辑模式)")
+                        self._redraw_all_points()
+                        self._update_status_label()
+                        self._update_ui_state()
+                        return
+                messagebox.showinfo("提示", "编辑组为空，无法撤销。")
+                return
         
         image_idx_to_undo = self.selected_point_info["image_idx"]
         self.current_group_points[image_idx_to_undo] = None
         self.selected_point_info = None # 清除选择
 
+        # 寻找上一个点并设为焦点
         for i in range(self.num_images - 1, -1, -1):
             if self.current_group_points[i] is not None:
-                panel_id = 0 if self.img_idx_left.get() == i else 1 
+                panel_id = 0 
+                if self.img_idx_left.get() == i:
+                    panel_id = 0
+                elif self.img_idx_right.get() == i:
+                    panel_id = 1
+                # (如果两个都不匹配，默认焦点给左侧)
+                
                 self.selected_point_info = {"image_idx": i, "panel_id": panel_id}
                 break
 
@@ -549,7 +804,6 @@ class TiePointPickerApp:
     def _finetune_point(self, dr_abs, dc_abs):
         """
         【修改 5】: (重构) 使用箭头键按原始影像的一个像素微调所选点的位置。
-        (Refactored) Use arrow keys to finetune the selected point by one pixel in the original image.
         """
         focused_widget = self.master.focus_get()
         if focused_widget not in [self.viewer_left, self.viewer_right]:
@@ -558,6 +812,11 @@ class TiePointPickerApp:
         if self.selected_point_info is None: return
         
         idx = self.selected_point_info["image_idx"]
+        
+        # 确保索引有效
+        if idx >= len(self.current_group_points) or self.current_group_points[idx] is None:
+            return
+            
         r, c = self.current_group_points[idx]
         
         # 直接对整数坐标进行加减
@@ -572,6 +831,11 @@ class TiePointPickerApp:
         self._update_status_label()
 
     def _save_current_group(self):
+        # 【修改】编辑模式下不应保存新组
+        if self.edit_mode:
+            messagebox.showwarning("模式错误", "您正处于编辑模式。请点击“完成编辑”来保存修改。")
+            return
+
         if any(p is None for p in self.current_group_points):
             messagebox.showerror("错误", "当前组刺点未完成，请为所有影像标点。")
             return
@@ -579,9 +843,8 @@ class TiePointPickerApp:
         try:
             for img_idx, coords in enumerate(self.current_group_points):
                 filepath = self.point_files[img_idx]
-                with open(filepath, 'a') as f:
+                with open(filepath, 'a') as f: # 'a' = 追加
                     r, c = coords
-                    # 保存时已经是整数，无需转换
                     f.write(f"{r} {c}\n")
                 self.saved_points[img_idx].append(coords)
             
@@ -594,6 +857,9 @@ class TiePointPickerApp:
             self._redraw_all_points()
             self._update_status_label()
             self._update_ui_state()
+            
+            # 【修改】保存新组后刷新列表
+            self._populate_point_list()
 
         except Exception as e:
             messagebox.showerror("保存失败", f"保存刺点数据失败: {e}")
@@ -607,30 +873,50 @@ class TiePointPickerApp:
         for i in range(self.num_images):
             coords = self.current_group_points[i]
             if coords:
-                # 以整数形式显示坐标
                 status_parts.append(f"影像{i}: ({coords[0]}, {coords[1]})")
             else:
                 status_parts.append(f"影像{i}: 未标")
         
-        status_text = f"第 {self.tie_point_group_counter} 组 | K={self.current_window_k.get()} | " + " | ".join(status_parts)
+        # 【修改】根据模式显示不同标题
+        if self.edit_mode:
+            group_id = self.editing_group_index + 1 if self.editing_group_index is not None else '?'
+            mode_text = f"【编辑中】组 {group_id}"
+        else:
+            mode_text = f"【新增】组 {self.tie_point_group_counter}"
+            
+        status_text = f"{mode_text} | K={self.current_window_k.get()} | " + " | ".join(status_parts)
         self.status_label.config(text=status_text)
 
     def _update_ui_state(self):
-        """根据当前状态启用/禁用UI组件。"""
+        """【修改】根据当前状态启用/禁用UI组件。"""
         has_images = self.num_images > 0
         has_windows = self.windows.ndim > 1 and self.windows.shape[1] > 0
         
-        self.k_spinbox.config(state=tk.NORMAL if has_images and has_windows else tk.DISABLED)
+        self.k_spinbox.config(state=tk.NORMAL if has_images and has_windows and not self.edit_mode else tk.DISABLED)
         self.img_left_spinbox.config(state=tk.NORMAL if has_images else tk.DISABLED)
         self.img_right_spinbox.config(state=tk.NORMAL if self.num_images > 1 else tk.DISABLED)
         
-        can_save = self.num_images > 0 and all(p is not None for p in self.current_group_points)
-        self.save_button.config(state=tk.NORMAL if can_save else tk.DISABLED)
-        
-        can_undo = self.selected_point_info is not None
+        # 撤销按钮：只要缓冲区有内容或有焦点，就可撤销
+        can_undo = self.selected_point_info is not None or (self.edit_mode and any(p is not None for p in self.current_group_points))
         self.undo_button.config(state=tk.NORMAL if can_undo else tk.DISABLED)
+        
+        # 保存新组按钮：缓冲区满 且 *非* 编辑模式
+        can_save_new = self.num_images > 0 and all(p is not None for p in self.current_group_points)
+        self.save_button.config(state=tk.NORMAL if can_save_new and not self.edit_mode else tk.DISABLED)
+        
+        # 编辑按钮
+        if hasattr(self, 'edit_button'):
+            has_selection = bool(self.point_list_tree.focus())
+            if self.edit_mode:
+                self.edit_button.config(state=tk.NORMAL) # “完成编辑”按钮始终可用
+            else:
+                self.edit_button.config(state=tk.NORMAL if has_selection else tk.DISABLED) # “启动编辑”需选中
+        
+        # 【修复】删除导致错误的代码块
+
 
 if __name__ == '__main__':
     root = tk.Tk()
     app = TiePointPickerApp(root)
     root.mainloop()
+
