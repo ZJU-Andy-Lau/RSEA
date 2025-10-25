@@ -490,7 +490,7 @@ def fit_affine_bundle(args,
 
             # [修改] 日志记录
             if (iter + 1) % 10 == 0:
-                lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 0.000001
+                lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
                 # 添加 min_loss 和 patience 
                 print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
@@ -745,8 +745,8 @@ if __name__ == '__main__':
     scheduler_t = None
 
     if all_R_params:
-        optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 0.000001)
-        scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 0.000001, total_steps=args.max_iter,pct_start=0.1)
+        optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5)
+        scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5, total_steps=args.max_iter,pct_start=0.1)
     
     if all_T_params:
         optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
