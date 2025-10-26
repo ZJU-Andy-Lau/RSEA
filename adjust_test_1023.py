@@ -1007,14 +1007,14 @@ if __name__ == '__main__':
                 # [层级 0: 执行初始格网生成、评估和筛选]
                 print("Rank 0: Level 0. Finding, assessing, and selecting initial grids...")
                 
-                # 1. 查找初始格网 [cite: adjust_test_1023.py, line 1039]
+                # 1. 查找初始格网
                 all_corners = np.stack([img.corner_xys for img in images], axis=0)
                 all_common_diags = find_grids(all_corners, current_window_size, 
                                             offset_x=args.grid_offset_x, 
                                             offset_y=args.grid_offset_y)
                 print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
 
-                # 2. 评估和筛选格网 [cite: adjust_test_1023.py, lines 1056 - 1135]
+                # 2. 评估和筛选格网
                 print("Rank 0: Loading encoder for grid quality assessment...")
                 encoder_assess = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
                 encoder_assess.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
@@ -1070,19 +1070,25 @@ if __name__ == '__main__':
                                 'diag': diag
                             })
                 
+                # --- [修改开始]: 实现 NMS + 置信度补齐 ---
                 # 3. 执行空间抑制选择算法
                 if args.grid_num > 0 and len(all_valid_grids_info) > args.grid_num:
                     print(f"Rank 0: Found {len(all_valid_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
                     
-                    candidate_grids_for_nms = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
+                    # (新) 1. 保存原始的、按置信度排序的列表
+                    all_valid_grids_sorted = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
+                    # (新) 2. 使用副本进行 NMS 循环
+                    candidate_grids_for_nms = all_valid_grids_sorted.copy()
                     
-                    selected_grids_diags = []
+                    # (新) 3. 存储完整的格网信息 (dict)
+                    selected_grids_info_nms = [] 
                     suppression_radius = current_window_size * 1.5 
                     print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
 
-                    while len(candidate_grids_for_nms) > 0 and len(selected_grids_diags) < args.grid_num:
+                    # 4. NMS 循环
+                    while len(candidate_grids_for_nms) > 0 and len(selected_grids_info_nms) < args.grid_num:
                         best_grid = candidate_grids_for_nms.pop(0)
-                        selected_grids_diags.append(best_grid['diag'])
+                        selected_grids_info_nms.append(best_grid) # 存储完整信息
                         
                         remaining_grids = []
                         for grid_info in candidate_grids_for_nms:
@@ -1091,13 +1097,50 @@ if __name__ == '__main__':
                                 remaining_grids.append(grid_info)
                         candidate_grids_for_nms = remaining_grids 
                     
-                    all_tasks = selected_grids_diags
-                    print(f"Rank 0: Selected {len(all_tasks)} grids.")
+                    # (新) 5. NMS 循环结束，开始执行 "补齐" 逻辑
+                    num_selected_by_nms = len(selected_grids_info_nms)
+                    
+                    # 检查 NMS 选中的数量是否小于目标
+                    if num_selected_by_nms < args.grid_num:
+                        print(f"Rank 0: NMS 选中了 {num_selected_by_nms} 个格网 (目标: {args.grid_num})。")
+                        print(f"Rank 0: 正在从高置信度列表中补齐剩余格网...")
+                        
+                        num_to_backfill = args.grid_num - num_selected_by_nms
+                        
+                        # (新) 使用 Set 快速查找已被 NMS 选中的格网
+                        # 我们使用 diag 的 .tostring() 作为唯一的 hashable key
+                        selected_diags_set = {info['diag'].tostring() for info in selected_grids_info_nms}
+                        
+                        backfill_grids_info = []
+                        
+                        # (新) 遍历*原始的、排序好的*列表 (all_valid_grids_sorted)
+                        for grid_info in all_valid_grids_sorted:
+                            # 如果这个格网 *未被* NMS 选中
+                            if grid_info['diag'].tostring() not in selected_diags_set:
+                                backfill_grids_info.append(grid_info)
+                                # 如果补齐了足够的数量，立刻停止
+                                if len(backfill_grids_info) == num_to_backfill:
+                                    break
+                        
+                        print(f"Rank 0: 已补齐 {len(backfill_grids_info)} 个格网。")
+                        # (新) 将 NMS 选中的列表与补齐的列表合并
+                        final_selected_grids_info = selected_grids_info_nms + backfill_grids_info
+                        
+                    else:
+                        # (新) 如果 NMS 选中的数量足够，则直接使用 NMS 的结果
+                        final_selected_grids_info = selected_grids_info_nms
+
+                    # (新) 最终从合并后的列表中提取 diag
+                    all_tasks = [info['diag'] for info in final_selected_grids_info]
+                    print(f"Rank 0: 最终选中 {len(all_tasks)} 个格网。")
                 
                 else:
-                    print(f"Rank 0: grid_num ({args.grid_num}) is 0 or >= total grids. Using all {len(all_valid_grids_info)} valid grids.")
+                    # (保持不变) 如果 grid_num 为 0 或候选总数本就 <= grid_num，则使用所有
+                    print(f"Rank 0: grid_num ({args.grid_num}) 为 0 或 >= 有效格网总数。使用所有 {len(all_valid_grids_info)} 个有效格网。")
                     all_tasks = [info['diag'] for info in all_valid_grids_info]
                 
+                # --- [修改结束] ---
+
                 # 4. 调用可视化
                 visualize_grid_selection(args, all_valid_grids_info, all_tasks, images[0], level)
                 
@@ -1338,3 +1381,4 @@ if __name__ == '__main__':
     
     # 最终清理
     dist.destroy_process_group()
+
