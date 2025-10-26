@@ -188,19 +188,19 @@ def create_checkerboard(ortho1: np.ndarray,
                     ortho2[i:min(i+block_size, H), j:min(j+block_size, W)]
     
     # 写入 GeoTIFF
-    with rasterio.open(
-        output_path, 'w',
-        driver='GTiff',
-        height=H,
-        width=W,
-        count=3,
-        dtype=checkerboard_img.dtype,
-        crs=CRS.from_epsg(3857),
-        transform=transform
-    ) as dst:
-        dst.write(checkerboard_img[..., 0], 1)
-        dst.write(checkerboard_img[..., 1], 2)
-        dst.write(checkerboard_img[..., 2], 3)
+    try:
+        # 假设 checkerboard_img 是 RGB 顺序，转换为 BGR 以供 cv2 使用
+        if checkerboard_img.ndim == 3 and checkerboard_img.shape[2] == 3:
+            checkerboard_img_bgr = cv2.cvtColor(checkerboard_img, cv2.COLOR_RGB2BGR)
+        else:
+            # 如果是灰度图或其他情况，直接使用
+            checkerboard_img_bgr = checkerboard_img
+
+        success = cv2.imwrite(output_path, checkerboard_img_bgr)
+        if not success:
+            print(f"警告: cv2.imwrite 未能成功保存 PNG 文件到 {output_path}")
+    except Exception as e:
+        print(f"警告: 保存 PNG 文件到 {output_path} 时出错: {e}")
 
 
 # DDP Step 1: DDP环境初始化函数
