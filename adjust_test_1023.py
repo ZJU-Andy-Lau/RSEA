@@ -1,8 +1,7 @@
 import os
 import argparse
 import random
-import itertools # 导入 itertools 用于生成像对
-from matplotlib.rcsetup import validate_markevery
+import itertools
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
@@ -14,7 +13,7 @@ from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
 import scheduler
-from utils import find_grids,vis_feat_twin,vis_conf,downsample_average
+from utils import find_grids,vis_conf,downsample_average
 
 # DDP相关的库
 import torch.distributed as dist
@@ -22,8 +21,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import List, Tuple, Dict # 导入 Dict
 
 import warnings
-import time # <-- [新] 添加
-from tqdm import tqdm # <-- [新] 添加: 用于格网评估进度条
+import time
+from tqdm import tqdm
 warnings.filterwarnings("ignore")
 
 def format_time(seconds: float) -> str:
@@ -113,7 +112,7 @@ class Window():
 
 
 class SharedGrid():
-    def __init__(self, args, diag: np.ndarray, all_rs_images: List[RSImage], grid_id: str): # [修改] grid_id 改为 str
+    def __init__(self, args, diag: np.ndarray, all_rs_images: List[RSImage], grid_id: str):
         """
         (新) 代表一个公共地理格网，管理所有在此重叠的影像数据。
 
@@ -232,7 +231,7 @@ class SharedGrid():
 
     def calculate_all_pairs_loss(self, model_ddp: DDP, images: List[RSImage], local_rank: int) -> torch.Tensor:
         """
-         计算此格网内所有影像两两之间的对称损失。
+         (已修改) 计算此格网内所有影像两两之间的 *非对称* 损失 (j -> i, j > i)。
         """
         grid_total_loss = torch.tensor(0.0, device=local_rank)
         num_valid_pairs_in_grid = 0
@@ -241,6 +240,7 @@ class SharedGrid():
         for (i, j) in itertools.combinations(self.overlapping_image_ids, 2):
             
             # --- 这部分逻辑与原 fit_affine_bundle 中的循环体完全一致 ---
+            # i < j, A_i 是目标 (可能固定也可能移动), A_j 是源 (总是移动)
             A_i = model_ddp.module.get_affine(i)
             A_j = model_ddp.module.get_affine(j)
             
@@ -250,13 +250,11 @@ class SharedGrid():
             rpc_i = images[i].rpc
             rpc_j = images[j].rpc
             
-            # 1. Warp j -> i
+            # 1. Warp j -> i  (始终将索引号大的 j 投影到索引号小的 i)
             warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
             feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i)
             
-            # 2. Warp i -> j
-            warp_i_to_j = warp_local(window_i.local.float(), window_i.dem, rpc_i, rpc_j, A_i)
-            feat_i_in_j, conf_i_in_j, valid_i = feature_sampling(window_j.feature.float(), window_j.conf.float(), window_j.local.float(), warp_i_to_j)
+            # [已删除] 2. Warp i -> j (不再计算)
 
             # 3. 计算 loss_a (j -> i)
             loss_a = torch.tensor(0.0, device=local_rank)
@@ -266,19 +264,18 @@ class SharedGrid():
                 weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-8)
                 loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
-            # 4. 计算 loss_b (i -> j)
-            loss_b = torch.tensor(0.0, device=local_rank)
-            if feat_i_in_j is not None:
-                feat_i_orig = window_i.feature[valid_i].float()
-                conf_cov_b = window_i.conf[valid_i].float() * conf_i_in_j
-                weight_b = conf_cov_b / (conf_cov_b.mean() + 1e-8)
-                loss_b = (torch.norm(feat_i_orig - feat_i_in_j, dim=-1) * weight_b).mean() * 10000.
+            # [已删除] 4. 计算 loss_b (i -> j)
             
-            pair_loss = loss_a + loss_b
+            # (已修改) 最终损失即为 loss_a
+            pair_loss = loss_a
             
-            if not torch.isnan(pair_loss) and not torch.isinf(pair_loss):
+            if not torch.isnan(pair_loss) and not torch.isinf(pair_loss) and pair_loss > 0:
                 grid_total_loss = grid_total_loss + pair_loss
                 num_valid_pairs_in_grid += 1
+            else:
+                if pair_loss > 0: # 仅在非零时打印警告 (虽然isnan和isinf已经覆盖了)
+                    print(f"[Rank{local_rank}]: Detect invalid loss:{pair_loss.item()} in Grid {self.id} for pair ({i}, {j})")
+
 
         if num_valid_pairs_in_grid > 0:
             return grid_total_loss / num_valid_pairs_in_grid # 返回该格网的平均损失
@@ -394,7 +391,7 @@ def fit_affine_bundle(args,
                       current_level: int # [新] 传入当前层级
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
-    使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
+    使用DDP并行计算 *非对称* 损失并优化 *所有* 影像的仿射矩阵。
     local_shared_grids: [(SharedGrid_0), (SharedGrid_1), ...]
     images: [RSImage_0, RSImage_1, ...] (包含完整图像)
     model_ddp, optimizers, schedulers: 从 main 传入
@@ -405,7 +402,7 @@ def fit_affine_bundle(args,
         print("Error: Need at least 2 images for bundle adjustment.")
         return [] 
     
-    # --- [新] 初始化早停和最佳模型变量 ---
+    # ---初始化早停和最佳模型变量 ---
     best_model_state = [] # 只有 Rank 0 会填充它
     if local_rank == 0:
         min_loss = float('inf')
@@ -427,10 +424,9 @@ def fit_affine_bundle(args,
         if len(local_shared_grids) == 0:
             pass 
         else:
-            # (修改) 循环格网，而不是像对任务
             for grid in local_shared_grids:
                 
-                # (修改) 在格网内部计算所有像对的损失
+                # 在格网内部计算所有像对的损失
                 # 这个函数在 SharedGrid 类中定义
                 grid_avg_loss = grid.calculate_all_pairs_loss(model_ddp, images, local_rank)
                 
@@ -532,7 +528,6 @@ def fit_affine_bundle(args,
                 # ---精度检查结束 ---
 
                 #更新 print 语句以包含新信息
-                # [修改] 加入 Level 信息
                 print(f"Lvl:{current_level + 1}/{args.num_levels} iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} min_l:{min_loss:.4f} {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e}  lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str}  eta:{remaining_time_str}")
         
         # 3.Rank 0 将停止信号广播给所有其他进程
@@ -771,7 +766,6 @@ if __name__ == '__main__':
 
     parser.add_argument('--kmin_k',type=int,default=16)
 
-    # [修改] 帮助文本
     parser.add_argument('--window_size', type=int, default=2000,
                         help='INITIAL window size in meter(m) for the coarsest level.')
 
@@ -792,7 +786,6 @@ if __name__ == '__main__':
     parser.add_argument('--check_error_during_train', action='store_true',
                         help='If set, check tie point error every 10 iterations (and after each level).')
 
-    # [新] 添加金字塔层级参数
     parser.add_argument('--num_levels', type=int, default=1,
                         help='Total number of pyramid levels for adjustment (default: 1, same as original behavior).')
 
@@ -1033,11 +1026,11 @@ if __name__ == '__main__':
         scheduler_t = None
 
         if all_R_params:
-            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5)
+            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (2 ** level))
             scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         if all_T_params:
-            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
+            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (2 ** level))
             scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         best_model_state = []
