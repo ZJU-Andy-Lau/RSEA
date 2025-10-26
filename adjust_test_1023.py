@@ -52,7 +52,7 @@ def orthorectify_patch_mercator(rs_image: RSImage,
     
     Args:
         rs_image: 包含 *完整* 影像、DEM和 *已调整* RPC 的 RSImage 对象。
-        grid_diag: np.array([[min_x, min_y], [max_x, max_y]])，Mercator坐标。
+        grid_diag: np.array([[x1, y1], [x2, y2]])，Mercator坐标，顺序不固定。
         resolution: 输出分辨率 (米)。
         output_path: 输出 GeoTIFF 路径。
         
@@ -61,14 +61,21 @@ def orthorectify_patch_mercator(rs_image: RSImage,
     """
     
     # 1. 定义输出网格 (Mercator, EPSG:3857)
-    min_x, min_y = grid_diag[0]
-    max_x, max_y = grid_diag[1]
+    # --- [修改开始] ---
+    # 显式查找 min/max 坐标，不依赖角点顺序
+    all_x = grid_diag[:, 0]
+    all_y = grid_diag[:, 1]
+    min_x = np.min(all_x)
+    max_x = np.max(all_x)
+    min_y = np.min(all_y)
+    max_y = np.max(all_y)
+    # --- [修改结束] ---
     
     out_W = int(np.ceil((max_x - min_x) / resolution))
     out_H = int(np.ceil((max_y - min_y) / resolution))
     
     if out_W <= 0 or out_H <= 0:
-        raise ValueError(f"输出尺寸为零或负数 (W:{out_W}, H:{out_H})。请检查 grid_diag 和 resolution。")
+        raise ValueError(f"输出尺寸为零或负数 (W:{out_W}, H:{out_H})。请检查 grid_diag 和 resolution。Grid Diag: {grid_diag}")
 
     # 注意：Y轴在地理坐标中向上，但在影像中向下
     # from_origin 需要左上角 (ul_x, ul_y)，所以 x 是 min_x, y 是 max_y
@@ -879,8 +886,11 @@ def subdivide_grids(parent_diags: List[np.ndarray]) -> List[np.ndarray]:
     sub_grids = []
     for diag in parent_diags:
         # diag is np.array([[min_x, min_y], [max_x, max_y]])
-        min_x, min_y = diag[0]
-        max_x, max_y = diag[1]
+        # 显式查找min/max，防止顺序问题
+        min_x = np.min(diag[:, 0])
+        max_x = np.max(diag[:, 0])
+        min_y = np.min(diag[:, 1])
+        max_y = np.max(diag[:, 1])
         
         mid_x = (min_x + max_x) / 2.0
         mid_y = (min_y + max_y) / 2.0
