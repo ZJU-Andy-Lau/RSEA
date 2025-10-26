@@ -25,7 +25,6 @@ import warnings
 import time # <-- [新] 添加
 warnings.filterwarnings("ignore")
 
-# --- [新] 添加时间格式化辅助函数 ---
 def format_time(seconds: float) -> str:
     """将秒数格式化为 HH:MM:SS """
     seconds = int(seconds)
@@ -33,13 +32,11 @@ def format_time(seconds: float) -> str:
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
-# --- [新] 结束 ---
 
 # DDP Step 1: DDP环境初始化函数
 def setup_ddp():
     """初始化DDP环境"""
     dist.init_process_group(backend='nccl')
-    # torchrun 会自动设置 'LOCAL_RANK' 环境变量
     local_rank = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(local_rank)
     print(f"DDP setup on rank {local_rank} with device cuda:{local_rank}")
@@ -52,13 +49,10 @@ class AffineModel(nn.Module):
     """
     def __init__(self):
         super().__init__()
-        # R 和 T 必须是 nn.Parameter 才能被DDP和优化器追踪
-        # 为了DDP性能，我们使用 float32
         self.R = nn.Parameter(torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32))
         self.T = nn.Parameter(torch.tensor([0., 0.], dtype=torch.float32))
 
     def forward(self):
-        # "forward" 就返回仿射矩阵
         return torch.concatenate([self.R, self.T.unsqueeze(-1)], dim=-1)
 
 class BundleAffineModel(nn.Module):
@@ -84,7 +78,6 @@ class BundleAffineModel(nn.Module):
         if index == 0:
             # 返回一个固定的、float32的单位仿射矩阵
             # 它需要和 model 在同一个 device 上 (通过第一个模型获取)
-            # (修正) 确保在模型为空时也能工作
             device = "cuda" if torch.cuda.is_available() else "cpu"
             if len(self.models) > 0:
                 device = self.models[0].R.device
@@ -117,12 +110,7 @@ class Window():
         if self.conf is not None:
             self.conf = self.conf.cuda()
 
-    
 
-# (已废弃) 不再使用 Window_Pair 类
-# class Window_Pair(): ...
-
-# (新) 替换 Window_Pair 的新类
 class SharedGrid():
     def __init__(self, args, diag: np.ndarray, all_rs_images: List[RSImage], grid_id: int):
         """
@@ -181,7 +169,6 @@ class SharedGrid():
         if len(self.overlapping_image_ids) < 2:
             raise ValueError(f"Grid {self.id} has {len(self.overlapping_image_ids)} overlapping images. Need at least 2.")
         
-        # (调试) 仅 Rank 0 保存重采样图像
         if dist.get_rank() == 0:
             self.debug_output_path = os.path.join(args.debug_output_path, f'grid_{self.id}')
             os.makedirs(self.debug_output_path, exist_ok=True)
@@ -192,7 +179,7 @@ class SharedGrid():
     @torch.no_grad()
     def extract_features_sequentially(self, encoder: EncoderDino, local_rank: int):
         """
-        (新) (显存优化) 依次提取此格网中所有影像的特征。
+        依次提取此格网中所有影像的特征。
         """
         encoder = encoder.cuda(local_rank).eval()
         transform = transforms.Compose([
@@ -216,8 +203,7 @@ class SharedGrid():
             window.conf = conf.squeeze().flatten(0,1)
             window.local = downsample_average(window.local, encoder.SAMPLE_FACTOR).flatten(0,1)
             window.dem = downsample_average(window.dem, encoder.SAMPLE_FACTOR).flatten(0,1)
-            
-            # --- (显存优化) ---
+
             # 立刻删除已不再需要的原始图像块，释放显存
             original_img_for_vis = window.img.copy() # 复制一份用于可视化
             del window.img
@@ -225,7 +211,6 @@ class SharedGrid():
             # --- 将特征数据移至GPU ---
             window.to_gpu() # to_gpu 会自动使用 local_rank 对应的卡
 
-            # (调试) 仅 Rank 0 保存特征/置信度可视化
             if dist.get_rank() == 0:
                 feat_vis = window.feature.cpu().numpy().reshape(h,w,-1)
                 conf_vis = window.conf.cpu().numpy().reshape(h,w)
@@ -244,7 +229,7 @@ class SharedGrid():
 
     def calculate_all_pairs_loss(self, model_ddp: DDP, images: List[RSImage], local_rank: int) -> torch.Tensor:
         """
-        (新) 计算此格网内所有影像两两之间的对称损失。
+         计算此格网内所有影像两两之间的对称损失。
         """
         grid_total_loss = torch.tensor(0.0, device=local_rank)
         num_valid_pairs_in_grid = 0
@@ -390,9 +375,8 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
-# (已修改) 
 def fit_affine_bundle(args, 
-                      local_shared_grids: List[SharedGrid], # (修改) 接收 SharedGrid 列表
+                      local_shared_grids: List[SharedGrid], # 接收 SharedGrid 列表
                       images: List[RSImage], 
                       model_ddp: DDP, 
                       optimizer_r: torch.optim.Adam, 
@@ -403,10 +387,9 @@ def fit_affine_bundle(args,
                       world_size:int,
                       patience: int,           
                       min_loss_threshold: float,
-                      overlapping_pairs: List[Tuple[int, int]] # <-- #[新] 添加此参数
+                      overlapping_pairs: List[Tuple[int, int]] 
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
-    (已修改)
     使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
     local_shared_grids: [(SharedGrid_0), (SharedGrid_1), ...]
     images: [RSImage_0, RSImage_1, ...] (包含完整图像)
@@ -424,11 +407,9 @@ def fit_affine_bundle(args,
         min_loss = float('inf')
         patience_counter = 0
         print(f"Starting optimization with patience={patience} and min_loss_threshold={min_loss_threshold}")
-        start_time = time.time() # <-- [新] 记录优化开始时间
+        start_time = time.time()
         
-    # [新] 用于早停广播的信号张量 (所有进程都需要)
     stop_signal = torch.tensor(0.0, device=local_rank)
-    # --- [新] 结束 ---
 
     # 4. 迭代优化
     for iter in range(args.max_iter):
@@ -436,7 +417,7 @@ def fit_affine_bundle(args,
         optimizer_t.zero_grad()
         
         local_total_loss = torch.tensor(0.0, device=local_rank)
-        num_valid_grids = 0 # (修改) 语义改为有效的格网数
+        num_valid_grids = 0 
         
         # 5. 只在 *本地* 的格网子集上循环
         if len(local_shared_grids) == 0:
@@ -466,15 +447,13 @@ def fit_affine_bundle(args,
         
         optimizer_r.step()
         optimizer_t.step()
-
-        # --- [新] 全局同步、检查点和早停逻辑 ---
             
-        # 1. [新] 在所有进程上获取全局平均损失
+        # 1.  在所有进程上获取全局平均损失
         global_loss_sum = local_total_loss.clone().detach()
         dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
         global_avg_loss = (global_loss_sum / world_size).item() # .item() 转换
         
-        # 2. [新] Rank 0 进行决策
+        # 2. Rank 0 进行决策
         if local_rank == 0:
             # 检查损失是否有显著改善
             if (min_loss - global_avg_loss) > min_loss_threshold:
@@ -501,12 +480,12 @@ def fit_affine_bundle(args,
                 print(f"Loss ({global_avg_loss:.4f}) did not improve by {min_loss_threshold} for {patience} iterations. Min loss: {min_loss:.4f}")
                 stop_signal.fill_(1.0) # 设置停止信号
 
-            # #[修改] 日志记录
+            # 日志记录
             if (iter + 1) % 10 == 0:
                 lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
                 
-                # --- [新] 时间计算 ---
+                # ---时间计算 ---
                 elapsed_time_sec = time.time() - start_time
                 elapsed_time_str = format_time(elapsed_time_sec)
                 
@@ -514,13 +493,13 @@ def fit_affine_bundle(args,
                 remaining_iter = args.max_iter - (iter + 1)
                 remaining_time_sec = avg_iter_time * remaining_iter
                 remaining_time_str = format_time(remaining_time_sec)
-                # --- [新] 时间计算结束 ---
+                # ---时间计算结束 ---
 
-                # --- [新] 可选的精度检查 ---
+                # ---可选的精度检查 ---
                 mean_err, median_err = 0.0, 0.0
                 err_log_str = "" # 用于日志的空字符串
 
-                if args.check_error_during_train: # <-- [新] 检查功能开关
+                if args.check_error_during_train: # <-- 检查功能开关
                     
                     # 1. 存储所有 RPC 对象的原始(上一轮)仿射参数
                     original_params_list = [img.rpc.adjust_params.clone() for img in images]
@@ -544,22 +523,22 @@ def fit_affine_bundle(args,
                                 images[i].rpc.adjust_params_inv = original_params_inv_list[i]
                     
                     # 准备日志字符串
-                    err_log_str = f"\t err_mean:{mean_err:.4f}m \t err_median:{median_err:.4f}m"
+                    err_log_str = f"\t mean:{mean_err:.4f}m \t median:{median_err:.4f}m"
                 
-                # --- [新] 精度检查结束 ---
+                # ---精度检查结束 ---
 
-                # #[修改] 更新 print 语句以包含新信息
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f}{err_log_str} \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str} \t eta:{remaining_time_str}")
+                #更新 print 语句以包含新信息
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t min_l:{min_loss:.4f} \t {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str} \t eta:{remaining_time_str}")
         
-        # 3. [新] Rank 0 将停止信号广播给所有其他进程
+        # 3.Rank 0 将停止信号广播给所有其他进程
         dist.broadcast(stop_signal, src=0)
 
-        # 4. [新] 所有进程检查停止信号
+        # 4.所有进程检查停止信号
         if stop_signal.item() == 1.0:
             print(f"Rank {local_rank}: Received stop signal. Breaking optimization loop.")
             break # 退出循环
         
-        # --- [新] 逻辑结束 ---
+        # --- 逻辑结束 ---
 
         if scheduler_r:
             scheduler_r.step()
@@ -570,7 +549,7 @@ def fit_affine_bundle(args,
     if local_rank == 0:
         print("Bundle adjustment optimization finished.")
 
-    # [新] 返回 Rank 0 上的最佳模型状态
+    # 返回 Rank 0 上的最佳模型状态
     return best_model_state
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
@@ -594,7 +573,6 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     
     return distance
 
-# --- #[新] 添加辅助函数 ---
 def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> Tuple[float, float]:
     """
     (新) 专门用于在优化循环中调用的函数，仅计算并返回误差的均值和中位数。
@@ -619,18 +597,15 @@ def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple
     median_error = np.median(all_distances)
     
     return mean_error, median_error
-# --- #[新] 结束 ---
 
 def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     """(保留) 计算单对影像 (i, j) 之间的连接点误差"""
     
     if img_i.tie_points is None or img_j.tie_points is None:
-        # #[修改] 减少打印噪音
         # print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Missing tie points.")
         return np.array([])
         
     if len(img_i.tie_points) != len(img_j.tie_points):
-        # #[修改] 减少打印噪音
         # print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Mismatched tie points count.")
         return np.array([])
     
@@ -705,17 +680,15 @@ if __name__ == '__main__':
 
     parser.add_argument('--grid_num',type=int,default=1)
 
-    # --- [新] 添加早停和最佳模型相关参数 ---
     parser.add_argument('--patience', type=int, default=100, 
                         help='Patience for early stopping (e.g., 100 iterations)')
+    
     parser.add_argument('--min_loss_threshold', type=float, default=1e-4, 
                         help='Minimum improvement threshold for min_loss to reset patience (e.g., 1e-4)')
-    # --- [新] 结束 ---
 
-    # --- [新] 添加功能开关参数 ---
     parser.add_argument('--check_error_during_train', action='store_true',
                         help='If set, check tie point error every 10 iterations during training (Rank 0 only).')
-    # --- [新] 结束 ---
+
 
     args = parser.parse_args()
 
@@ -734,18 +707,15 @@ if __name__ == '__main__':
         dist.destroy_process_group()
         exit()
 
-    # (修改) DDP Step 3: 任务生成与分片 (基于公共格网)
-    all_tasks = [] # (修改) 任务列表现在是 [diag1, diag2, ...]
-    overlapping_pairs = [] # (保留) 仅用于最终验证
+    all_tasks = []
+    overlapping_pairs = []
     
     # 只在主进程 (rank 0) 上生成任务列表
     if local_rank == 0:
         print("Rank 0: Finding overlapping pairs (for final validation)...")
-        # (保留) 仍然需要这个来做最后的 check_all_pairs_error
         overlapping_pairs = find_overlapping_pairs(images)
 
         print("\nStarting initial error check on Rank 0...")
-        # (保留) 验证逻辑不变，它使用 'overlapping_pairs' 列表
         all_errors = check_all_pairs_error(images, overlapping_pairs)
         
         if len(all_errors) > 0 and all_errors.mean() != 0.0:
@@ -763,15 +733,15 @@ if __name__ == '__main__':
             print("No valid tie points found. Final error check skipped.")
         
         print("Rank 0: Finding common grids from ALL images...")
-        # (修改) 堆叠所有影像的 corners
+        # 堆叠所有影像的 corners
         all_corners = np.stack([img.corner_xys for img in images], axis=0)
         
-        # (修改) 一次性调用 find_grids 得到 M 个公共格网
+        #  一次性调用 find_grids 得到 M 个公共格网
         all_common_diags = find_grids(all_corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y)
         
         print(f"Select {args.grid_num} grids from total {len(all_common_diags)} common grids")
         if args.grid_num > 0 and len(all_common_diags) > args.grid_num:
-            # (修改) 采样逻辑
+            # 采样逻辑
             indices = [int((i + 1) * len(all_common_diags) / (args.grid_num + 1.)) for i in range(args.grid_num)]
             all_tasks = [all_common_diags[i] for i in indices]
         else:
@@ -781,38 +751,38 @@ if __name__ == '__main__':
         random.shuffle(all_tasks)
         print(f"Rank 0: Found {len(all_tasks)} total common grids (tasks).")
 
-    # (修改) 将 *格网任务列表* 广播给所有进程
+    # 将 *格网任务列表* 广播给所有进程
     tasks_to_broadcast = [all_tasks] if local_rank == 0 else [None]
     dist.broadcast_object_list(tasks_to_broadcast, src=0)
     all_tasks = tasks_to_broadcast[0] # all_tasks 是 [diag1, diag2, ...]
     
-    # (保留) 将 *重叠对列表* 广播 (仅用于验证)
+    #将 *重叠对列表* 广播 (仅用于验证)
     pairs_to_broadcast = [overlapping_pairs] if local_rank == 0 else [None]
     dist.broadcast_object_list(pairs_to_broadcast, src=0)
     overlapping_pairs = pairs_to_broadcast[0] # overlapping_pairs 是 [(i, j), ...]
 
-    # (修改) 每个进程根据自己的rank获取 *格网* 子集
+    # 每个进程根据自己的rank获取 *格网* 子集
     my_tasks = all_tasks[local_rank::world_size] # my_tasks 是 [diag_k, diag_l, ...]
 
-    # (保留) 每个进程都加载特征提取器
+    # 每个进程都加载特征提取器
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
 
-    # (修改) 每个进程在自己的 *格网* 子集上创建 SharedGrid
-    local_shared_grids: List[SharedGrid] = [] # (修改) 新的数据列表
+    #  每个进程在自己的 *格网* 子集上创建 SharedGrid
+    local_shared_grids: List[SharedGrid] = [] # 新的数据列表
     print(f"[Rank {local_rank}] Total grids: {len(all_tasks)}, assigned: {len(my_tasks)}.")
     
-    # (修改) 循环格网 (diags)
+    #循环格网 (diags)
     for idx, diag in enumerate(my_tasks):
         global_grid_id = local_rank + idx * world_size # 构造一个全局唯一的ID
         try:
             # 1. 创建 SharedGrid，此时会重采样所有影像块
-            # (修改) 传入 *所有* 影像
+            #  传入 *所有* 影像
             grid = SharedGrid(args, diag, images, global_grid_id) 
             
-            # 2. (显存优化) 依次提取特征，并释放img内存
+            # 2.依次提取特征，并释放img内存
             grid.extract_features_sequentially(encoder, local_rank)
             
             local_shared_grids.append(grid)
@@ -821,7 +791,7 @@ if __name__ == '__main__':
             print(f"[Rank {local_rank}] !! FAILED to create grid {global_grid_id}. Error: {e}")
 
 
-    # (保留) DDP模型和优化器设置
+    # DDP模型和优化器设置
     model = BundleAffineModel(len(images)).to(local_rank)
     model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=False) # 如果所有参数都用到了，设为False
     
@@ -842,16 +812,16 @@ if __name__ == '__main__':
         optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr)
         scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=50 / args.max_iter)
     
-    # [新] 用于保存最佳模型状态的变量
+    # 用于保存最佳模型状态的变量
     best_model_state = []
 
     if optimizer_r is None and optimizer_t is None and local_rank == 0:
         print("Warning: No parameters to optimize (only one image provided?). Skipping optimization.")
         # 如果没有可优化的参数（例如只有一张影像），则跳过fit
     else:
-        # (修改) 调用已修改的 fit_affine_bundle
-        # [新] 捕获返回的最佳模型状态
-        # --- #[修改] 调用 fit_affine_bundle ---
+        #  调用已修改的 fit_affine_bundle
+        #捕获返回的最佳模型状态
+        # --- #调用 fit_affine_bundle ---
         best_model_state = fit_affine_bundle(args, 
                                              local_shared_grids, 
                                              images, 
@@ -864,20 +834,20 @@ if __name__ == '__main__':
                                              world_size,
                                              patience=args.patience, 
                                              min_loss_threshold=args.min_loss_threshold,
-                                             overlapping_pairs=overlapping_pairs # <-- #[新] 传入列表
+                                             overlapping_pairs=overlapping_pairs 
                                              )
-        # --- #[修改] 结束 ---
 
 
-    # (保留) 同步点，确保所有进程都完成了优化
+
+    #  同步点，确保所有进程都完成了优化
     dist.barrier()
     
-    # (保留) 只在主进程上进行最终的模型更新和精度验证
+    # 只在主进程上进行最终的模型更新和精度验证
     if local_rank == 0:
         print("\n" + "="*30)
         print("All processes finished optimization.")
         
-        # --- [新] 加载最佳模型状态 ---
+        # --- 加载最佳模型状态 ---
         if best_model_state: # 检查 best_model_state 是否有效（非空）
             print(f"Loading best model state (from min_loss) back into model_ddp.module... (Total {len(best_model_state)} states)")
             # 使用 torch.no_grad() 确保在加载状态时不计算梯度
@@ -893,7 +863,7 @@ if __name__ == '__main__':
                         break
         else:
             print("Warning: No best model state saved (e.g., no improvement found or only 1 image). Using final iteration state.")
-        # --- [新] 结束 ---
+        # --- 结束 ---
 
         print("Applying final (best) affine matrices to RPC models (Rank 0)...")
         
@@ -905,7 +875,6 @@ if __name__ == '__main__':
             images[i].rpc.Update_Adjust(final_A_i)
             
         print("\nStarting final error check on Rank 0...")
-        # (保留) 验证逻辑不变，它使用 'overlapping_pairs' 列表
         all_errors = check_all_pairs_error(images, overlapping_pairs)
         
         if len(all_errors) > 0 and all_errors.mean() != 0.0:
@@ -922,6 +891,5 @@ if __name__ == '__main__':
         else:
             print("No valid tie points found. Final error check skipped.")
     
-    # (保留) 清理DDP进程组
     dist.destroy_process_group()
 
