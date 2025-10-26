@@ -224,8 +224,8 @@ class SharedGrid():
                 
                 # 可视化置信度
                 conf_cont, conf_div = vis_conf(conf_vis, original_img_for_vis, encoder.SAMPLE_FACTOR, div=self.args.conf_threshold)
-                cv2.imwrite(os.path.join(self.debug_output_path, f'conf_cont_{img_id}.png'), conf_cont)
-                cv2.imwrite(os.path.join(self.debug_output_path, f'conf_div_{img_id}.png'), conf_div)
+                cv2.imwrite(os.path.join(self.debug_output_path, f'conf_cont_{img_id}.png'), cv2.cvtColor(conf_cont))
+                cv2.imwrite(os.path.join(self.debug_output_path, f'conf_div_{img_id}.png'), cv2.cvtColor(conf_div))
 
 
     def calculate_all_pairs_loss(self, model_ddp: DDP, images: List[RSImage], local_rank: int) -> torch.Tensor:
