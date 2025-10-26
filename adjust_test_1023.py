@@ -22,7 +22,18 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import List, Tuple, Dict # 导入 Dict
 
 import warnings
+import time # <-- [新] 添加
 warnings.filterwarnings("ignore")
+
+# --- [新] 添加时间格式化辅助函数 ---
+def format_time(seconds: float) -> str:
+    """将秒数格式化为 HH:MM:SS """
+    seconds = int(seconds)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+# --- [新] 结束 ---
 
 # DDP Step 1: DDP环境初始化函数
 def setup_ddp():
@@ -413,6 +424,7 @@ def fit_affine_bundle(args,
         min_loss = float('inf')
         patience_counter = 0
         print(f"Starting optimization with patience={patience} and min_loss_threshold={min_loss_threshold}")
+        start_time = time.time() # <-- [新] 记录优化开始时间
         
     # [新] 用于早停广播的信号张量 (所有进程都需要)
     stop_signal = torch.tensor(0.0, device=local_rank)
@@ -489,44 +501,55 @@ def fit_affine_bundle(args,
                 print(f"Loss ({global_avg_loss:.4f}) did not improve by {min_loss_threshold} for {patience} iterations. Min loss: {min_loss:.4f}")
                 stop_signal.fill_(1.0) # 设置停止信号
 
-            # #[修改] 日志记录 (移动到下面并添加误差检查)
+            # #[修改] 日志记录
             if (iter + 1) % 10 == 0:
                 lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
                 
-                # --- #[新] 开始执行实时精度检查 (仅 Rank 0) ---
+                # --- [新] 时间计算 ---
+                elapsed_time_sec = time.time() - start_time
+                elapsed_time_str = format_time(elapsed_time_sec)
                 
-                # 1. 存储所有 RPC 对象的原始(上一轮)仿射参数
-                #    我们必须保存 .adjust_params 和 .adjust_params_inv 以便完全恢复
-                original_params_list = [img.rpc.adjust_params.clone() for img in images]
-                original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
-                
-                mean_err, median_err = 0.0, 0.0
-                try:
-                    # 2. 临时将 DDP 模型中的 *当前* 仿射参数应用到 RPC 对象
-                    with torch.no_grad():
-                        for i in range(1, num_images): # img 0 是锚点，不更新
-                            # 从 DDP 模型获取当前迭代的仿射矩阵
-                            current_A_i = model_ddp.module.get_affine(i).detach()
-                            # 调用 Update_Adjust 将其 *复合* 到 rpc 对象上
-                            # (这与最终应用逻辑一致)
-                            images[i].rpc.Update_Adjust(current_A_i) # [cite: rpc.py, line 290]
-                    
-                    # 3. 使用 *更新后* 的 rpc 对象计算误差
-                    mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
+                avg_iter_time = elapsed_time_sec / (iter + 1)
+                remaining_iter = args.max_iter - (iter + 1)
+                remaining_time_sec = avg_iter_time * remaining_iter
+                remaining_time_str = format_time(remaining_time_sec)
+                # --- [新] 时间计算结束 ---
 
-                finally:
-                    # 4. (关键) 无论检查是否成功，都 *必须* 恢复 RPC 对象的原始状态
-                    #    否则下一次检查(10 iter后)会错误地累积仿射变换
-                    with torch.no_grad():
-                        for i in range(num_images):
-                            images[i].rpc.adjust_params = original_params_list[i]
-                            images[i].rpc.adjust_params_inv = original_params_inv_list[i]
+                # --- [新] 可选的精度检查 ---
+                mean_err, median_err = 0.0, 0.0
+                err_log_str = "" # 用于日志的空字符串
+
+                if args.check_error_during_train: # <-- [新] 检查功能开关
+                    
+                    # 1. 存储所有 RPC 对象的原始(上一轮)仿射参数
+                    original_params_list = [img.rpc.adjust_params.clone() for img in images]
+                    original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
+                    
+                    try:
+                        # 2. 临时将 DDP 模型中的 *当前* 仿射参数应用到 RPC 对象
+                        with torch.no_grad():
+                            for i in range(1, num_images): # img 0 是锚点，不更新
+                                current_A_i = model_ddp.module.get_affine(i).detach()
+                                images[i].rpc.Update_Adjust(current_A_i) # [cite: rpc.py, line 290]
+                        
+                        # 3. 使用 *更新后* 的 rpc 对象计算误差
+                        mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
+
+                    finally:
+                        # 4. (关键) 无论检查是否成功，都 *必须* 恢复 RPC 对象的原始状态
+                        with torch.no_grad():
+                            for i in range(num_images):
+                                images[i].rpc.adjust_params = original_params_list[i]
+                                images[i].rpc.adjust_params_inv = original_params_inv_list[i]
+                    
+                    # 准备日志字符串
+                    err_log_str = f"\t err_mean:{mean_err:.4f}m \t err_median:{median_err:.4f}m"
                 
-                # --- #[新] 精度检查结束 ---
+                # --- [新] 精度检查结束 ---
 
                 # #[修改] 更新 print 语句以包含新信息
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t err_mean:{mean_err:.4f}m \t err_median:{median_err:.4f}m \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f}{err_log_str} \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str} \t eta:{remaining_time_str}")
         
         # 3. [新] Rank 0 将停止信号广播给所有其他进程
         dist.broadcast(stop_signal, src=0)
@@ -687,6 +710,11 @@ if __name__ == '__main__':
                         help='Patience for early stopping (e.g., 100 iterations)')
     parser.add_argument('--min_loss_threshold', type=float, default=1e-4, 
                         help='Minimum improvement threshold for min_loss to reset patience (e.g., 1e-4)')
+    # --- [新] 结束 ---
+
+    # --- [新] 添加功能开关参数 ---
+    parser.add_argument('--check_error_during_train', action='store_true',
+                        help='If set, check tie point error every 10 iterations during training (Rank 0 only).')
     # --- [新] 结束 ---
 
     args = parser.parse_args()
@@ -896,3 +924,4 @@ if __name__ == '__main__':
     
     # (保留) 清理DDP进程组
     dist.destroy_process_group()
+
