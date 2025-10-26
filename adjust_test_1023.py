@@ -1404,7 +1404,7 @@ if __name__ == '__main__':
                     ortho_i, transform_i = grid_ortho_cache[i]
                     ortho_j, transform_j = grid_ortho_cache[j]
                     
-                    checker_output_path = os.path.join(grid_vis_path, f"checker_{i}_vs_{j}.tif")
+                    checker_output_path = os.path.join(grid_vis_path, f"checker_{i}_vs_{j}.png")
                     try:
                         create_checkerboard(
                             ortho_i, ortho_j, 
