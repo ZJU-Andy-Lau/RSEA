@@ -390,9 +390,10 @@ def fit_affine_bundle(args,
                       scheduler_t, 
                       local_rank:int, 
                       world_size:int,
-                      patience: int,           # [新] 新增
-                      min_loss_threshold: float  # [新] 新增
-                      ) -> List[Dict[str, torch.Tensor]]: # [新] 新增返回值
+                      patience: int,           
+                      min_loss_threshold: float,
+                      overlapping_pairs: List[Tuple[int, int]] # <-- #[新] 添加此参数
+                      ) -> List[Dict[str, torch.Tensor]]: 
     """
     (已修改)
     使用DDP并行计算 *对称损失* 并优化 *所有* 影像的仿射矩阵。
@@ -404,7 +405,7 @@ def fit_affine_bundle(args,
     num_images = len(images)
     if num_images < 2 and local_rank == 0:
         print("Error: Need at least 2 images for bundle adjustment.")
-        return [] # [新] 返回空列表
+        return [] 
     
     # --- [新] 初始化早停和最佳模型变量 ---
     best_model_state = [] # 只有 Rank 0 会填充它
@@ -488,12 +489,44 @@ def fit_affine_bundle(args,
                 print(f"Loss ({global_avg_loss:.4f}) did not improve by {min_loss_threshold} for {patience} iterations. Min loss: {min_loss:.4f}")
                 stop_signal.fill_(1.0) # 设置停止信号
 
-            # [修改] 日志记录
+            # #[修改] 日志记录 (移动到下面并添加误差检查)
             if (iter + 1) % 10 == 0:
                 lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
-                # 添加 min_loss 和 patience 
-                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
+                
+                # --- #[新] 开始执行实时精度检查 (仅 Rank 0) ---
+                
+                # 1. 存储所有 RPC 对象的原始(上一轮)仿射参数
+                #    我们必须保存 .adjust_params 和 .adjust_params_inv 以便完全恢复
+                original_params_list = [img.rpc.adjust_params.clone() for img in images]
+                original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
+                
+                mean_err, median_err = 0.0, 0.0
+                try:
+                    # 2. 临时将 DDP 模型中的 *当前* 仿射参数应用到 RPC 对象
+                    with torch.no_grad():
+                        for i in range(1, num_images): # img 0 是锚点，不更新
+                            # 从 DDP 模型获取当前迭代的仿射矩阵
+                            current_A_i = model_ddp.module.get_affine(i).detach()
+                            # 调用 Update_Adjust 将其 *复合* 到 rpc 对象上
+                            # (这与最终应用逻辑一致)
+                            images[i].rpc.Update_Adjust(current_A_i) # [cite: rpc.py, line 290]
+                    
+                    # 3. 使用 *更新后* 的 rpc 对象计算误差
+                    mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
+
+                finally:
+                    # 4. (关键) 无论检查是否成功，都 *必须* 恢复 RPC 对象的原始状态
+                    #    否则下一次检查(10 iter后)会错误地累积仿射变换
+                    with torch.no_grad():
+                        for i in range(num_images):
+                            images[i].rpc.adjust_params = original_params_list[i]
+                            images[i].rpc.adjust_params_inv = original_params_inv_list[i]
+                
+                # --- #[新] 精度检查结束 ---
+
+                # #[修改] 更新 print 语句以包含新信息
+                print(f"iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} \t err_mean:{mean_err:.4f}m \t err_median:{median_err:.4f}m \t min_loss:{min_loss:.4f} \t patience:{patience_counter}/{patience} \t lr_t:{lr_t:.2e} \t lr_r:{lr_r:.2e}")
         
         # 3. [新] Rank 0 将停止信号广播给所有其他进程
         dist.broadcast(stop_signal, src=0)
@@ -538,15 +571,44 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     
     return distance
 
+# --- #[新] 添加辅助函数 ---
+def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> Tuple[float, float]:
+    """
+    (新) 专门用于在优化循环中调用的函数，仅计算并返回误差的均值和中位数。
+    """
+    all_distances = []
+    
+    # (此逻辑与 check_all_pairs_error 相同)
+    for (i, j) in overlapping_pairs:
+        distances = check_pair_error(images[i], images[j])
+        if len(distances) > 0:
+            all_distances.append(distances)
+
+    if not all_distances:
+        return 0.0, 0.0
+        
+    all_distances = np.concatenate(all_distances)
+    
+    if len(all_distances) == 0:
+        return 0.0, 0.0
+
+    mean_error = np.mean(all_distances)
+    median_error = np.median(all_distances)
+    
+    return mean_error, median_error
+# --- #[新] 结束 ---
+
 def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     """(保留) 计算单对影像 (i, j) 之间的连接点误差"""
     
     if img_i.tie_points is None or img_j.tie_points is None:
-        print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Missing tie points.")
+        # #[修改] 减少打印噪音
+        # print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Missing tie points.")
         return np.array([])
         
     if len(img_i.tie_points) != len(img_j.tie_points):
-        print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Mismatched tie points count.")
+        # #[修改] 减少打印噪音
+        # print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Mismatched tie points count.")
         return np.array([])
     
     if len(img_i.tie_points) == 0:
@@ -761,8 +823,9 @@ if __name__ == '__main__':
     else:
         # (修改) 调用已修改的 fit_affine_bundle
         # [新] 捕获返回的最佳模型状态
+        # --- #[修改] 调用 fit_affine_bundle ---
         best_model_state = fit_affine_bundle(args, 
-                                             local_shared_grids, # (修改) 传入新的数据列表
+                                             local_shared_grids, 
                                              images, 
                                              model_ddp, 
                                              optimizer_r, 
@@ -771,9 +834,12 @@ if __name__ == '__main__':
                                              scheduler_t, 
                                              local_rank, 
                                              world_size,
-                                             patience=args.patience, # [新] 传入新参数
-                                             min_loss_threshold=args.min_loss_threshold # [新] 传入新参数
+                                             patience=args.patience, 
+                                             min_loss_threshold=args.min_loss_threshold,
+                                             overlapping_pairs=overlapping_pairs # <-- #[新] 传入列表
                                              )
+        # --- #[修改] 结束 ---
+
 
     # (保留) 同步点，确保所有进程都完成了优化
     dist.barrier()
