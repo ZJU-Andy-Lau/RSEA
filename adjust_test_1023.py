@@ -422,7 +422,7 @@ class SharedGrid():
             
             # 1. Warp j -> i  (始终将索引号大的 j 投影到索引号小的 i)
             warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
-            feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i)
+            feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i, k = self.args.kmin_k)
 
             # 3. 计算 loss_a (j -> i)
             loss_a = torch.tensor(0.0, device=local_rank)
@@ -512,7 +512,7 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32) # 输出转回float32
     return warped_local
 
-def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 16):
+def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 4):
     point_base = LazyTensor(local.contiguous().unsqueeze(0))
     query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
@@ -669,7 +669,7 @@ def fit_affine_bundle(args,
                 # 检查是否有显著改善 (注意: error 是越小越好)
                 if (min_metric_val - current_metric_val) > current_threshold:
                     # 显著改善
-                    print(f"  Improvement detected based on '{args.stop_criterion}': {min_metric_val:.4f} -> {current_metric_val:.4f}")
+                    # print(f"  Improvement detected based on '{args.stop_criterion}': {min_metric_val:.4f} -> {current_metric_val:.4f}")
                     min_metric_val = current_metric_val
                     patience_counter = 0
                     
