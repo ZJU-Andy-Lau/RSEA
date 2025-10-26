@@ -23,6 +23,7 @@ from typing import List, Tuple, Dict # 导入 Dict
 
 import warnings
 import time # <-- [新] 添加
+from tqdm import tqdm # <-- [新] 添加: 用于格网评估进度条
 warnings.filterwarnings("ignore")
 
 def format_time(seconds: float) -> str:
@@ -739,17 +740,109 @@ if __name__ == '__main__':
         #  一次性调用 find_grids 得到 M 个公共格网
         all_common_diags = find_grids(all_corners, args.window_size, offset_x=args.grid_offset_x, offset_y=args.grid_offset_y)
         
-        print(f"Select {args.grid_num} grids from total {len(all_common_diags)} common grids")
-        if args.grid_num > 0 and len(all_common_diags) > args.grid_num:
-            # 采样逻辑
-            indices = [int((i + 1) * len(all_common_diags) / (args.grid_num + 1.)) for i in range(args.grid_num)]
-            all_tasks = [all_common_diags[i] for i in indices]
-        else:
-            all_tasks = all_common_diags # all_tasks 是 diags 列表
+        print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
+
+        # --- [新逻辑开始] ---
+        # 基于置信度和空间均匀性的格网筛选
         
-        # 为了负载均衡，打乱任务列表
+        # 1. 提前加载Encoder (仅
+        print("Rank 0: Loading encoder for grid quality assessment...")
+        encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
+        encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
+        encoder.cuda(local_rank) # local_rank is 0
+        encoder.eval()
+
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
+        ])
+        
+        # 2. 评估所有候选格网的质量得分
+        candidate_grids_info = []
+        print("Rank 0: Assessing quality for all candidate grids...")
+        ref_image = images[0] # 使用 image 0 作为参考影像
+        resample_size = 1024 # 与SharedGrid中使用的尺寸保持一致
+        
+        with torch.no_grad():
+            for diag in tqdm(all_common_diags, desc="Assessing Grids"):
+                try:
+                    # 1. 将地理格网反算回 image 0 的像方坐标
+                    corners_geo = np.array([
+                        diag[0], [diag[1,0], diag[0,1]],
+                        diag[1], [diag[0,0], diag[1,1]]
+                    ])
+                    corners_sampline = ref_image.xy_to_sampline(corners_geo) # [cite: rs_image_1022.py, line 85]
+
+                    # 2. 检查像方坐标是否有效
+                    if (corners_sampline.min() < 0 or 
+                        corners_sampline[:, 0].max() > ref_image.W or 
+                        corners_sampline[:, 1].max() > ref_image.H):
+                        continue # 格网不在 image 0 范围内，跳过
+
+                    # 3. 重采样出图像块
+                    img_patch, _ = ref_image.resample_image_by_sampline(corners_sampline, 
+                                                                        (resample_size, resample_size), 
+                                                                        need_local=True) # [cite: rs_image_1022.py, line 150]
+
+                    # 4. 提取特征和置信度
+                    img_tensor = transform(img_patch)[None].cuda(local_rank)
+                    _, conf = encoder(img_tensor)
+
+                    # 5. 计算置信度总和作为质量得分
+                    quality_score = conf.sum().item()
+
+                    # 6. 存储信息：得分、地理中心点、格网本身
+                    center_xy = diag.mean(axis=0)
+                    candidate_grids_info.append({
+                        'score': quality_score,
+                        'center': center_xy,
+                        'diag': diag
+                    })
+                except Exception as e:
+                    # 忽略处理失败的格网
+                    continue
+        
+        # 3. 执行空间抑制选择算法
+        if args.grid_num > 0 and len(candidate_grids_info) > args.grid_num:
+            # 仅当需要筛选时才执行
+            print(f"Rank 0: Found {len(candidate_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
+            candidate_grids_info.sort(key=lambda x: x['score'], reverse=True)
+            
+            selected_grids_diags = []
+            # 抑制距离设为格网尺寸的1.5倍
+            suppression_radius = args.window_size * 1.5 
+            print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
+
+            while len(candidate_grids_info) > 0 and len(selected_grids_diags) < args.grid_num:
+                # 1. 选取当前最佳
+                best_grid = candidate_grids_info.pop(0)
+                selected_grids_diags.append(best_grid['diag'])
+                
+                # 2. 抑制邻近格网
+                remaining_grids = []
+                for grid_info in candidate_grids_info:
+                    distance = np.linalg.norm(best_grid['center'] - grid_info['center'])
+                    if distance > suppression_radius:
+                        remaining_grids.append(grid_info)
+                candidate_grids_info = remaining_grids # 更新候选列表
+            
+            all_tasks = selected_grids_diags
+            print(f"Rank 0: Selected {len(all_tasks)} grids.")
+        
+        else:
+            # Fallback到原有行为: 使用所有有效的格网
+            print(f"Rank 0: grid_num ({args.grid_num}) is 0 or >= total grids. Using all {len(candidate_grids_info)} valid grids.")
+            all_tasks = [info['diag'] for info in candidate_grids_info]
+        
+        # 4. 清理Encoder，释放显存
+        del encoder, transform
+        torch.cuda.empty_cache()
+        
+        # 5. [保留] 为DDP负载均衡打乱任务列表
         random.shuffle(all_tasks)
-        print(f"Rank 0: Found {len(all_tasks)} total common grids (tasks).")
+        print(f"Rank 0: Final task list of {len(all_tasks)} grids shuffled for DDP load balancing.")
+        # --- [新逻辑结束] ---
+
 
     # 将 *格网任务列表* 广播给所有进程
     tasks_to_broadcast = [all_tasks] if local_rank == 0 else [None]
@@ -764,11 +857,12 @@ if __name__ == '__main__':
     # 每个进程根据自己的rank获取 *格网* 子集
     my_tasks = all_tasks[local_rank::world_size] # my_tasks 是 [diag_k, diag_l, ...]
 
-    # 每个进程都加载特征提取器
+    # [重要] 每个进程都加载自己的特征提取器
+    # (Rank 0 之前加载的已释放, 这里是为 SharedGrid 准备的)
     encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
-        print("Encoder Loaded by all processes")
+        print("Encoder Loaded by all processes for feature extraction")
 
     #  每个进程在自己的 *格网* 子集上创建 SharedGrid
     local_shared_grids: List[SharedGrid] = [] # 新的数据列表
@@ -892,4 +986,3 @@ if __name__ == '__main__':
             print("No valid tie points found. Final error check skipped.")
     
     dist.destroy_process_group()
-
