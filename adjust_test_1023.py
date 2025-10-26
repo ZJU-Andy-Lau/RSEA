@@ -1358,10 +1358,14 @@ if __name__ == '__main__':
                 print(f"\n--- Error Report After Level {level+1} ---")
                 all_errors_level = check_all_pairs_error(images, overlapping_pairs)
                 if len(all_errors_level) > 0 and all_errors_level.mean() != 0.0:
-                    print(f"Total tie points checked: {len(all_errors_level)}")
-                    print(f"Mean Error:   {all_errors_level.mean():.4f} m")
-                    print(f"Median Error: {np.median(all_errors_level):.4f} m")
-                    print(f"RMSE:         {np.sqrt(np.mean(all_errors_level**2)):.4f} m")
+                    print(f"Total tie points checked: {len(all_errors)}")
+                    print(f"Mean Error:   {all_errors.mean():.4f} m")
+                    print(f"Median Error: {np.median(all_errors):.4f} m")
+                    print(f"Max Error:    {all_errors.max():.4f} m")
+                    print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
+                    print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+                    print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
+                    print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
                 else:
                     print("No valid tie points found for intermediate check.")
 
