@@ -356,7 +356,7 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
     locals_kmin = local[idxs] # n,k,2
     dists = torch.cdist(query.unsqueeze(1),locals_kmin,p=2).squeeze(1)
 
-    valid_mask = (dists.min(dim=1).values < 8)
+    valid_mask = (dists.min(dim=1).values < 64)
     dists = dists[valid_mask]
     idxs = idxs[valid_mask]
     
@@ -765,7 +765,7 @@ if __name__ == '__main__':
     my_tasks = all_tasks[local_rank::world_size] # my_tasks 是 [diag_k, diag_l, ...]
 
     # 每个进程都加载特征提取器
-    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'))
+    encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
     encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
     if local_rank == 0:
         print("Encoder Loaded by all processes")
