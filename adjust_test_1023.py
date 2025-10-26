@@ -649,6 +649,74 @@ def check_all_pairs_error(images: List[RSImage], overlapping_pairs: List[Tuple[i
     return all_distances
 
 
+# --- [新功能] ---
+def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diags: List[np.ndarray], ref_image: RSImage):
+    """
+    绘制格网选择示意图 (仅在 Rank 0 上调用)
+    
+    Args:
+        args: 命令行参数
+        all_candidate_info: 包含所有 *有效* 候选格网信息(diag, center, score)的字典列表
+        selected_diags: 最终被选中的格网(diag)的列表
+        ref_image: 参考影像 (例如 images[0]), 用于确定地理边界
+    """
+    print(f"Rank 0: Generating grid selection visualization...")
+    try:
+        # 1. 获取参考影像的地理边界
+        min_x = ref_image.corner_xys[:, 0].min()
+        max_x = ref_image.corner_xys[:, 0].max()
+        min_y = ref_image.corner_xys[:, 1].min()
+        max_y = ref_image.corner_xys[:, 1].max()
+        
+        geo_w = max_x - min_x
+        geo_h = max_y - min_y
+        
+        if geo_w == 0 or geo_h == 0:
+            print("Rank 0: Invalid geographic bounds for visualization.")
+            return
+
+        # 2. 创建画布
+        vis_h = 1000 # 固定高度
+        aspect_ratio = geo_w / geo_h
+        vis_w = int(vis_h * aspect_ratio)
+        canvas = np.ones((vis_h, vis_w, 3), dtype=np.uint8) * 255 # 白色背景
+
+        # 3. 定义地理坐标到画布像素坐标的映射
+        def geo_to_canvas(xy: np.ndarray) -> Tuple[int, int]:
+            px = int((xy[0] - min_x) / geo_w * (vis_w - 1))
+            py = int((max_y - xy[1]) / geo_h * (vis_h - 1)) # Y轴翻转 (地图坐标 -> 图像坐标)
+            return (px, py)
+
+        # 4. 绘制所有候选格网 (浅灰色)
+        for info in all_candidate_info:
+            diag = info['diag']
+            # 构造完整的4个角点
+            corners_geo = np.array([
+                diag[0], [diag[1,0], diag[0,1]],
+                diag[1], [diag[0,0], diag[1,1]]
+            ])
+            canvas_corners = [geo_to_canvas(pt) for pt in corners_geo]
+            cv2.polylines(canvas, [np.array(canvas_corners, dtype=np.int32)], isClosed=True, color=(200, 200, 200), thickness=1)
+
+        # 5. 绘制所有选中的格网 (绿色)
+        for diag in selected_diags:
+            corners_geo = np.array([
+                diag[0], [diag[1,0], diag[0,1]],
+                diag[1], [diag[0,0], diag[1,1]]
+            ])
+            canvas_corners = [geo_to_canvas(pt) for pt in corners_geo]
+            cv2.polylines(canvas, [np.array(canvas_corners, dtype=np.int32)], isClosed=True, color=(0, 200, 0), thickness=2) # 亮绿色
+
+        # 6. 保存图像
+        output_path = os.path.join(args.debug_output_path, 'grid_selection_visualization.png')
+        cv2.imwrite(output_path, canvas)
+        print(f"Rank 0: Saved grid selection visualization to {output_path}")
+
+    except Exception as e:
+        print(f"Rank 0: FAILED to generate grid visualization. Error: {e}")
+# --- [新功能结束] ---
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
@@ -742,10 +810,10 @@ if __name__ == '__main__':
         
         print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
 
-        # --- [新逻辑开始] ---
-        # 基于置信度和空间均匀性的格网筛选
+        # --- [新逻辑开始 v2.0] ---
+        # 基于【平均置信度】和空间均匀性的格网筛选
         
-        # 1. 提前加载Encoder (仅
+        # 1. 提前加载Encoder (仅Rank 0)
         print("Rank 0: Loading encoder for grid quality assessment...")
         encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
@@ -758,90 +826,106 @@ if __name__ == '__main__':
         ])
         
         # 2. 评估所有候选格网的质量得分
-        candidate_grids_info = []
-        print("Rank 0: Assessing quality for all candidate grids...")
-        ref_image = images[0] # 使用 image 0 作为参考影像
+        all_valid_grids_info = [] # 存储所有有效格网的信息
+        print("Rank 0: Assessing quality for all candidate grids (using AVG confidence)...")
         resample_size = 1024 # 与SharedGrid中使用的尺寸保持一致
         
         with torch.no_grad():
             for diag in tqdm(all_common_diags, desc="Assessing Grids"):
-                try:
-                    # 1. 将地理格网反算回 image 0 的像方坐标
-                    corners_geo = np.array([
-                        diag[0], [diag[1,0], diag[0,1]],
-                        diag[1], [diag[0,0], diag[1,1]]
-                    ])
-                    corners_sampline = ref_image.xy_to_sampline(corners_geo) # [cite: rs_image_1022.py, line 85]
+                total_conf_score = 0.0
+                overlapping_img_count = 0
+                
+                # [修改] 遍历所有影像来计算平均置信度
+                for img in images:
+                    try:
+                        # 1. 将地理格网反算回当前影像的像方坐标
+                        corners_geo = np.array([
+                            diag[0], [diag[1,0], diag[0,1]],
+                            diag[1], [diag[0,0], diag[1,1]]
+                        ])
+                        corners_sampline = img.xy_to_sampline(corners_geo) # [cite: rs_image_1022.py, line 85]
 
-                    # 2. 检查像方坐标是否有效
-                    if (corners_sampline.min() < 0 or 
-                        corners_sampline[:, 0].max() > ref_image.W or 
-                        corners_sampline[:, 1].max() > ref_image.H):
-                        continue # 格网不在 image 0 范围内，跳过
+                        # 2. 检查像方坐标是否有效
+                        if (corners_sampline.min() < 0 or 
+                            corners_sampline[:, 0].max() > img.W or 
+                            corners_sampline[:, 1].max() > img.H):
+                            continue # 格网不在 *这张* 影像范围内，跳到下一张影像
 
-                    # 3. 重采样出图像块
-                    img_patch, _ = ref_image.resample_image_by_sampline(corners_sampline, 
-                                                                        (resample_size, resample_size), 
-                                                                        need_local=True) # [cite: rs_image_1022.py, line 150]
+                        # 3. 重采样出图像块
+                        img_patch, _ = img.resample_image_by_sampline(corners_sampline, 
+                                                                            (resample_size, resample_size), 
+                                                                            need_local=True) # [cite: rs_image_1022.py, line 150]
 
-                    # 4. 提取特征和置信度
-                    img_tensor = transform(img_patch)[None].cuda(local_rank)
-                    _, conf = encoder(img_tensor)
+                        # 4. 提取特征和置信度
+                        img_tensor = transform(img_patch)[None].cuda(local_rank)
+                        _, conf = encoder(img_tensor)
 
-                    # 5. 计算置信度总和作为质量得分
-                    quality_score = conf.sum().item()
-
-                    # 6. 存储信息：得分、地理中心点、格网本身
+                        # 5. 累加置信度
+                        total_conf_score += conf.sum().item()
+                        overlapping_img_count += 1
+                        
+                    except Exception as e:
+                        # 忽略处理失败的影像 (例如反算失败)
+                        continue
+                
+                # [修改] 评估该格网
+                # 仅当格网至少在2张影像上重叠时，才认为它是一个有效的候选格网
+                if overlapping_img_count >= 2:
+                    average_conf = total_conf_score / overlapping_img_count
                     center_xy = diag.mean(axis=0)
-                    candidate_grids_info.append({
-                        'score': quality_score,
+                    all_valid_grids_info.append({
+                        'score': average_conf,
                         'center': center_xy,
                         'diag': diag
                     })
-                except Exception as e:
-                    # 忽略处理失败的格网
-                    continue
         
         # 3. 执行空间抑制选择算法
-        if args.grid_num > 0 and len(candidate_grids_info) > args.grid_num:
+        if args.grid_num > 0 and len(all_valid_grids_info) > args.grid_num:
             # 仅当需要筛选时才执行
-            print(f"Rank 0: Found {len(candidate_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
-            candidate_grids_info.sort(key=lambda x: x['score'], reverse=True)
+            print(f"Rank 0: Found {len(all_valid_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
+            
+            # 排序和NMS
+            candidate_grids_for_nms = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
             
             selected_grids_diags = []
             # 抑制距离设为格网尺寸的1.5倍
             suppression_radius = args.window_size * 1.5 
             print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
 
-            while len(candidate_grids_info) > 0 and len(selected_grids_diags) < args.grid_num:
+            while len(candidate_grids_for_nms) > 0 and len(selected_grids_diags) < args.grid_num:
                 # 1. 选取当前最佳
-                best_grid = candidate_grids_info.pop(0)
+                best_grid = candidate_grids_for_nms.pop(0)
                 selected_grids_diags.append(best_grid['diag'])
                 
                 # 2. 抑制邻近格网
                 remaining_grids = []
-                for grid_info in candidate_grids_info:
+                for grid_info in candidate_grids_for_nms:
                     distance = np.linalg.norm(best_grid['center'] - grid_info['center'])
                     if distance > suppression_radius:
                         remaining_grids.append(grid_info)
-                candidate_grids_info = remaining_grids # 更新候选列表
+                candidate_grids_for_nms = remaining_grids # 更新候选列表
             
             all_tasks = selected_grids_diags
             print(f"Rank 0: Selected {len(all_tasks)} grids.")
         
         else:
             # Fallback到原有行为: 使用所有有效的格网
-            print(f"Rank 0: grid_num ({args.grid_num}) is 0 or >= total grids. Using all {len(candidate_grids_info)} valid grids.")
-            all_tasks = [info['diag'] for info in candidate_grids_info]
+            print(f"Rank 0: grid_num ({args.grid_num}) is 0 or >= total grids. Using all {len(all_valid_grids_info)} valid grids.")
+            all_tasks = [info['diag'] for info in all_valid_grids_info]
         
-        # 4. 清理Encoder，释放显存
+        
+        # [新] 4. 调用可视化
+        # 无论是否筛选，都绘制示意图
+        visualize_grid_selection(args, all_valid_grids_info, all_tasks, images[0])
+        
+        # 5. 清理Encoder，释放显存
         del encoder, transform
         torch.cuda.empty_cache()
         
-        # 5. [保留] 为DDP负载均衡打乱任务列表
+        # 6. [保留] 为DDP负载均衡打乱任务列表
         random.shuffle(all_tasks)
         print(f"Rank 0: Final task list of {len(all_tasks)} grids shuffled for DDP load balancing.")
-        # --- [新逻辑结束] ---
+        # --- [新逻辑结束 v2.0] ---
 
 
     # 将 *格网任务列表* 广播给所有进程
@@ -986,3 +1070,4 @@ if __name__ == '__main__':
             print("No valid tie points found. Final error check skipped.")
     
     dist.destroy_process_group()
+
