@@ -540,8 +540,9 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
+# --- [修改开始]: 更新 fit_affine_bundle 函数签名和内部逻辑 ---
 def fit_affine_bundle(args, 
-                      local_shared_grids: List[SharedGrid], # 接收 SharedGrid 列表
+                      local_shared_grids: List[SharedGrid], 
                       images: List[RSImage], 
                       model_ddp: DDP, 
                       optimizer_r: torch.optim.Adam, 
@@ -551,15 +552,12 @@ def fit_affine_bundle(args,
                       local_rank:int, 
                       world_size:int,
                       patience: int,           
-                      min_loss_threshold: float,
+                      # min_loss_threshold: float, # 改为从 args 获取
                       overlapping_pairs: List[Tuple[int, int]],
-                      current_level: int # [新] 传入当前层级
+                      current_level: int 
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
-    使用DDP并行计算 *非对称* 损失并优化 *所有* 影像的仿射矩阵。
-    local_shared_grids: [(SharedGrid_0), (SharedGrid_1), ...]
-    images: [RSImage_0, RSImage_1, ...] (包含完整图像)
-    model_ddp, optimizers, schedulers: 从 main 传入
+    (已修改) 使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
     """
     
     num_images = len(images)
@@ -568,11 +566,23 @@ def fit_affine_bundle(args,
         return [] 
     
     # ---初始化早停和最佳模型变量 ---
-    best_model_state = [] # 只有 Rank 0 会填充它
+    best_model_state = [] 
     if local_rank == 0:
-        min_loss = float('inf')
+        # (修改) 使用通用变量名
+        min_metric_val = float('inf') 
         patience_counter = 0
-        print(f"Starting optimization with patience={patience} and min_loss_threshold={min_loss_threshold}")
+        criterion = args.stop_criterion
+        loss_threshold = args.min_loss_threshold
+        error_threshold = args.min_error_threshold
+        print(f"Starting optimization with criterion='{criterion}', patience={patience}.")
+        if criterion == 'loss':
+            print(f"Using min_loss_threshold={loss_threshold}")
+        else: # criterion == 'error'
+            print(f"Using min_error_threshold={error_threshold}m")
+            if not args.check_error_during_train:
+                 print("Warning: stop_criterion='error' requires tie point error checking. " 
+                       "Error will only be checked every 10 iterations.")
+                       
         start_time = time.time()
         
     stop_signal = torch.tensor(0.0, device=local_rank)
@@ -590,120 +600,141 @@ def fit_affine_bundle(args,
             pass 
         else:
             for grid in local_shared_grids:
-                
-                # 在格网内部计算所有像对的损失
-                # 这个函数在 SharedGrid 类中定义
                 grid_avg_loss = grid.calculate_all_pairs_loss(model_ddp, images, local_rank)
                 
                 if not torch.isnan(grid_avg_loss) and not torch.isinf(grid_avg_loss) and grid_avg_loss > 0:
                     local_total_loss = local_total_loss + grid_avg_loss
                     num_valid_grids += 1
                 else:
-                    if grid_avg_loss > 0: # 仅在非零时打印警告
+                    if grid_avg_loss > 0: 
                         print(f"[Rank{local_rank}]: Detect invalid loss:{grid_avg_loss.item()} in Grid {grid.id}")
 
-            # 6. 计算本地平均 loss (按格网平均)
             if num_valid_grids > 0:
                 local_total_loss = local_total_loss / num_valid_grids
             
-        # 7. 反向传播 (DDP 在此处自动计算并同步所有进程的梯度平均值)
-        # 即使 local_total_loss 为 0，backward() 也是安全的
+        # 7. 反向传播
         local_total_loss.backward()
         
         optimizer_r.step()
         optimizer_t.step()
             
-        # 1.  在所有进程上获取全局平均损失
+        # 1. 获取全局平均损失 (所有进程都需要)
         global_loss_sum = local_total_loss.clone().detach()
         dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
-        global_avg_loss = (global_loss_sum / world_size).item() # .item() 转换
+        global_avg_loss = (global_loss_sum / world_size).item() 
         
         # 2. Rank 0 进行决策
         if local_rank == 0:
-            # 检查损失是否有显著改善
-            if (min_loss - global_avg_loss) > min_loss_threshold:
-                # 显著改善
-                min_loss = global_avg_loss
-                patience_counter = 0
-                
-                best_model_state = []
-                # 遍历 nn.ModuleList
-                for sub_model in model_ddp.module.models: 
-                    # .data.clone() 确保复制的是值，而不是引用
-                    best_model_state.append({
-                        'R': sub_model.R.data.clone(), 
-                        'T': sub_model.T.data.clone()
-                    })
-            else:
-                # 没有显著改善
-                patience_counter += 1
+            
+            # --- (修改) 早停和最优模型判断逻辑 ---
+            mean_err = 0.0 # 初始化
+            median_err = 0.0
+            
+            # 确定是否需要在本轮计算 error
+            should_calculate_error = (args.check_error_during_train or args.stop_criterion == 'error') and (iter + 1) % 10 == 0
+            
+            # 计算 error (如果需要)
+            if should_calculate_error:
+                # 精度检查逻辑 (与之前相同)
+                original_params_list = [img.rpc.adjust_params.clone() for img in images]
+                original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
+                try:
+                    with torch.no_grad():
+                        for i in range(1, num_images): 
+                            current_A_i = model_ddp.module.get_affine(i).detach()
+                            images[i].rpc.Update_Adjust(current_A_i) 
+                    mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
+                finally:
+                    with torch.no_grad():
+                        for i in range(num_images):
+                            images[i].rpc.adjust_params = original_params_list[i]
+                            images[i].rpc.adjust_params_inv = original_params_inv_list[i]
+
+            # 确定本轮用于判断的指标和阈值
+            current_metric_val = 0.0
+            current_threshold = 0.0
+            perform_check_this_iter = False 
+            
+            if args.stop_criterion == 'loss':
+                current_metric_val = global_avg_loss
+                current_threshold = args.min_loss_threshold
+                perform_check_this_iter = True # loss 每轮都检查
+            elif args.stop_criterion == 'error' and should_calculate_error: # 只有计算了 error 的轮次才检查
+                current_metric_val = mean_err 
+                current_threshold = args.min_error_threshold
+                perform_check_this_iter = True
+            
+            # 执行判断 (仅在 perform_check_this_iter 为 True 时)
+            if perform_check_this_iter and current_metric_val > 0: # 增加 > 0 检查，防止 error 为 0 时误判
+                # 检查是否有显著改善 (注意: error 是越小越好)
+                if (min_metric_val - current_metric_val) > current_threshold:
+                    # 显著改善
+                    print(f"  Improvement detected based on '{args.stop_criterion}': {min_metric_val:.4f} -> {current_metric_val:.4f}")
+                    min_metric_val = current_metric_val
+                    patience_counter = 0
+                    
+                    best_model_state = []
+                    for sub_model in model_ddp.module.models: 
+                        best_model_state.append({
+                            'R': sub_model.R.data.clone(), 
+                            'T': sub_model.T.data.clone()
+                        })
+                else:
+                    # 没有显著改善
+                    patience_counter += 1
+            elif args.stop_criterion == 'error' and not should_calculate_error:
+                 # 如果是 error 标准，但本轮未计算 error，则不增加 patience 计数器
+                 pass
+            elif perform_check_this_iter and current_metric_val <= 0 and args.stop_criterion == 'error':
+                print(f"  Warning: Mean error is {current_metric_val:.4f}. Skipping best model check for this iteration.")
+
 
             # 检查是否需要早停
             if patience_counter >= patience:
-                print(f"--- Early stopping triggered at iter {iter+1} ---")
-                print(f"Loss ({global_avg_loss:.4f}) did not improve by {min_loss_threshold} for {patience} iterations. Min loss: {min_loss:.4f}")
-                stop_signal.fill_(1.0) # 设置停止信号
+                print(f"--- Early stopping triggered at iter {iter+1} based on '{args.stop_criterion}' ---")
+                if args.stop_criterion == 'loss':
+                    print(f"Loss ({global_avg_loss:.4f}) did not improve by {args.min_loss_threshold} for {patience} iterations. Min loss: {min_metric_val:.4f}")
+                else: # error
+                     print(f"Mean Error ({current_metric_val:.4f}m) did not improve by {args.min_error_threshold}m for {patience} check intervals. Min error: {min_metric_val:.4f}m")
+                stop_signal.fill_(1.0) 
 
-            # 日志记录
+            # --- (修改) 日志记录 ---
             if (iter + 1) % 10 == 0:
                 lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
                 lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
                 
-                # ---时间计算 ---
                 elapsed_time_sec = time.time() - start_time
                 elapsed_time_str = format_time(elapsed_time_sec)
-                
                 avg_iter_time = elapsed_time_sec / (iter + 1)
                 remaining_iter = args.max_iter - (iter + 1)
                 remaining_time_sec = avg_iter_time * remaining_iter
                 remaining_time_str = format_time(remaining_time_sec)
-                # ---时间计算结束 ---
 
-                # ---可选的精度检查 ---
-                mean_err, median_err = 0.0, 0.0
-                err_log_str = "" # 用于日志的空字符串
+                # 准备 error 字符串 (如果计算了)
+                err_log_str = ""
+                if should_calculate_error: # 仅在计算了error的轮次显示
+                     err_log_str = f"\t mean:{mean_err:.4f}m \t median:{median_err:.4f}m"
 
-                if args.check_error_during_train: # <-- 检查功能开关
-                    
-                    # 1. 存储所有 RPC 对象的原始(上一轮)仿射参数
-                    original_params_list = [img.rpc.adjust_params.clone() for img in images]
-                    original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
-                    
-                    try:
-                        # 2. 临时将 DDP 模型中的 *当前* 仿射参数应用到 RPC 对象
-                        with torch.no_grad():
-                            for i in range(1, num_images): # img 0 是锚点，不更新
-                                current_A_i = model_ddp.module.get_affine(i).detach()
-                                images[i].rpc.Update_Adjust(current_A_i) # [cite: rpc.py, line 290]
-                        
-                        # 3. 使用 *更新后* 的 rpc 对象计算误差
-                        mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
+                # 动态显示 min 值
+                min_metric_log_str = ""
+                if args.stop_criterion == 'loss':
+                    min_metric_log_str = f"min_l:{min_metric_val:.4f}"
+                else: # error
+                    min_metric_log_str = f"min_e:{min_metric_val:.4f}m"
 
-                    finally:
-                        # 4. (关键) 无论检查是否成功，都 *必须* 恢复 RPC 对象的原始状态
-                        with torch.no_grad():
-                            for i in range(num_images):
-                                images[i].rpc.adjust_params = original_params_list[i]
-                                images[i].rpc.adjust_params_inv = original_params_inv_list[i]
-                    
-                    # 准备日志字符串
-                    err_log_str = f"\t mean:{mean_err:.4f}m \t median:{median_err:.4f}m"
-                
-                # ---精度检查结束 ---
 
-                #更新 print 语句以包含新信息
-                print(f"Lvl:{current_level + 1}/{args.num_levels} iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} min_l:{min_loss:.4f} {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e}  lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str}  eta:{remaining_time_str}")
+                print(f"Lvl:{current_level + 1}/{args.num_levels} iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} {min_metric_log_str} {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e}  lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str}  eta:{remaining_time_str}")
         
-        # 3.Rank 0 将停止信号广播给所有其他进程
+        # --- [修改结束] ---
+        
+        # 3.广播停止信号
         dist.broadcast(stop_signal, src=0)
 
-        # 4.所有进程检查停止信号
+        # 4.检查停止信号
         if stop_signal.item() == 1.0:
             print(f"Rank {local_rank}: Received stop signal. Breaking optimization loop.")
-            break # 退出循环
+            break 
         
-        # --- 逻辑结束 ---
-
         if scheduler_r:
             scheduler_r.step()
         if scheduler_t:
@@ -713,8 +744,8 @@ def fit_affine_bundle(args,
     if local_rank == 0:
         print("Bundle adjustment optimization finished for this level.")
 
-    # 返回 Rank 0 上的最佳模型状态
     return best_model_state
+# --- [修改结束] ---
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     R = 6371000 
@@ -952,9 +983,16 @@ if __name__ == '__main__':
     parser.add_argument('--num_levels', type=int, default=1,
                         help='Total number of pyramid levels for adjustment (default: 1, same as original behavior).')
     
-    # --- [新参数] ---
     parser.add_argument('--vis_resolution', type=float, default=1.0, 
                         help='Resolution (in meters) for output orthophotos and checkerboards.')
+
+    # --- [新参数]: 早停标准 ---
+    parser.add_argument('--stop_criterion', type=str, choices=['loss', 'error'], default='loss',
+                        help="Criterion for early stopping and best model selection ('loss' or 'error').")
+    
+    parser.add_argument('--min_error_threshold', type=float, default=0.01,
+                        help="Minimum improvement threshold (in meters) for mean_error to reset patience when stop_criterion='error'.")
+    # --- [新参数结束] ---
 
 
     args = parser.parse_args()
@@ -962,6 +1000,14 @@ if __name__ == '__main__':
     # DDP 初始化
     local_rank = setup_ddp()
     world_size = dist.get_world_size() # 总进程数
+
+    # --- [新逻辑]: 强制检查 error ---
+    if args.stop_criterion == 'error' and not args.check_error_during_train:
+        if local_rank == 0:
+            print("Info: stop_criterion is set to 'error', automatically enabling --check_error_during_train.")
+        args.check_error_during_train = True
+    # --- [新逻辑结束] ---
+
 
     args.debug_output_path = os.path.join(args.root,'debug_output')
     if local_rank == 0:
@@ -1247,7 +1293,7 @@ if __name__ == '__main__':
             print(f"Warning: No parameters to optimize for level {level+1} (only one image provided?). Skipping optimization.")
         else:
             # 7. 调用 fit_affine_bundle
-            best_model_state = fit_affine_bundle(args, 
+            best_model_state = fit_affine_bundle(args, # 传入 args
                                                  local_shared_grids, 
                                                  images, 
                                                  model_ddp, 
@@ -1258,9 +1304,9 @@ if __name__ == '__main__':
                                                  local_rank, 
                                                  world_size,
                                                  patience=args.patience, 
-                                                 min_loss_threshold=args.min_loss_threshold,
+                                                 # min_loss_threshold 从 args 获取
                                                  overlapping_pairs=overlapping_pairs,
-                                                 current_level=level # [新] 传入
+                                                 current_level=level 
                                                  )
 
 
