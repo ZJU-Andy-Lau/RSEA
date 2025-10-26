@@ -23,6 +23,15 @@ from typing import List, Tuple, Dict # 导入 Dict
 import warnings
 import time
 from tqdm import tqdm
+
+# --- [新导入] ---
+import rasterio
+from rasterio.transform import from_origin
+from pyproj import CRS
+from scipy.interpolate import RegularGridInterpolator
+# --- [新导入结束] ---
+
+
 warnings.filterwarnings("ignore")
 
 def format_time(seconds: float) -> str:
@@ -32,6 +41,160 @@ def format_time(seconds: float) -> str:
     minutes = (seconds % 3600) // 60
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+# --- [新函数 1: 正射校正] ---
+def orthorectify_patch_mercator(rs_image: RSImage, 
+                              grid_diag: np.ndarray, 
+                              resolution: float, 
+                              output_path: str) -> Tuple[np.ndarray, rasterio.Affine]:
+    """
+    (新) 使用调整后的RPC和Mercator网格，对单个RSImage进行正射校正。
+    
+    Args:
+        rs_image: 包含 *完整* 影像、DEM和 *已调整* RPC 的 RSImage 对象。
+        grid_diag: np.array([[min_x, min_y], [max_x, max_y]])，Mercator坐标。
+        resolution: 输出分辨率 (米)。
+        output_path: 输出 GeoTIFF 路径。
+        
+    Returns:
+        (ortho_image_array, transform): 返回生成的影像数组和其地理变换。
+    """
+    
+    # 1. 定义输出网格 (Mercator, EPSG:3857)
+    min_x, min_y = grid_diag[0]
+    max_x, max_y = grid_diag[1]
+    
+    out_W = int(np.ceil((max_x - min_x) / resolution))
+    out_H = int(np.ceil((max_y - min_y) / resolution))
+    
+    if out_W <= 0 or out_H <= 0:
+        raise ValueError(f"输出尺寸为零或负数 (W:{out_W}, H:{out_H})。请检查 grid_diag 和 resolution。")
+
+    # 注意：Y轴在地理坐标中向上，但在影像中向下
+    # from_origin 需要左上角 (ul_x, ul_y)，所以 x 是 min_x, y 是 max_y
+    transform = from_origin(min_x, max_y, resolution, resolution)
+    
+    # 计算网格中心点坐标
+    out_x_coords = np.linspace(min_x + resolution / 2, max_x - resolution / 2, out_W)
+    out_y_coords = np.linspace(max_y - resolution / 2, min_y + resolution / 2, out_H) # Y轴反向
+    
+    out_xx, out_yy = np.meshgrid(out_x_coords, out_y_coords)
+    
+    # 2. 创建源影像和DEM的插值器 (基于 'line' 和 'samp')
+    H_src, W_src = rs_image.image.shape[:2]
+    lines_src = np.arange(H_src)
+    samps_src = np.arange(W_src)
+    
+    # 影像在 RSImage 中被统一处理为 3 通道 [cite: rs_image_1022.py, line 33]
+    is_color = True
+    image_interpolator_r = RegularGridInterpolator((lines_src, samps_src), rs_image.image[..., 0], method='linear', bounds_error=False, fill_value=0)
+    image_interpolator_g = RegularGridInterpolator((lines_src, samps_src), rs_image.image[..., 1], method='linear', bounds_error=False, fill_value=0)
+    image_interpolator_b = RegularGridInterpolator((lines_src, samps_src), rs_image.image[..., 2], method='linear', bounds_error=False, fill_value=0)
+
+
+    # 3. 准备输出数组
+    ortho_image = np.zeros((out_H, out_W, 3), dtype=rs_image.image.dtype)
+    
+    # 4. 分块处理 (Ground-to-Image)
+    block_size = 1024 # 可调
+    for i in range(0, out_H, block_size):
+        i_end = min(i + block_size, out_H)
+        for j in range(0, out_W, block_size):
+            j_end = min(j + block_size, out_W)
+            
+            # 提取块内的 Mercator 坐标
+            block_xx = out_xx[i:i_end, j:j_end]
+            block_yy = out_yy[i:i_end, j:j_end]
+            
+            xy_points = np.stack([block_xx.ravel(), block_yy.ravel()], axis=-1)
+            
+            # 5. (关键) 使用 rs_image.xy_to_sampline 进行投影
+            # 此函数使用 *已调整* 的 self.rpc，并自动迭代DEM [cite: rs_image_1022.py, line 85]
+            # 它返回 (samp, line)
+            try:
+                sampline_pred = rs_image.xy_to_sampline(xy_points) 
+            except Exception as e:
+                print(f"警告: xy_to_sampline 在投影时失败 (Grid: {output_path}): {e}")
+                continue # 跳过这个块
+                
+            # 准备插值坐标 (line, samp)
+            points_to_sample = np.stack([sampline_pred[:, 1], sampline_pred[:, 0]], axis=-1) # (line, samp)
+            
+            # 6. 采样像素值
+            pixel_vals_r = image_interpolator_r(points_to_sample).reshape(block_xx.shape)
+            pixel_vals_g = image_interpolator_g(points_to_sample).reshape(block_xx.shape)
+            pixel_vals_b = image_interpolator_b(points_to_sample).reshape(block_xx.shape)
+            ortho_image[i:i_end, j:j_end] = np.stack([pixel_vals_r, pixel_vals_g, pixel_vals_b], axis=-1).astype(rs_image.image.dtype)
+
+    # 7. 写入 GeoTIFF
+    with rasterio.open(
+        output_path, 'w',
+        driver='GTiff',
+        height=out_H,
+        width=out_W,
+        count=3, # 始终为 3 通道
+        dtype=ortho_image.dtype,
+        crs=CRS.from_epsg(3857), # Web Mercator
+        transform=transform
+    ) as dst:
+        dst.write(ortho_image[..., 0], 1)
+        dst.write(ortho_image[..., 1], 2)
+        dst.write(ortho_image[..., 2], 3)
+            
+    return ortho_image, transform
+
+# --- [新函数 2: 棋盘格] ---
+def create_checkerboard(ortho1: np.ndarray, 
+                        ortho2: np.ndarray, 
+                        transform: rasterio.Affine,
+                        output_path: str, 
+                        block_size: int = 50):
+    """
+    (新) 将两个已对齐的正射影像合并为棋盘格。
+    
+    Args:
+        ortho1: 第一个正射影像 (H, W, 3)
+        ortho2: 第二个正射影像 (H, W, 3) (必须同形状)
+        transform: 用于保存 GeoTIFF 的地理变换。
+        output_path: 输出路径。
+        block_size: 棋盘格的大小 (像素)。
+    """
+    if ortho1.shape != ortho2.shape:
+        print(f"警告: 棋盘格影像形状不匹配: {ortho1.shape} vs {ortho2.shape}。跳过 {output_path}")
+        return
+
+    H, W = ortho1.shape[:2]
+    checkerboard_img = np.zeros_like(ortho1)
+
+    for i in range(0, H, block_size):
+        for j in range(0, W, block_size):
+            # 确定块索引
+            i_block = (i // block_size) % 2
+            j_block = (j // block_size) % 2
+            
+            # (i_block % 2) == (j_block % 2) -> (0,0) or (1,1) -> 使用影像1
+            if i_block == j_block:
+                checkerboard_img[i:min(i+block_size, H), j:min(j+block_size, W)] = \
+                    ortho1[i:min(i+block_size, H), j:min(j+block_size, W)]
+            else:
+                checkerboard_img[i:min(i+block_size, H), j:min(j+block_size, W)] = \
+                    ortho2[i:min(i+block_size, H), j:min(j+block_size, W)]
+    
+    # 写入 GeoTIFF
+    with rasterio.open(
+        output_path, 'w',
+        driver='GTiff',
+        height=H,
+        width=W,
+        count=3,
+        dtype=checkerboard_img.dtype,
+        crs=CRS.from_epsg(3857),
+        transform=transform
+    ) as dst:
+        dst.write(checkerboard_img[..., 0], 1)
+        dst.write(checkerboard_img[..., 1], 2)
+        dst.write(checkerboard_img[..., 2], 3)
+
 
 # DDP Step 1: DDP环境初始化函数
 def setup_ddp():
@@ -253,8 +416,6 @@ class SharedGrid():
             # 1. Warp j -> i  (始终将索引号大的 j 投影到索引号小的 i)
             warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
             feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i)
-            
-            # [已删除] 2. Warp i -> j (不再计算)
 
             # 3. 计算 loss_a (j -> i)
             loss_a = torch.tensor(0.0, device=local_rank)
@@ -264,9 +425,6 @@ class SharedGrid():
                 weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-8)
                 loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
-            # [已删除] 4. 计算 loss_b (i -> j)
-            
-            # (已修改) 最终损失即为 loss_a
             pair_loss = loss_a
             
             if not torch.isnan(pair_loss) and not torch.isinf(pair_loss) and pair_loss > 0:
@@ -461,7 +619,6 @@ def fit_affine_bundle(args,
                 min_loss = global_avg_loss
                 patience_counter = 0
                 
-                # [新] 保存最佳模型状态
                 best_model_state = []
                 # 遍历 nn.ModuleList
                 for sub_model in model_ddp.module.models: 
@@ -579,7 +736,6 @@ def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple
     """
     all_distances = []
     
-    # (此逻辑与 check_all_pairs_error 相同)
     for (i, j) in overlapping_pairs:
         distances = check_pair_error(images[i], images[j])
         if len(distances) > 0:
@@ -599,7 +755,7 @@ def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple
     return mean_error, median_error
 
 def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
-    """(保留) 计算单对影像 (i, j) 之间的连接点误差"""
+    """ 计算单对影像 (i, j) 之间的连接点误差"""
     
     if img_i.tie_points is None or img_j.tie_points is None:
         # print(f"Skipping error check for pair ({img_i.id}, {img_j.id}): Missing tie points.")
@@ -631,7 +787,7 @@ def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     return distances
 
 def check_all_pairs_error(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> np.ndarray:
-    """(保留) 在所有重叠对上计算并汇总误差"""
+    """在所有重叠对上计算并汇总误差"""
     all_distances = []
     print("--- Global Error Report ---")
     for (i, j) in overlapping_pairs:
@@ -714,9 +870,7 @@ def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diag
 
     except Exception as e:
         print(f"Rank 0: FAILED to generate grid visualization. Error: {e}")
-# --- [新功能结束] ---
 
-# --- [新功能] ---
 def subdivide_grids(parent_diags: List[np.ndarray]) -> List[np.ndarray]:
     """
     Takes a list of geographic grid diagonals (diags) and returns a new list
@@ -741,7 +895,6 @@ def subdivide_grids(parent_diags: List[np.ndarray]) -> List[np.ndarray]:
         sub_grids.append(np.array([[mid_x, mid_y], [max_x, max_y]]))
         
     return sub_grids
-# --- [新功能结束] ---
 
 
 if __name__ == '__main__':
@@ -788,6 +941,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--num_levels', type=int, default=1,
                         help='Total number of pyramid levels for adjustment (default: 1, same as original behavior).')
+    
+    # --- [新参数] ---
+    parser.add_argument('--vis_resolution', type=float, default=1.0, 
+                        help='Resolution (in meters) for output orthophotos and checkerboards.')
 
 
     args = parser.parse_args()
@@ -831,10 +988,8 @@ if __name__ == '__main__':
         else:
             print("No valid tie points found. Final error check skipped.")
     
-    # [新] 用于在层级间传递格网列表
     selected_diags_for_level = []
         
-    # [新] 主金字塔循环
     for level in range(args.num_levels):
         
         current_window_size = args.window_size / (2**level)
@@ -950,7 +1105,7 @@ if __name__ == '__main__':
                 del encoder_assess, transform_assess
                 torch.cuda.empty_cache()
                 
-                # 6. [新] 保存结果给下一层级
+                # 6. 保存结果给下一层级
                 selected_diags_for_level = all_tasks
                 
             else:
@@ -984,7 +1139,7 @@ if __name__ == '__main__':
         # 3. 每个进程根据自己的rank获取 *格网* 子集
         my_tasks = all_tasks[local_rank::world_size] # my_tasks 是 [diag_k, diag_l, ...]
 
-        # 4. [重要] 每个进程都加载自己的特征提取器
+        # 4. 每个进程都加载自己的特征提取器
         encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
         if local_rank == 0:
@@ -996,7 +1151,7 @@ if __name__ == '__main__':
         
         # 循环格网 (diags)
         for idx, diag in enumerate(my_tasks):
-            # [修改] 构造一个包含层级信息的全局唯一ID
+            # 构造一个包含层级信息的全局唯一ID
             global_grid_id = f"L{level}_R{local_rank}_{idx}" 
             try:
                 # 1. 创建 SharedGrid，此时会重采样所有影像块
@@ -1026,11 +1181,11 @@ if __name__ == '__main__':
         scheduler_t = None
 
         if all_R_params:
-            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (2 ** level))
+            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
             scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         if all_T_params:
-            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (2 ** level))
+            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (10 ** level))
             scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         best_model_state = []
@@ -1061,30 +1216,45 @@ if __name__ == '__main__':
         dist.barrier()
         
         # 9. (Rank 0) [重要] 将本层级的结果“烘焙”到RPC模型中
+        # --- [修改开始]: 广播最佳模型，所有 Ranks 都执行烘焙 ---
+
+        # 1. Rank 0 广播 best_model_state
+        state_to_broadcast = [best_model_state] if local_rank == 0 else [None]
+        dist.broadcast_object_list(state_to_broadcast, src=0)
+        best_model_state = state_to_broadcast[0]
+
+        # 2. 所有 Ranks 加载最佳模型状态到 *本地* 的 DDP 模型
         if local_rank == 0:
-            print(f"\nRank 0: Applying (best) adjustments from Level {level+1} to RPC models...")
+            print(f"\n[All Ranks] Applying (best) adjustments from Level {level+1} to RPC models...")
             
-            # 加载本层级的最佳模型
-            if best_model_state: 
-                with torch.no_grad():
-                    for i, state in enumerate(best_model_state):
-                        if i < len(model_ddp.module.models):
-                            model_ddp.module.models[i].R.data.copy_(state['R'])
-                            model_ddp.module.models[i].T.data.copy_(state['T'])
-            else:
-                 print(f"Warning: No best model state found for Level {level+1}. Using final iteration state.")
-            
-            # 将本层级的 'delta' 变换应用(累加)到RPC对象
-            for i in range(1, len(images)):
-                final_A_i_level = model_ddp.module.get_affine(i).detach()
+        if best_model_state: 
+            with torch.no_grad():
+                for i, state in enumerate(best_model_state):
+                    if i < len(model_ddp.module.models):
+                        # 直接操作 .data 来更新参数
+                        model_ddp.module.models[i].R.data.copy_(state['R'])
+                        model_ddp.module.models[i].T.data.copy_(state['T'])
+        else:
+            if local_rank == 0:
+                print(f"Warning: No best model state found for Level {level+1}. Using final iteration state.")
+        
+        # 3. 所有 Ranks 将*本地* DDP 模型中的仿射变换 "烘焙" 到*本地*的 images RPC 列表中
+        for i in range(1, len(images)):
+            final_A_i_level = model_ddp.module.get_affine(i).detach()
+            if local_rank == 0: # 仅 Rank 0 打印，避免日志混乱
                 print(f"Level {level+1} Affine Delta for image {i}: \n {final_A_i_level.cpu().numpy()}")
-                # rpc.Update_Adjust 会将新的变换(final_A_i_level)
-                # 与已有的变换进行矩阵复合 [cite: rpc.py, line 290]
-                images[i].rpc.Update_Adjust(final_A_i_level)
-            
-            print(f"Rank 0: Level {level+1} adjustments applied.")
-            
-            # 10. (Rank 0) 打印本层级后的精度
+            # rpc.Update_Adjust 会将新的变换(final_A_i_level)
+            # 与已有的变换进行矩阵复合 [cite: rpc.py, line 290]
+            images[i].rpc.Update_Adjust(final_A_i_level)
+        
+        if local_rank == 0:
+            print(f"Rank 0: Level {level+1} adjustments applied by all ranks.")
+        
+        # --- [修改结束] ---
+        
+        
+        # 10. (Rank 0) 打印本层级后的精度
+        if local_rank == 0:
             if args.check_error_during_train or level == args.num_levels - 1:
                 print(f"\n--- Error Report After Level {level+1} ---")
                 all_errors_level = check_all_pairs_error(images, overlapping_pairs)
@@ -1096,12 +1266,70 @@ if __name__ == '__main__':
                 else:
                     print("No valid tie points found for intermediate check.")
 
-        # 11. [新] 清理本层级的资源，为下个层级做准备
+        
+        # --- [新步骤: 并行可视化] ---
+        # 此刻, 所有 Ranks 上的 images[i].rpc 都已更新
+        if local_rank == 0:
+            print(f"\n[All Ranks] Starting parallel visualization for Level {level+1} (Res: {args.vis_resolution}m)...")
+        
+        vis_resolution = args.vis_resolution # 使用命令行参数
+        
+        # 每个 Rank 并行处理自己的格网
+        for grid in local_shared_grids:
+            grid_ortho_cache = {} # 缓存本格网的正射影像，用于棋盘格
+            
+            # 使用 grid.id 创建唯一的输出文件夹
+            # grid.id 已经是 "L{level}_R{local_rank}_{idx}" 格式
+            grid_vis_path = os.path.join(args.debug_output_path, f"vis_{grid.id}") # 加一个 "vis_" 前缀
+            os.makedirs(grid_vis_path, exist_ok=True)
+            
+            # 1. 生成正射影像
+            for img_id in grid.overlapping_image_ids:
+                rs_image = images[img_id] # 获取包含 *已调整* RPC 的 RSImage
+                ortho_output_path = os.path.join(grid_vis_path, f"ortho_img_{img_id}.tif")
+                
+                try:
+                    ortho_array, transform = orthorectify_patch_mercator(
+                        rs_image, 
+                        grid.diag, # [cite: adjust_test_1023.py, line 161]
+                        resolution=vis_resolution,
+                        output_path=ortho_output_path
+                    )
+                    grid_ortho_cache[img_id] = (ortho_array, transform)
+                except Exception as e:
+                    print(f"[Rank {local_rank}] FAILED orthorectification for {grid.id}/img_{img_id}. Error: {e}")
+
+            # 2. 生成棋盘格
+            for (i, j) in itertools.combinations(grid.overlapping_image_ids, 2):
+                if i in grid_ortho_cache and j in grid_ortho_cache:
+                    ortho_i, transform_i = grid_ortho_cache[i]
+                    ortho_j, transform_j = grid_ortho_cache[j]
+                    
+                    checker_output_path = os.path.join(grid_vis_path, f"checker_{i}_vs_{j}.tif")
+                    try:
+                        create_checkerboard(
+                            ortho_i, ortho_j, 
+                            transform_i, # 变换应该是相同的
+                            checker_output_path, 
+                            block_size=50 # 棋盘格大小 (像素)
+                        )
+                    except Exception as e:
+                        print(f"[Rank {local_rank}] FAILED checkerboard for {grid.id}/({i},{j}). Error: {e}")
+        
+        # [新] 添加一个同步点
+        # 确保所有 Rank 都完成了文件写入，然后再进入下一层或清理资源
+        dist.barrier()
+        if local_rank == 0:
+            print(f"[All Ranks] Visualization for Level {level+1} complete.")
+        # --- [新步骤结束] ---
+
+
+        # 11. 清理本层级的资源，为下个层级做准备
         del local_shared_grids, model, model_ddp, optimizer_r, optimizer_t, scheduler_r, scheduler_t, encoder
         torch.cuda.empty_cache()
         dist.barrier() # 确保所有进程都清理完毕
         
-    # --- [新] 金字塔循环结束 ---
+    # --- 金字塔循环结束 ---
     
     if local_rank == 0:
         print("\n" + "="*50)
