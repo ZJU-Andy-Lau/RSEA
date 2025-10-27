@@ -739,8 +739,8 @@ def fit_affine_bundle(args,
             else:
                 # --- 非 AUTO 模式: 保持原有打印逻辑 ---
                 if (iter + 1) % 10 == 0:
-                    lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
-                    lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
+                    lr_r = scheduler_r.get_last_lr()[0]
+                    lr_t = scheduler_t.get_last_lr()[0]
                     
                     elapsed_time_sec = time.time() - start_time
                     elapsed_time_str = format_time(elapsed_time_sec)
@@ -1408,11 +1408,11 @@ if __name__ == '__main__':
 
         if all_R_params:
             optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
-            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5, total_steps=args.max_iter,pct_start=50 / args.max_iter)
+            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5 / (10 ** level), total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         if all_T_params:
             optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (10 ** level))
-            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=50 / args.max_iter)
+            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr / (10 ** level), total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         best_model_state = []
 

@@ -307,7 +307,7 @@ def main():
                         status = 'failed'
                         # 记录 stderr 以便调试
                         print("--- [STDERR (最后 1000 字符)] ---")
-                        print(result.stderr[-1000:])
+                        print(result.stderr)
                         print("--- [END STDERR] ---")
                         
                 except KeyboardInterrupt:
