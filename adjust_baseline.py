@@ -77,28 +77,25 @@ class TraditionalBundleAdjuster:
             
             # 找到所有覆盖此格网的影像
             for img in self.images:
-                try:
-                    corners_geo = np.array([
-                        diag_tl, [diag_br[0], diag_tl[1]],
-                        diag_br, [diag_tl[0], diag_br[1]]
-                    ])
-                    # corners_samp 已经是 [samp, line] 格式
-                    corners_samp = img.xy_to_sampline(corners_geo)
-                    
-                    if (corners_samp.min() < 0 or 
-                        corners_samp[:, 0].max() > img.W or 
-                        corners_samp[:, 1].max() > img.H):
-                        continue
-                    
-                    # resample_image_by_sampline 期望 [line, samp] 格式的角点
-                    img_patch, _ = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
-                    overlapping_imgs.append({
-                        'img_id': img.id,
-                        'patch_gray': torch.from_numpy(cv2.cvtColor(img_patch, cv2.COLOR_BGR2GRAY)).float().to(DEVICE)[None, None] / 255.0,
-                        'corners_samp': corners_samp # 存储 [samp, line] 格式的角点
-                    })
-                except Exception:
+                corners_geo = np.array([
+                    diag_tl, [diag_br[0], diag_tl[1]],
+                    diag_br, [diag_tl[0], diag_br[1]]
+                ])
+                # corners_samp 已经是 [samp, line] 格式
+                corners_samp = img.xy_to_sampline(corners_geo)
+                
+                if (corners_samp.min() < 0 or 
+                    corners_samp[:, 0].max() > img.W or 
+                    corners_samp[:, 1].max() > img.H):
                     continue
+                
+                # resample_image_by_sampline 期望 [line, samp] 格式的角点
+                img_patch, _ = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
+                overlapping_imgs.append({
+                    'img_id': img.id,
+                    'patch_gray': torch.from_numpy(cv2.cvtColor(img_patch, cv2.COLOR_BGR2GRAY)).float().to(DEVICE)[None, None] / 255.0,
+                    'corners_samp': corners_samp # 存储 [samp, line] 格式的角点
+                })
             
             # 在所有重叠对上运行LoFTR
             for pair in itertools.combinations(overlapping_imgs, 2):
