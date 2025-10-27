@@ -1280,11 +1280,11 @@ if __name__ == '__main__':
         scheduler_t = None
 
         if all_R_params:
-            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
+            optimizer_r = torch.optim.SGD(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
             scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         if all_T_params:
-            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (10 ** level))
+            optimizer_t = torch.optim.SGD(all_T_params, lr=args.max_lr / (10 ** level))
             scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr, total_steps=args.max_iter,pct_start=50 / args.max_iter)
         
         best_model_state = []
