@@ -1442,7 +1442,7 @@ def main(args):
     # 筛选格网
     if args.grid_num > 0 and len(all_common_diags) > args.grid_num:
         print(f"找到 {len(all_common_diags)} 个格网, 随机采样 {args.grid_num} 个。")
-        selected_diags = random.sample(all_common_diags, args.grid_num)
+        selected_diags = random.sample(list(all_common_diags), args.grid_num)
     else:
         selected_diags = all_common_diags
         print(f"使用所有 {len(selected_diags)} 个格网。")
