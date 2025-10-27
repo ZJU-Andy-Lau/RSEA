@@ -225,27 +225,38 @@ class AffineModel(nn.Module):
     def forward(self):
         return torch.concatenate([self.R, self.T.unsqueeze(-1)], dim=-1)
 
-# --- [修改开始 (需求 1)] ---
 class BundleAffineModel(nn.Module):
     """
-    管理所有N个可学习仿射变换的模型。
-    所有影像一视同仁，都参与优化。
+    管理所有N-1个可学习仿射变换的模型。
+    img_0 被假定为锚点(anchor)，其变换固定为单位矩阵。
     """
     def __init__(self, num_images):
         super().__init__()
         self.num_images = num_images
         
-        # 为 N 张影像中的 *每一张* 都创建可学习模型
-        self.models = nn.ModuleList([AffineModel() for _ in range(num_images)])
+        # 我们有 N 张影像, 但只为 img_1 ... img_N-1 创建可学习模型
+        self.models = nn.ModuleList()
+        for _ in range(num_images - 1):
+            self.models.append(AffineModel())
             
     def get_affine(self, index: int) -> torch.Tensor:
         """
-        获取第 index 张影像的可学习仿射变换矩阵.
+        获取第 index 张影像的仿射变换矩阵.
+        index 0 (锚点) 返回固定的单位矩阵.
+        index > 0   返回其对应的可学习矩阵.
         """
-        # 直接返回第 index 个子模型的仿射矩阵
-        # (调用子模型的 forward())
-        return self.models[index]()
-# --- [修改结束 (需求 1)] ---
+        if index == 0:
+            # 返回一个固定的、float32的单位仿射矩阵
+            # 它需要和 model 在同一个 device 上 (通过第一个模型获取)
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if len(self.models) > 0:
+                device = self.models[0].R.device
+            return torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], 
+                                dtype=torch.float32, device=device)
+        else:
+            # 返回第 (index - 1) 个子模型的仿射矩阵
+            # 调用子模型的 forward()
+            return self.models[index - 1]()
 
 
 class Window():
@@ -387,18 +398,37 @@ class SharedGrid():
                 cv2.imwrite(os.path.join(self.debug_output_path, f'conf_cont_{img_id}.png'), cv2.cvtColor(conf_cont,cv2.COLOR_RGB2BGR))
                 cv2.imwrite(os.path.join(self.debug_output_path, f'conf_div_{img_id}.png'), cv2.cvtColor(conf_div,cv2.COLOR_RGB2BGR))
 
-    # --- [修改开始 (需求 2)] ---
-    def calculate_all_pairs_loss(self, model_ddp: DDP, images: List[RSImage], local_rank: int) -> torch.Tensor:
+    # --- [修改]: 增加 current_iter, max_iter, num_images 参数 ---
+    def calculate_all_pairs_loss(self, 
+                                 model_ddp: DDP, 
+                                 images: List[RSImage], 
+                                 local_rank: int, 
+                                 current_iter: int,
+                                 max_iter: int,
+                                 num_images: int) -> torch.Tensor:
         """
-         (已修改) 计算此格网内所有影像两两之间的 *对称* 损失 (j -> i 和 i -> j)。
+         (已修改) 计算此格网内所有影像两两之间的 *非对称* 损失 (j -> i, j > i)。
+         (已修改) 引入基于迭代进度的动态权重。
         """
         grid_total_loss = torch.tensor(0.0, device=local_rank)
         num_valid_pairs_in_grid = 0
         
+        # --- [新] 动态权重相关计算 ---
+        # 1. 计算当前训练进度 (从 0.0 到 1.0)
+        progress = min(current_iter / max_iter, 1.0)
+        
+        # 2. 用于计算基础权重的分母
+        # (num_images - 1) 是锚点0的最大可能"距离"
+        weight_denominator = num_images - 1.0
+        if weight_denominator <= 0:
+            weight_denominator = 1.0 # 防止 num_images < 2 时除以0
+        # --- [新] 动态权重计算结束 ---
+
         # 遍历所有唯一的像对 (i, j)
         for (i, j) in itertools.combinations(self.overlapping_image_ids, 2):
             
-            # i 和 j 都是可移动的
+            # --- 这部分逻辑与原 fit_affine_bundle 中的循环体完全一致 ---
+            # i < j, A_i 是目标 (可能固定也可能移动), A_j 是源 (总是移动)
             A_i = model_ddp.module.get_affine(i)
             A_j = model_ddp.module.get_affine(j)
             
@@ -408,10 +438,11 @@ class SharedGrid():
             rpc_i = images[i].rpc
             rpc_j = images[j].rpc
             
-            # --- 1. 计算 loss_a (j -> i) ---
+            # 1. Warp j -> i  (始终将索引号大的 j 投影到索引号小的 i)
             warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
             feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i, k = self.args.kmin_k)
 
+            # 3. 计算 loss_a (j -> i)
             loss_a = torch.tensor(0.0, device=local_rank)
             if feat_j_in_i is not None:
                 feat_j_orig = window_j.feature[valid_j].float()
@@ -419,22 +450,34 @@ class SharedGrid():
                 weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-8)
                 loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
-            # --- 2. [新增] 计算 loss_b (i -> j) ---
-            warp_i_to_j = warp_local(window_i.local.float(), window_i.dem, rpc_i, rpc_j, A_i)
-            feat_i_in_j, conf_i_in_j, valid_i = feature_sampling(window_j.feature.float(), window_j.conf.float(), window_j.local.float(), warp_i_to_j, k = self.args.kmin_k) # 注意采样到 j
-
-            loss_b = torch.tensor(0.0, device=local_rank)
-            if feat_i_in_j is not None:
-                feat_i_orig = window_i.feature[valid_i].float() # 原始特征来自 i
-                conf_cov_b = window_i.conf[valid_i].float() * conf_i_in_j # 置信度来自 i 和 j
-                weight_b = conf_cov_b / (conf_cov_b.mean() + 1e-8)
-                loss_b = (torch.norm(feat_i_orig - feat_i_in_j, dim=-1) * weight_b).mean() * 10000.
-
-            # --- 3. [修改] 合并对称损失 ---
-            pair_loss = loss_a + loss_b
+            pair_loss = loss_a
             
+            # --- [新] 动态权重计算开始 ---
+            
+            # 1. 计算 "基础权重" (Static Base Weight)
+            # 需求：i 越小 (越接近锚点0)，权重越大。
+            # i = 0 -> base_weight = (N-1-0) / (N-1) = 1.0
+            # i = N-2 -> base_weight = (N-1-(N-2)) / (N-1) = 1 / (N-1)
+            
+            base_weight_val = (num_images - 1.0 - i) / weight_denominator
+            # 确保 base_weight 至少有一个很小的值，避免 pow(0, x) (尽管 N-1-i 最小是1)
+            base_weight_val = max(base_weight_val, 1e-6) 
+            base_weight = torch.tensor(base_weight_val, device=local_rank, dtype=torch.float32)
+
+            # 2. 计算 "动态权重" (Dynamic Weight)
+            # 训练初期 (progress -> 0): exponent -> 1.0 => dynamic_weight -> base_weight (差异大)
+            # 训练后期 (progress -> 1): exponent -> 0.0 => dynamic_weight -> base_weight^0 = 1.0 (趋同)
+            
+            exponent = 1.0 - progress
+            dynamic_weight = torch.pow(base_weight, exponent)
+            
+            # --- [新] 动态权重计算结束 ---
+
+            # --- [修改] 应用动态权重 ---
             if not torch.isnan(pair_loss) and not torch.isinf(pair_loss) and pair_loss > 0:
-                grid_total_loss = grid_total_loss + pair_loss
+                # [修改] 将 pair_loss 乘以其对应的动态权重
+                weighted_pair_loss = pair_loss * dynamic_weight
+                grid_total_loss = grid_total_loss + weighted_pair_loss
                 num_valid_pairs_in_grid += 1
             else:
                 if pair_loss > 0: # 仅在非零时打印警告 (虽然isnan和isinf已经覆盖了)
@@ -445,7 +488,6 @@ class SharedGrid():
             return grid_total_loss / num_valid_pairs_in_grid # 返回该格网的平均损失
         else:
             return torch.tensor(0.0, device=local_rank)
-    # --- [修改结束 (需求 2)] ---
 
         
 def load_imgs_bundle(args) -> List[RSImage]:
@@ -558,7 +600,6 @@ def fit_affine_bundle(args,
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
     (已修改) 使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
-    (已修改) 增加周期性中心化逻辑以防止漂移。
     """
     
     num_images = len(images)
@@ -601,7 +642,13 @@ def fit_affine_bundle(args,
             pass 
         else:
             for grid in local_shared_grids:
-                grid_avg_loss = grid.calculate_all_pairs_loss(model_ddp, images, local_rank)
+                # --- [修改]: 传入 iter, max_iter, num_images ---
+                grid_avg_loss = grid.calculate_all_pairs_loss(model_ddp, 
+                                                             images, 
+                                                             local_rank, 
+                                                             iter,              # [新] 传入当前迭代
+                                                             args.max_iter,     # [新] 传入总迭代
+                                                             num_images)        # [新] 传入影像总数
                 
                 if not torch.isnan(grid_avg_loss) and not torch.isinf(grid_avg_loss) and grid_avg_loss > 0:
                     local_total_loss = local_total_loss + grid_avg_loss
@@ -624,35 +671,6 @@ def fit_affine_bundle(args,
         dist.all_reduce(global_loss_sum, op=dist.ReduceOp.SUM)
         global_avg_loss = (global_loss_sum / world_size).item() 
         
-        # --- [新增 (需求 3)] 周期性中心化 (所有 Rank 执行) ---
-        if (iter + 1) % 10 == 0 and optimizer_t is not None: 
-            # 获取此 Rank 上的所有 T 参数 (这些参数由 DDP 管理，在所有 rank 上是同步的)
-            # 我们只中心化那些 *实际在优化器中* 的 T 参数
-            all_T_params_in_opt = [p for p in optimizer_t.param_groups[0]['params']]
-            
-            if all_T_params_in_opt:
-                with torch.no_grad():
-                    # 1. 堆叠并计算本地T向量的总和
-                    all_T_tensor = torch.stack(all_T_params_in_opt, dim=0)
-                    local_T_sum = torch.sum(all_T_tensor, dim=0) # shape (2,)
-                    
-                    # 2. DDP 同步：计算全局T向量的总和
-                    global_T_sum = local_T_sum.clone()
-                    dist.all_reduce(global_T_sum, op=dist.ReduceOp.SUM)
-                    
-                    # 3. 计算全局均值 (质心)
-                    # model_ddp.module.models 包含所有影像的模型
-                    num_images_total = len(model_ddp.module.models)
-                    global_T_mean = global_T_sum / num_images_total # T_centroid
-                    
-                    # 4. (关键) 所有 Rank 都用 *相同* 的均值来校正自己的参数
-                    #    直接修改 .data 来更新参数
-                    for T_param in all_T_params_in_opt:
-                        T_param.data.sub_(global_T_mean)
-        
-        # --- [新增结束 (需求 3)] ---
-
-
         # 2. Rank 0 进行决策
         if local_rank == 0:
             
@@ -670,10 +688,7 @@ def fit_affine_bundle(args,
                 original_params_inv_list = [img.rpc.adjust_params_inv.clone() for img in images]
                 try:
                     with torch.no_grad():
-                        # --- [修改开始 (需求 1)] ---
-                        # 现在需要更新所有影像，包括影像0
-                        for i in range(num_images): 
-                        # --- [修改结束 (需求 1)] ---
+                        for i in range(1, num_images): 
                             current_A_i = model_ddp.module.get_affine(i).detach()
                             images[i].rpc.Update_Adjust(current_A_i) 
                     mean_err, median_err = get_current_error_stats(images, overlapping_pairs)
@@ -707,10 +722,7 @@ def fit_affine_bundle(args,
                     patience_counter = 0
                     
                     best_model_state = []
-                    # --- [修改开始 (需求 1)] ---
-                    # 现在保存所有N个模型的状态
                     for sub_model in model_ddp.module.models: 
-                    # --- [修改结束 (需求 1)] ---
                         best_model_state.append({
                             'R': sub_model.R.data.clone(), 
                             'T': sub_model.T.data.clone()
@@ -796,7 +808,7 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     lon2_rad = np.radians(lon2)
 
     dlat = lat2_rad - lat1_rad
-    dlon = lon2_rad - lon1_rad
+    dlon = lon2_rad - lonl_rad
 
     a = np.sin(dlat / 2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon / 2)**2
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
@@ -1307,11 +1319,8 @@ if __name__ == '__main__':
         model = BundleAffineModel(len(images)).to(local_rank)
         model_ddp = DDP(model, device_ids=[local_rank], find_unused_parameters=False) 
         
-        # --- [修改开始 (需求 1)] ---
-        # 现在所有模型都参与优化
         all_R_params = [m.R for m in model_ddp.module.models]
         all_T_params = [m.T for m in model_ddp.module.models]
-        # --- [修改结束 (需求 1)] ---
         
         optimizer_r = None
         optimizer_t = None
@@ -1367,11 +1376,8 @@ if __name__ == '__main__':
             
         if best_model_state: 
             with torch.no_grad():
-                # --- [修改开始 (需求 1)] ---
-                # 确保加载 N 个模型的状态
                 for i, state in enumerate(best_model_state):
                     if i < len(model_ddp.module.models):
-                # --- [修改结束 (需求 1)] ---
                         # 直接操作 .data 来更新参数
                         model_ddp.module.models[i].R.data.copy_(state['R'])
                         model_ddp.module.models[i].T.data.copy_(state['T'])
@@ -1380,10 +1386,7 @@ if __name__ == '__main__':
                 print(f"Warning: No best model state found for Level {level+1}. Using final iteration state.")
         
         # 3. 所有 Ranks 将*本地* DDP 模型中的仿射变换 "烘焙" 到*本地*的 images RPC 列表中
-        # --- [修改开始 (需求 1)] ---
-        # 循环所有影像，包括 0
-        for i in range(len(images)):
-        # --- [修改结束 (需求 1)] ---
+        for i in range(1, len(images)):
             final_A_i_level = model_ddp.module.get_affine(i).detach()
             if local_rank == 0: # 仅 Rank 0 打印，避免日志混乱
                 print(f"Level {level+1} Affine Delta for image {i}: \n {final_A_i_level.cpu().numpy()}")
