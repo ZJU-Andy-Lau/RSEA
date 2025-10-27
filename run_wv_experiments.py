@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-run_experiments.py: 自动化实验管理器
+run_experiments.py: 自动化实验管理器 (已修改)
 
 该脚本用于自动化调用 adjust_test_1023.py, 实现以下功能:
 1. 对指定参数 (root, max_lr, window_size, grid_num) 进行网格搜索。
@@ -11,8 +11,8 @@ run_experiments.py: 自动化实验管理器
 4. 为每次实验生成唯一ID (experiment_id)，并以此命名输出文件夹。
 5. 捕获 adjust_test_1023.py 的成功、失败或崩溃状态。
 6. (新) 从 adjust_test_1023.py 生成的 final_results.json 文件中读取所有精度指标。
-7. 将所有参数和结果实时记录到主日志文件 (master_experiment_log.csv)。
-8. 实现断点续跑：自动跳过日志文件中已存在的实验。
+7. (修改) 将所有参数和结果实时记录到主日志 (master_experiment_log.csv)，并覆盖旧记录。
+8. (修改) 实现断点续跑：自动跳过 *仅已完成 (completed)* 的实验，重跑失败或中断的实验。
 """
 
 import os
@@ -107,9 +107,12 @@ def get_param_grid():
     print(f"成功生成 {len(processed_experiments)} 个实验配置。")
     return processed_experiments
 
-def load_completed_experiments(log_file):
+def load_log_and_completed_ids(log_file):
     """
-    加载主日志文件, 创建 (如果不存在), 并返回已记录的 experiment_id 集合。
+    (修改) 加载主日志文件, 创建 (如果不存在)。
+    返回:
+        df_log (pd.DataFrame): 完整的日志内容。
+        completed_ids (set): *仅包含* status == 'completed' 的 experiment_id 集合。
     """
     # [修改] 定义日志文件的所有列
     columns = [
@@ -122,36 +125,44 @@ def load_completed_experiments(log_file):
     if not os.path.exists(log_file):
         try:
             # 如果日志不存在, 创建一个空的 DataFrame 并写入表头
-            df = pd.DataFrame(columns=columns)
-            df.to_csv(log_file, index=False)
+            df_log = pd.DataFrame(columns=columns)
+            df_log.to_csv(log_file, index=False)
             print(f"已创建新的日志文件: {log_file}")
-            return set()
+            return df_log, set()
         except IOError as e:
             print(f"[!!] 致命错误: 无法创建日志文件 {log_file}。请检查权限。错误: {e}")
             sys.exit(1)
             
     try:
         # 如果日志存在, 读取它
-        df = pd.read_csv(log_file)
+        df_log = pd.read_csv(log_file)
+        
         # 验证表头是否匹配
-        if list(df.columns) != columns:
+        if list(df_log.columns) != columns:
             print(f"[!!] 警告: {log_file} 的表头与预期不符。")
             print(f"    预期: {columns}")
-            print(f"    实际: {list(df.columns)}")
-            print("    [!!] 脚本将尝试继续, 但可能导致日志格式错乱。")
+            print(f"    实际: {list(df_log.columns)}")
+            print("    [!!] 脚本将尝试使用预期表头继续, 这可能导致数据错位或丢失。")
             
-        # 返回所有已记录的 experiment_id 集合
-        # 无论 'status' 是 'completed' 还是 'failed', 都算作已运行
-        completed_ids = set(df['experiment_id'].unique())
-        print(f"从 {log_file} 加载了 {len(completed_ids)} 个已运行的实验记录。")
-        return completed_ids
+            # 尝试用标准列重新加载，丢弃不匹配的
+            df_log = pd.read_csv(log_file, names=columns, header=0, usecols=lambda c: c in columns)
+            # 确保所有标准列都存在
+            for col in columns:
+                if col not in df_log:
+                    df_log[col] = np.nan
+        
+        # (关键修改) 只筛选 'completed' 状态的
+        completed_ids = set(df_log[df_log['status'] == 'completed']['experiment_id'].unique())
+        
+        print(f"从 {log_file} 加载了 {len(df_log)} 条日志记录, 其中 {len(completed_ids)} 个实验已'completed'。")
+        return df_log, completed_ids
         
     except pd.errors.EmptyDataError:
         print(f"日志文件 {log_file} 为空。将视为新文件处理。")
         # 文件为空, 但已存在, 用正确的表头覆盖它
-        df = pd.DataFrame(columns=columns)
-        df.to_csv(log_file, index=False)
-        return set()
+        df_log = pd.DataFrame(columns=columns)
+        df_log.to_csv(log_file, index=False)
+        return df_log, set()
     except Exception as e:
         print(f"[!!] 致命错误: 无法读取日志文件 {log_file}。错误: {e}")
         sys.exit(1)
@@ -195,18 +206,40 @@ def load_results_from_json(root_path, experiment_id):
         print(f"    [!] 错误: 加载结果 JSON 时发生未知异常: {e}")
         return default_results
 
-def log_experiment(log_file, log_entry):
+def update_log_file(log_file: str, df_log: pd.DataFrame, log_entry: dict) -> pd.DataFrame:
     """
-    将单次实验的结果 (一个字典) 追加到主 CSV 日志文件。
-    这是一个独立函数, 确保文件I/O的原子性 (追加操作)。
+    (新) 将单次实验结果 (字典) 更新或追加到内存中的 DataFrame,
+    然后 *原子地* 将整个 DataFrame 覆写回磁盘。
+    返回:
+        updated_df_log (pd.DataFrame): 更新后的 DataFrame。
     """
     try:
-        # 将日志条目转换为单行 DataFrame
-        new_row_df = pd.DataFrame([log_entry])
+        exp_id = log_entry['experiment_id']
         
-        # 以追加模式 (mode='a') 写入, 并且不写入表头 (header=False)
-        new_row_df.to_csv(log_file, mode='a', header=False, index=False)
+        # 查找该 experiment_id 是否已存在
+        index_to_update = df_log.index[df_log['experiment_id'] == exp_id].tolist()
         
+        if index_to_update:
+            # --- 存在, 执行覆盖 ---
+            idx = index_to_update[0]
+            # print(f"    [i] 覆盖日志 (ID: {exp_id}, Index: {idx})") # 调试时使用
+            for col, val in log_entry.items():
+                df_log.at[idx, col] = val
+        else:
+            # --- 不存在, 执行追加 ---
+            # print(f"    [i] 追加新日志 (ID: {exp_id})") # 调试时使用
+            new_row_df = pd.DataFrame([log_entry])
+            df_log = pd.concat([df_log, new_row_df], ignore_index=True)
+
+        # --- 原子写入磁盘 ---
+        # 写入临时文件
+        temp_file = log_file + '.tmp'
+        df_log.to_csv(temp_file, index=False)
+        # 原子替换 (os.replace 在 POSIX 和 Windows 上都是原子的)
+        os.replace(temp_file, log_file)
+        
+        return df_log # 返回更新后的 DataFrame
+
     except IOError as e:
         print(f"\n    [!!] 致命错误: 无法写入主日志 {log_file}！错误: {e}")
         print(f"    [!!] 实验 {log_entry.get('experiment_id')} 的数据可能已丢失！")
@@ -215,30 +248,32 @@ def log_experiment(log_file, log_entry):
     except Exception as e:
         print(f"\n    [!!] 写入日志时发生未知错误: {e}")
         # 决定是否终止
-        # sys.exit(1)
+        sys.exit(1)
+
 
 def main():
     """
-    主执行函数: 循环、调用、容灾、记录
+    (修改) 主执行函数: 循环、调用、容灾、记录
     """
     print("--- [自动化实验管理器启动] ---")
     
     # 1. 获取所有实验配置
     all_experiments = get_param_grid()
     
-    # 2. 加载已完成的实验, 实现断点续跑
-    completed_ids = load_completed_experiments(MASTER_LOG_CSV)
+    # 2. (修改) 加载日志 DataFrame 和 *已完成* 的ID
+    df_log, completed_ids = load_log_and_completed_ids(MASTER_LOG_CSV)
     
-    # 过滤出未完成的实验
+    # 3. (修改) 过滤出未完成的实验
+    # (此行逻辑不变, 但由于 completed_ids 的定义改变, 行为已变为 "跳过已完成")
     experiments_to_run = [exp for exp in all_experiments if exp['experiment_id'] not in completed_ids]
     
     if not experiments_to_run:
-        print("\n--- [所有实验均已完成] ---")
+        print("\n--- [所有实验均已完成 ('completed' 状态)] ---")
         return
         
-    print(f"总共 {len(all_experiments)} 个实验, {len(experiments_to_run)} 个待运行。")
+    print(f"总共 {len(all_experiments)} 个实验, {len(experiments_to_run)} 个待运行 (已跳过 {len(completed_ids)} 个 'completed')。")
     
-    # 3. 循环执行所有待运行的实验
+    # 4. 循环执行所有待运行的实验
     try:
         with tqdm(experiments_to_run, desc="总实验进度") as pbar:
             for params in pbar:
@@ -248,7 +283,7 @@ def main():
                 print(f"\n--- [开始实验: {exp_id}] ---")
                 print(f"    参数: {params}")
                 
-                # 4. 构建 DDP 调用命令
+                # 5. 构建 DDP 调用命令
                 cmd = list(DDP_LAUNCHER) 
                 cmd.append('adjust_test_1023.py')
                 cmd.extend(FIXED_ARGS)
@@ -264,9 +299,10 @@ def main():
                         
                 # print(f"    命令: {' '.join(cmd)}") # 调试时取消注释
 
-                # 5. 执行与容灾
+                # 6. 执行与容灾
                 start_time = time.time()
                 status = 'failed' # 默认为 'failed'
+                run_time = 0.0 # 初始化
                 
                 # [修改] 定义默认的 nan 结果字典
                 results_keys = [
@@ -307,13 +343,32 @@ def main():
                         status = 'failed'
                         # 记录 stderr 以便调试
                         print("--- [STDERR (最后 1000 字符)] ---")
-                        print(result.stderr)
+                        print(result.stderr[-1000:]) # 只打印最后1000字符
                         print("--- [END STDERR] ---")
                         
                 except KeyboardInterrupt:
                     print(f"\n[!!] 检测到用户中断 (Ctrl+C)。")
                     print("    [i] 正在终止当前实验并安全退出...")
-                    # 不记录本次实验, 直接退出循环
+                    # 记录中断状态并退出
+                    status = 'interrupted'
+                    end_time = time.time()
+                    run_time = end_time - start_time
+                    
+                    # (新) 即使中断, 也尝试记录日志条目
+                    log_entry = params.copy()
+                    log_entry['status'] = status
+                    log_entry['run_time_seconds'] = round(run_time, 2)
+                    log_entry.update(results) # results 此时应为默认的 nan
+                    
+                    ordered_log_entry = {col: log_entry.get(col) for col in [
+                        'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
+                        'status', 'run_time_seconds', 
+                        'mean_error', 'median_error', 'rmse', 'max_error', 
+                        '<1m', '<3m', '<5m', 'total_tie_points'
+                    ]}
+                    
+                    df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
+                    print(f"    [i] 已将实验 {exp_id} 标记为 'interrupted' 并保存日志。")
                     sys.exit(0) # 正常退出
                     
                 except Exception as e:
@@ -323,7 +378,7 @@ def main():
                     print(f"    [X] 实验 {exp_id} 遭遇灾难性错误: {e}")
                     status = 'catastrophic_failure'
 
-                # 6. 持久化日志 (无论成功与否)
+                # 7. 持久化日志 (无论成功与否)
                 log_entry = params.copy()
                 log_entry['status'] = status
                 log_entry['run_time_seconds'] = round(run_time, 2)
@@ -337,11 +392,14 @@ def main():
                     '<1m', '<3m', '<5m', 'total_tie_points'
                 ]}
                 
-                log_experiment(MASTER_LOG_CSV, ordered_log_entry)
+                # (修改) 持久化日志 (调用新函数)
+                df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
                 
-                # 更新内存中的已完成集合
-                completed_ids.add(exp_id)
-                print(f"    [i] 实验 {exp_id} 已记录到 {MASTER_LOG_CSV}。")
+                # (修改) 更新内存中的已完成集合
+                if status == 'completed':
+                    completed_ids.add(exp_id)
+                
+                print(f"    [i] 实验 {exp_id} 已记录 (状态: {status}) 到 {MASTER_LOG_CSV}。")
     
     except KeyboardInterrupt:
         print("\n[!!] 用户在实验循环间隙中断。脚本将退出。")
@@ -356,4 +414,3 @@ if __name__ == "__main__":
         sys.exit(1)
         
     main()
-

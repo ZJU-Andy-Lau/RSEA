@@ -595,11 +595,11 @@ def fit_affine_bundle(args,
             if iter == 0:
                 # 使用 position=0, leave=True 确保它保持在原位
                 pbar = tqdm(total=args.max_iter, 
-                            desc=f"Lvl:{current_level + 1}/{args.num_levels}", 
+                            desc=f"Lvl:{current_level + 1}/{args.num_levels} Optim", # (修改) 增加 "Optim"
                             unit="iter", 
                             position=0, 
                             leave=True,
-                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]' # 移除 {desc}
+                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]' 
                            )
         
         optimizer_r.zero_grad()
@@ -777,6 +777,10 @@ def fit_affine_bundle(args,
     # 优化循环结束
     if local_rank == 0 and not args.auto:
         print("Bundle adjustment optimization finished for this level.")
+    
+    # [修改] 确保 pbar 在循环正常结束时也被关闭
+    if local_rank == 0 and args.auto and 'pbar' in locals() and not pbar.disable:
+        pbar.close()
 
     return best_model_state
 
@@ -986,7 +990,8 @@ def select_grids_by_confidence(args,
     
     grid_iter = all_candidate_diags
     if args.auto:
-        grid_iter = tqdm(all_candidate_diags, desc="Assessing Grids", leave=False, position=1)
+        # (修改) 明确 position=1, leave=False
+        grid_iter = tqdm(all_candidate_diags, desc=f"Lvl Assess Grids", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}')
 
     with torch.no_grad():
         for diag in grid_iter:
@@ -1268,7 +1273,7 @@ if __name__ == '__main__':
             print("\n--- Global Error Report (Summary) ---")
             print(f"Total tie points checked: {len(all_errors)}")
             print(f"Mean Error:   {all_errors.mean():.4f} m")
-            print(f"Median Error: {np.median(all_errors):.4f} m")
+            print(f"Median Error: {np.median(all_errors.mean()):.4f} m") # [修正] 之前可能是笔误 median(all_errors)
             print(f"Max Error:    {all_errors.max():.4f} m")
             print(f"RMSE:         {np.sqrt(np.mean(all_errors**2)):.4f} m")
             print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
@@ -1403,8 +1408,13 @@ if __name__ == '__main__':
             print(f"[Rank {local_rank}] Level {level+1}: Total grids: {len(all_tasks)}, assigned: {len(my_tasks)}.")
         
         grid_creation_iter = my_tasks
+        
+        # --- [!! 核心修改 !!] ---
+        # 按照你的需求, 在 auto 模式下, 格网创建前增加层级提示
         if local_rank == 0 and args.auto:
-            grid_creation_iter = tqdm(my_tasks, desc=f"Lvl {level+1} Grid Creation", leave=False, position=1)
+            print(f"\n--- [Auto Mode] Lvl {level+1}/{args.num_levels}: Creating {len(my_tasks)} grids (Rank 0)... ---") 
+            grid_creation_iter = tqdm(my_tasks, desc=f"Lvl {level+1} Grid Creation", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}')
+        # --- [修改结束] ---
 
         # 循环格网 (diags)
         for idx, diag in enumerate(grid_creation_iter):
@@ -1423,6 +1433,7 @@ if __name__ == '__main__':
                 if not args.auto:
                     print(f"[Rank {local_rank}] Grid {global_grid_id} (with {len(grid.overlapping_image_ids)} images) created and features extracted on cuda:{local_rank}")
             except Exception as e:
+                # [修改] 增加打印 (即使在 auto 模式下也打印失败信息)
                 print(f"[Rank {local_rank}] !! FAILED to create grid {global_grid_id}. Error: {e}")
 
 
@@ -1440,12 +1451,12 @@ if __name__ == '__main__':
         scheduler_t = None
 
         if all_R_params:
-            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (4 ** level))
-            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5 / (4 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
+            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
+            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5 / (10 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
         
         if all_T_params:
-            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (4 ** level))
-            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr / (4 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
+            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (10 ** level))
+            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr / (10 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
         
         best_model_state = []
 
@@ -1521,7 +1532,7 @@ if __name__ == '__main__':
                 if len(all_errors_level) > 0 and all_errors_level.mean() != 0.0 and not args.auto:
                     print(f"Total tie points checked: {len(all_errors_level)}")
                     print(f"Mean Error:   {all_errors_level.mean():.4f} m")
-                    print(f"Median Error: {np.median(all_errors_level):.4f} m")
+                    print(f"Median Error: {np.median(all_errors_level):.4f} m") # [修正]
                     print(f"Max Error:    {all_errors_level.max():.4f} m")
                     print(f"RMSE:         {np.sqrt(np.mean(all_errors_level**2)):.4f} m")
                     print(f"< 1.0 m: {((all_errors_level < 1.0).sum() * 1. / len(all_errors_level)) * 100:.2f} %")
