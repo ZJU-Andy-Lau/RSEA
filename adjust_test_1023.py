@@ -24,12 +24,11 @@ import warnings
 import time
 from tqdm import tqdm
 
-# --- [新导入] ---
 import rasterio
 from rasterio.transform import from_origin
 from pyproj import CRS
 from scipy.interpolate import RegularGridInterpolator
-# --- [新导入结束] ---
+import json
 
 
 warnings.filterwarnings("ignore")
@@ -42,26 +41,25 @@ def format_time(seconds: float) -> str:
     secs = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
-# --- [新函数 1: 正射校正] ---
 def orthorectify_patch_mercator(rs_image: RSImage, 
                               grid_diag: np.ndarray, 
                               resolution: float, 
-                              output_path: str) -> Tuple[np.ndarray, rasterio.Affine]:
+                              output_path: str = None) -> Tuple[np.ndarray, rasterio.Affine]: # <--- [修改] output_path 变为可选
     """
     (新) 使用调整后的RPC和Mercator网格，对单个RSImage进行正射校正。
+    (修改) output_path 变为可选，如果为 None，则不保存文件。
     
     Args:
         rs_image: 包含 *完整* 影像、DEM和 *已调整* RPC 的 RSImage 对象。
         grid_diag: np.array([[x1, y1], [x2, y2]])，Mercator坐标，顺序不固定。
         resolution: 输出分辨率 (米)。
-        output_path: 输出 GeoTIFF 路径。
+        output_path: (可选) 输出 GeoTIFF 路径。
         
     Returns:
         (ortho_image_array, transform): 返回生成的影像数组和其地理变换。
     """
     
     # 1. 定义输出网格 (Mercator, EPSG:3857)
-    # --- [修改开始] ---
     # 显式查找 min/max 坐标，不依赖角点顺序
     all_x = grid_diag[:, 0]
     all_y = grid_diag[:, 1]
@@ -69,7 +67,6 @@ def orthorectify_patch_mercator(rs_image: RSImage,
     max_x = np.max(all_x)
     min_y = np.min(all_y)
     max_y = np.max(all_y)
-    # --- [修改结束] ---
     
     out_W = int(np.ceil((max_x - min_x) / resolution))
     out_H = int(np.ceil((max_y - min_y) / resolution))
@@ -121,7 +118,9 @@ def orthorectify_patch_mercator(rs_image: RSImage,
             try:
                 sampline_pred = rs_image.xy_to_sampline(xy_points) 
             except Exception as e:
-                print(f"警告: xy_to_sampline 在投影时失败 (Grid: {output_path}): {e}")
+                # [修改] auto 模式下减少打印
+                if not rs_image.options.auto:
+                    print(f"警告: xy_to_sampline 在投影时失败 (Grid: {output_path}): {e}")
                 continue # 跳过这个块
                 
             # 准备插值坐标 (line, samp)
@@ -134,23 +133,23 @@ def orthorectify_patch_mercator(rs_image: RSImage,
             ortho_image[i:i_end, j:j_end] = np.stack([pixel_vals_r, pixel_vals_g, pixel_vals_b], axis=-1).astype(rs_image.image.dtype)
 
     # 7. 写入 GeoTIFF
-    with rasterio.open(
-        output_path, 'w',
-        driver='GTiff',
-        height=out_H,
-        width=out_W,
-        count=3, # 始终为 3 通道
-        dtype=ortho_image.dtype,
-        crs=CRS.from_epsg(3857), # Web Mercator
-        transform=transform
-    ) as dst:
-        dst.write(ortho_image[..., 0], 1)
-        dst.write(ortho_image[..., 1], 2)
-        dst.write(ortho_image[..., 2], 3)
+    if output_path is not None: # <--- [修改] 仅在提供了 output_path 时才写入文件
+        with rasterio.open(
+            output_path, 'w',
+            driver='GTiff',
+            height=out_H,
+            width=out_W,
+            count=3, # 始终为 3 通道
+            dtype=ortho_image.dtype,
+            crs=CRS.from_epsg(3857), # Web Mercator
+            transform=transform
+        ) as dst:
+            dst.write(ortho_image[..., 0], 1)
+            dst.write(ortho_image[..., 1], 2)
+            dst.write(ortho_image[..., 2], 3)
             
     return ortho_image, transform
 
-# --- [新函数 2: 棋盘格] ---
 def create_checkerboard(ortho1: np.ndarray, 
                         ortho2: np.ndarray, 
                         transform: rasterio.Affine,
@@ -162,12 +161,11 @@ def create_checkerboard(ortho1: np.ndarray,
     Args:
         ortho1: 第一个正射影像 (H, W, 3)
         ortho2: 第二个正射影像 (H, W, 3) (必须同形状)
-        transform: 用于保存 GeoTIFF 的地理变换。
-        output_path: 输出路径。
+        transform: 用于保存 GeoTIFF 的地理变换。(在此函数中未使用，但保留签名)
+        output_path: 输出路径。(将保存为PNG/JPG)
         block_size: 棋盘格的大小 (像素)。
     """
     if ortho1.shape != ortho2.shape:
-        print(f"警告: 棋盘格影像形状不匹配: {ortho1.shape} vs {ortho2.shape}。跳过 {output_path}")
         return
 
     H, W = ortho1.shape[:2]
@@ -197,10 +195,8 @@ def create_checkerboard(ortho1: np.ndarray,
             checkerboard_img_bgr = checkerboard_img
 
         success = cv2.imwrite(output_path, checkerboard_img_bgr)
-        if not success:
-            print(f"警告: cv2.imwrite 未能成功保存 PNG 文件到 {output_path}")
     except Exception as e:
-        print(f"警告: 保存 PNG 文件到 {output_path} 时出错: {e}")
+        pass # [修改] auto 模式下减少打印
 
 
 # DDP Step 1: DDP环境初始化函数
@@ -209,7 +205,6 @@ def setup_ddp():
     dist.init_process_group(backend='nccl')
     local_rank = int(os.environ['LOCAL_RANK'])
     torch.cuda.set_device(local_rank)
-    print(f"DDP setup on rank {local_rank} with device cuda:{local_rank}")
     return local_rank
 
 # DDP Step 2: 将需要优化的参数封装为 nn.Module
@@ -340,8 +335,7 @@ class SharedGrid():
         if len(self.overlapping_image_ids) < 2:
             raise ValueError(f"Grid {self.id} has {len(self.overlapping_image_ids)} overlapping images. Need at least 2.")
         
-        if dist.get_rank() == 0:
-            # [修改] 路径中加入 level 信息
+        if dist.get_rank() == 0 and not args.auto:
             self.debug_output_path = os.path.join(args.debug_output_path, f'grid_{self.id}')
             os.makedirs(self.debug_output_path, exist_ok=True)
             for img_id in self.overlapping_image_ids:
@@ -359,7 +353,7 @@ class SharedGrid():
                     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
                     ])
         
-        if dist.get_rank() == 0:
+        if dist.get_rank() == 0 and not self.args.auto:
             os.makedirs(self.debug_output_path, exist_ok=True)
         
         for img_id in self.overlapping_image_ids:
@@ -376,14 +370,16 @@ class SharedGrid():
             window.local = downsample_average(window.local, encoder.SAMPLE_FACTOR).flatten(0,1)
             window.dem = downsample_average(window.dem, encoder.SAMPLE_FACTOR).flatten(0,1)
 
+            if dist.get_rank() == 0 and not self.args.auto:
+                original_img_for_vis = window.img.copy() # 复制一份用于可视化
+            
             # 立刻删除已不再需要的原始图像块，释放显存
-            original_img_for_vis = window.img.copy() # 复制一份用于可视化
             del window.img
             
             # --- 将特征数据移至GPU ---
             window.to_gpu() # to_gpu 会自动使用 local_rank 对应的卡
 
-            if dist.get_rank() == 0:
+            if dist.get_rank() == 0 and not self.args.auto:
                 feat_vis = window.feature.cpu().numpy().reshape(h,w,-1)
                 conf_vis = window.conf.cpu().numpy().reshape(h,w)
                 
@@ -456,19 +452,24 @@ def load_imgs_bundle(args) -> List[RSImage]:
     img_folders = [img_folders[i] for i in select_img_idxs]
     
     images = []
-    print(f"[Rank {dist.get_rank()}] Found {len(img_folders)} image folders. Loading all...")
+    if dist.get_rank() == 0 and not args.auto:
+        print(f"[Rank {dist.get_rank()}] Found {len(img_folders)} image folders. Loading all...")
+        
     for idx, folder in enumerate(img_folders):
         img_path = os.path.join(base_path, folder)
         try:
             images.append(RSImage(args, img_path, idx))
-            print(f"[Rank {dist.get_rank()}] Loaded image {idx} from {folder}.")
+            if dist.get_rank() == 0 and not args.auto:
+                print(f"[Rank {dist.get_rank()}] Loaded image {idx} from {folder}.")
         except Exception as e:
             print(f"[Rank {dist.get_rank()}] Failed to load image {idx} from {folder}: {e}")
-            
-    print(f"[Rank {dist.get_rank()}] Successfully loaded {len(images)} images into memory.")
+    
+
+    if dist.get_rank() == 0 and not args.auto:
+        print(f"[Rank {dist.get_rank()}] Successfully loaded {len(images)} images into memory.")
     return images
 
-def find_overlapping_pairs(images: List[RSImage]) -> List[Tuple[int, int]]:
+def find_overlapping_pairs(args, images: List[RSImage]) -> List[Tuple[int, int]]:
     """(保留) 通过检查地理坐标BBox，找出所有重叠的影像对。
     (注意) 此函数现在 *只* 用于生成最终的 *验证* 列表。"""
     bboxes = []
@@ -493,8 +494,10 @@ def find_overlapping_pairs(images: List[RSImage]) -> List[Tuple[int, int]]:
             
             if not is_disjoint:
                 pairs.append((i, j))
-                
-    print(f"Found {len(pairs)} overlapping pairs for validation.")
+    
+    # [修改] auto 模式下减少打印
+    if not args.auto:
+        print(f"Found {len(pairs)} overlapping pairs for validation.")
     return pairs
 
 
@@ -540,8 +543,7 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
-# --- [修改开始]: 更新 fit_affine_bundle 函数签名和内部逻辑 ---
-def fit_affine_bundle(args, 
+def fit_affine_bundle(args,
                       local_shared_grids: List[SharedGrid], 
                       images: List[RSImage], 
                       model_ddp: DDP, 
@@ -558,30 +560,32 @@ def fit_affine_bundle(args,
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
     (已修改) 使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
+    (新) 在 auto 模式下使用 tqdm 进度条。
     """
     
     num_images = len(images)
-    if num_images < 2 and local_rank == 0:
+    if num_images < 2 and local_rank == 0 and not args.auto:
         print("Error: Need at least 2 images for bundle adjustment.")
         return [] 
     
     # ---初始化早停和最佳模型变量 ---
     best_model_state = [] 
     if local_rank == 0:
-        # (修改) 使用通用变量名
         min_metric_val = float('inf') 
         patience_counter = 0
         criterion = args.stop_criterion
         loss_threshold = args.min_loss_threshold
         error_threshold = args.min_error_threshold
-        print(f"Starting optimization with criterion='{criterion}', patience={patience}.")
-        if criterion == 'loss':
-            print(f"Using min_loss_threshold={loss_threshold}")
-        else: # criterion == 'error'
-            print(f"Using min_error_threshold={error_threshold}m")
-            if not args.check_error_during_train:
-                 print("Warning: stop_criterion='error' requires tie point error checking. " 
-                       "Error will only be checked every 10 iterations.")
+        
+        if not args.auto:
+            print(f"Starting optimization with criterion='{criterion}', patience={patience}.")
+            if criterion == 'loss':
+                print(f"Using min_loss_threshold={loss_threshold}")
+            else: # criterion == 'error'
+                print(f"Using min_error_threshold={error_threshold}m")
+                if not args.check_error_during_train:
+                     print("Warning: stop_criterion='error' requires tie point error checking. " 
+                           "Error will only be checked every 10 iterations.")
                        
         start_time = time.time()
         
@@ -589,6 +593,19 @@ def fit_affine_bundle(args,
 
     # 4. 迭代优化
     for iter in range(args.max_iter):
+        
+        if local_rank == 0 and args.auto:
+            # 在 Rank 0 上初始化/更新 tqdm 进度条
+            if iter == 0:
+                # 使用 position=0, leave=True 确保它保持在原位
+                pbar = tqdm(total=args.max_iter, 
+                            desc=f"Lvl:{current_level + 1}/{args.num_levels}", 
+                            unit="iter", 
+                            position=0, 
+                            leave=True,
+                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]' # 移除 {desc}
+                           )
+        
         optimizer_r.zero_grad()
         optimizer_t.zero_grad()
         
@@ -626,7 +643,6 @@ def fit_affine_bundle(args,
         # 2. Rank 0 进行决策
         if local_rank == 0:
             
-            # --- (修改) 早停和最优模型判断逻辑 ---
             mean_err = 0.0 # 初始化
             median_err = 0.0
             
@@ -686,53 +702,75 @@ def fit_affine_bundle(args,
                  # 如果是 error 标准，但本轮未计算 error，则不增加 patience 计数器
                  pass
             elif perform_check_this_iter and current_metric_val <= 0 and args.stop_criterion == 'error':
-                print(f"  Warning: Mean error is {current_metric_val:.4f}. Skipping best model check for this iteration.")
+                if not args.auto:
+                    print(f"  Warning: Mean error is {current_metric_val:.4f}. Skipping best model check for this iteration.")
 
 
             # 检查是否需要早停
             if patience_counter >= patience:
-                print(f"--- Early stopping triggered at iter {iter+1} based on '{args.stop_criterion}' ---")
-                if args.stop_criterion == 'loss':
-                    print(f"Loss ({global_avg_loss:.4f}) did not improve by {args.min_loss_threshold} for {patience} iterations. Min loss: {min_metric_val:.4f}")
-                else: # error
-                     print(f"Mean Error ({current_metric_val:.4f}m) did not improve by {args.min_error_threshold}m for {patience} check intervals. Min error: {min_metric_val:.4f}m")
+                if not args.auto:
+                    print(f"--- Early stopping triggered at iter {iter+1} based on '{args.stop_criterion}' ---")
+                    if args.stop_criterion == 'loss':
+                        print(f"Loss ({global_avg_loss:.4f}) did not improve by {args.min_loss_threshold} for {patience} iterations. Min loss: {min_metric_val:.4f}")
+                    else: # error
+                         print(f"Mean Error ({current_metric_val:.4f}m) did not improve by {args.min_error_threshold}m for {patience} check intervals. Min error: {min_metric_val:.4f}m")
                 stop_signal.fill_(1.0) 
 
-            # --- (修改) 日志记录 ---
-            if (iter + 1) % 10 == 0:
-                lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
-                lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
-                
-                elapsed_time_sec = time.time() - start_time
-                elapsed_time_str = format_time(elapsed_time_sec)
-                avg_iter_time = elapsed_time_sec / (iter + 1)
-                remaining_iter = args.max_iter - (iter + 1)
-                remaining_time_sec = avg_iter_time * remaining_iter
-                remaining_time_str = format_time(remaining_time_sec)
+            # ---日志记录 ---
+            if args.auto:
+                # --- AUTO 模式: 更新 TQDM ---
+                if 'pbar' in locals(): # 确保 pbar 已被 Rank 0 初始化
+                    pbar.update(1)
+                    
+                    # 构造 TQDM 后缀信息
+                    postfix_dict = {
+                        "loss": f"{global_avg_loss:.4f}",
+                        "min_met": f"{min_metric_val:.4f}{'m' if args.stop_criterion == 'error' else ''}",
+                        "pat": f"{patience_counter}/{patience}"
+                    }
+                    if should_calculate_error and mean_err > 0:
+                        postfix_dict["err(m)"] = f"{mean_err:.2f}"
+                    
+                    pbar.set_postfix(postfix_dict)
+                    
+                    if stop_signal.item() == 1.0 or (iter + 1) == args.max_iter:
+                        pbar.close() # 循环结束或早停时关闭进度条
 
-                # 准备 error 字符串 (如果计算了)
-                err_log_str = ""
-                if should_calculate_error: # 仅在计算了error的轮次显示
-                     err_log_str = f"\t mean:{mean_err:.4f}m \t median:{median_err:.4f}m"
+            else:
+                # --- 非 AUTO 模式: 保持原有打印逻辑 ---
+                if (iter + 1) % 10 == 0:
+                    lr_r = scheduler_r.get_last_lr()[0] if scheduler_r else args.max_lr * 1e-5
+                    lr_t = scheduler_t.get_last_lr()[0] if scheduler_t else args.max_lr
+                    
+                    elapsed_time_sec = time.time() - start_time
+                    elapsed_time_str = format_time(elapsed_time_sec)
+                    avg_iter_time = elapsed_time_sec / (iter + 1)
+                    remaining_iter = args.max_iter - (iter + 1)
+                    remaining_time_sec = avg_iter_time * remaining_iter
+                    remaining_time_str = format_time(remaining_time_sec)
 
-                # 动态显示 min 值
-                min_metric_log_str = ""
-                if args.stop_criterion == 'loss':
-                    min_metric_log_str = f"min_l:{min_metric_val:.4f}"
-                else: # error
-                    min_metric_log_str = f"min_e:{min_metric_val:.4f}m"
+                    # 准备 error 字符串 (如果计算了)
+                    err_log_str = ""
+                    if should_calculate_error: # 仅在计算了error的轮次显示
+                         err_log_str = f"\t mean:{mean_err:.4f}m \t median:{median_err:.4f}m"
 
+                    # 动态显示 min 值
+                    min_metric_log_str = ""
+                    if args.stop_criterion == 'loss':
+                        min_metric_log_str = f"min_l:{min_metric_val:.4f}"
+                    else: # error
+                        min_metric_log_str = f"min_e:{min_metric_val:.4f}m"
 
-                print(f"Lvl:{current_level + 1}/{args.num_levels} iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} {min_metric_log_str} {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e}  lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str}  eta:{remaining_time_str}")
+                    print(f"Lvl:{current_level + 1}/{args.num_levels} iter:{iter+1}/{args.max_iter} \t loss:{global_avg_loss:.4f} {min_metric_log_str} {err_log_str} \t pat:{patience_counter}/{patience} \t lr_t:{lr_t:.2e}  lr_r:{lr_r:.2e} \t elapsed:{elapsed_time_str}  eta:{remaining_time_str}")
         
-        # --- [修改结束] ---
         
         # 3.广播停止信号
         dist.broadcast(stop_signal, src=0)
 
         # 4.检查停止信号
         if stop_signal.item() == 1.0:
-            print(f"Rank {local_rank}: Received stop signal. Breaking optimization loop.")
+            if local_rank == 0 and not args.auto:
+                print(f"Rank {local_rank}: Received stop signal. Breaking optimization loop.")
             break 
         
         if scheduler_r:
@@ -741,11 +779,10 @@ def fit_affine_bundle(args,
             scheduler_t.step()
 
     # 优化循环结束
-    if local_rank == 0:
+    if local_rank == 0 and not args.auto:
         print("Bundle adjustment optimization finished for this level.")
 
     return best_model_state
-# --- [修改结束] ---
 
 def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
     R = 6371000 
@@ -770,7 +807,7 @@ def haversine_distance(coords1: np.ndarray, coords2: np.ndarray) -> np.ndarray:
 
 def get_current_error_stats(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> Tuple[float, float]:
     """
-    (新) 专门用于在优化循环中调用的函数，仅计算并返回误差的均值和中位数。
+    专门用于在优化循环中调用的函数，仅计算并返回误差的均值和中位数。
     """
     all_distances = []
     
@@ -824,25 +861,34 @@ def check_pair_error(img_i: RSImage, img_j: RSImage) -> np.ndarray:
     distances = haversine_distance(coords_i, coords_j)
     return distances
 
-def check_all_pairs_error(images: List[RSImage], overlapping_pairs: List[Tuple[int, int]]) -> np.ndarray:
+def check_all_pairs_error(images: List[RSImage], 
+                          overlapping_pairs: List[Tuple[int, int]], 
+                          verbose: bool = True) -> np.ndarray: # <--- [修改] 添加 verbose
     """在所有重叠对上计算并汇总误差"""
     all_distances = []
-    print("--- Global Error Report ---")
+    
+    # [修改] auto 模式下 (verbose=False) 不打印
+    if verbose and dist.get_rank() == 0:
+        print("--- Global Error Report ---")
+        
     for (i, j) in overlapping_pairs:
         distances = check_pair_error(images[i], images[j])
         if len(distances) > 0:
             all_distances.append(distances)
-            print(f"Pair ({i}, {j}) | Points: {len(distances)} | Mean Error: {distances.mean():.4f} m | Median Error: {np.median(distances):.4f} m")
+            # [修改] auto 模式下 (verbose=False) 不打印
+            if verbose and dist.get_rank() == 0:
+                print(f"Pair ({i}, {j}) | Points: {len(distances)} | Mean Error: {distances.mean():.4f} m | Median Error: {np.median(distances):.4f} m")
 
     if not all_distances:
-        print("No valid tie points found for any overlapping pair. Cannot generate report.")
+        # [修改] auto 模式下 (verbose=False) 不打印
+        if verbose and dist.get_rank() == 0:
+            print("No valid tie points found for any overlapping pair. Cannot generate report.")
         return np.array([0.0])
         
     all_distances = np.concatenate(all_distances)
     return all_distances
 
 
-# --- [新功能] ---
 def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diags: List[np.ndarray], ref_image: RSImage, level: int):
     """
     绘制格网选择示意图 (仅在 Rank 0 上调用)
@@ -854,6 +900,10 @@ def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diag
         ref_image: 参考影像 (例如 images[0]), 用于确定地理边界
         level: [新] 当前金字塔层级
     """
+    # [修改] auto 模式下不运行
+    if args.auto:
+        return
+        
     print(f"Rank 0: Generating grid selection visualization for Level {level}...")
     try:
         # 1. 获取参考影像的地理边界
@@ -998,7 +1048,11 @@ if __name__ == '__main__':
     parser.add_argument('--select_grid_by_conf',action='store_true',
                         help='If set, use slow confidence-based grid selection. If not set, use fast uniform selection.')
     
-
+    parser.add_argument('--auto', action='store_true',
+                        help='(新) 启用自动化实验模式。将抑制大多数日志, 使用tqdm进度条, 并在最后输出 results.json。')
+    
+    parser.add_argument('--experiment_id', type=str, default=None,
+                        help='(新) Unique ID for the experiment, used for output folder naming.')
 
 
     args = parser.parse_args()
@@ -1007,15 +1061,16 @@ if __name__ == '__main__':
     local_rank = setup_ddp()
     world_size = dist.get_world_size() # 总进程数
 
-    # --- [新逻辑]: 强制检查 error ---
     if args.stop_criterion == 'error' and not args.check_error_during_train:
-        if local_rank == 0:
+        if local_rank == 0 and not args.auto:
             print("Info: stop_criterion is set to 'error', automatically enabling --check_error_during_train.")
         args.check_error_during_train = True
-    # --- [新逻辑结束] ---
 
-
-    args.debug_output_path = os.path.join(args.root,'debug_output')
+    if args.experiment_id:
+        args.debug_output_path = os.path.join(args.root, f'output_{args.experiment_id}')
+    else:
+        args.debug_output_path = os.path.join(args.root, 'debug_output')
+    
     if local_rank == 0:
         os.makedirs(args.debug_output_path,exist_ok=True)
 
@@ -1030,14 +1085,16 @@ if __name__ == '__main__':
     
     # 只在主进程 (rank 0) 上生成任务列表
     if local_rank == 0:
-        print("Rank 0: Finding overlapping pairs (for final validation)...")
-        overlapping_pairs = find_overlapping_pairs(images)
+        if not args.auto:
+            print("Rank 0: Finding overlapping pairs (for final validation)...")
+        overlapping_pairs = find_overlapping_pairs(args, images)
 
-        print("\nStarting initial error check on Rank 0...")
-        all_errors = check_all_pairs_error(images, overlapping_pairs)
+        if not args.auto:
+            print("\nStarting initial error check on Rank 0...")
         
-        if len(all_errors) > 0 and all_errors.mean() != 0.0:
-            
+        all_errors = check_all_pairs_error(images, overlapping_pairs, verbose=not args.auto)
+        
+        if len(all_errors) > 0 and all_errors.mean() != 0.0 and not args.auto:
             print("\n--- Global Error Report (Summary) ---")
             print(f"Total tie points checked: {len(all_errors)}")
             print(f"Mean Error:   {all_errors.mean():.4f} m")
@@ -1047,7 +1104,7 @@ if __name__ == '__main__':
             print(f"< 1.0 m: {((all_errors < 1.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
             print(f"< 3.0 m: {((all_errors < 3.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
             print(f"< 5.0 m: {((all_errors < 5.0).sum() * 1. / len(all_errors)) * 100:.2f} %")
-        else:
+        elif not args.auto:
             print("No valid tie points found. Final error check skipped.")
     
     selected_diags_for_level = []
@@ -1058,32 +1115,35 @@ if __name__ == '__main__':
         all_tasks = [] # 重置当前层级的任务列表
         
         if local_rank == 0:
-            print("\n" + "="*50)
-            print(f"--- Starting Pyramid Level {level + 1} / {args.num_levels} ---")
-            print(f"--- Current Window Size: {current_window_size:.2f} m ---")
-            print("="*50 + "\n")
+            if not args.auto:
+                print("\n" + "="*50)
+                print(f"--- Starting Pyramid Level {level + 1} / {args.num_levels} ---")
+                print(f"--- Current Window Size: {current_window_size:.2f} m ---")
+                print("="*50 + "\n")
             
         # --- 步骤 1: (Rank 0) 格网生成 ---
         if local_rank == 0:
             if level == 0:
                 # [层级 0: 执行初始格网生成、评估和筛选]
-                print("Rank 0: Level 0. Finding, assessing, and selecting initial grids...")
+                if not args.auto:
+                    print("Rank 0: Level 0. Finding, assessing, and selecting initial grids...")
                 
                 # 1. 查找初始格网 (这是两种策略的共同步骤)
                 all_corners = np.stack([img.corner_xys for img in images], axis=0)
                 all_common_diags = find_grids(all_corners, current_window_size, 
                                             offset_x=args.grid_offset_x, 
                                             offset_y=args.grid_offset_y)
-                print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
+                if not args.auto:
+                    print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
 
-                # --- [修改开始]: 根据 args.select_grid_by_conf 执行分支 ---
                 
                 # 2. 根据策略进行格网评估和筛选
                 if args.select_grid_by_conf:
                     # --- 策略 1: 基于置信度的质量优先选择 (慢) ---
-                    print("Rank 0: Strategy = Confidence-based selection (slow, high-quality).")
+                    if not args.auto:
+                        print("Rank 0: Strategy = Confidence-based selection (slow, high-quality).")
+                        print("Rank 0: Loading encoder for grid quality assessment...")
                     
-                    print("Rank 0: Loading encoder for grid quality assessment...")
                     encoder_assess = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
                     encoder_assess.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
                     encoder_assess.cuda(local_rank) # local_rank is 0
@@ -1095,11 +1155,19 @@ if __name__ == '__main__':
                     ])
                     
                     all_valid_grids_info = [] # 存储所有有效格网的信息
-                    print("Rank 0: Assessing quality for all candidate grids (using AVG confidence)...")
+                    
+                    # [修改] auto 模式下不打印
+                    if not args.auto:
+                        print("Rank 0: Assessing quality for all candidate grids (using AVG confidence)...")
                     resample_size = 1024 # 与SharedGrid中使用的尺寸保持一致
                     
+                    # [修改] auto 模式下使用 tqdm
+                    grid_iter = all_common_diags
+                    if args.auto:
+                        grid_iter = tqdm(all_common_diags, desc="Assessing Grids", leave=False, position=1)
+
                     with torch.no_grad():
-                        for diag in tqdm(all_common_diags, desc="Assessing Grids"):
+                        for diag in grid_iter:
                             total_conf_score = 0.0
                             overlapping_img_count = 0
                             
@@ -1140,14 +1208,17 @@ if __name__ == '__main__':
                     
                     # 3. 执行空间抑制选择算法 (NMS + 置信度补齐)
                     if args.grid_num > 0 and len(all_valid_grids_info) > args.grid_num:
-                        print(f"Rank 0: Found {len(all_valid_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
+                        if not args.auto:
+                            print(f"Rank 0: Found {len(all_valid_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
                         
                         all_valid_grids_sorted = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
                         candidate_grids_for_nms = all_valid_grids_sorted.copy()
                         
                         selected_grids_info_nms = [] 
                         suppression_radius = current_window_size * 1.5 
-                        print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
+                        
+                        if not args.auto:
+                            print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
 
                         while len(candidate_grids_for_nms) > 0 and len(selected_grids_info_nms) < args.grid_num:
                             best_grid = candidate_grids_for_nms.pop(0)
@@ -1163,8 +1234,9 @@ if __name__ == '__main__':
                         num_selected_by_nms = len(selected_grids_info_nms)
                         
                         if num_selected_by_nms < args.grid_num:
-                            print(f"Rank 0: NMS 选中了 {num_selected_by_nms} 个格网 (目标: {args.grid_num})。")
-                            print(f"Rank 0: 正在从高置信度列表中补齐剩余格网...")
+                            if not args.auto:
+                                print(f"Rank 0: NMS 选中了 {num_selected_by_nms} 个格网 (目标: {args.grid_num})。")
+                                print(f"Rank 0: 正在从高置信度列表中补齐剩余格网...")
                             
                             num_to_backfill = args.grid_num - num_selected_by_nms
                             selected_diags_set = {info['diag'].tostring() for info in selected_grids_info_nms}
@@ -1176,18 +1248,22 @@ if __name__ == '__main__':
                                     if len(backfill_grids_info) == num_to_backfill:
                                         break
                             
-                            print(f"Rank 0: 已补齐 {len(backfill_grids_info)} 个格网。")
+                            if not args.auto:
+                                print(f"Rank 0: 已补齐 {len(backfill_grids_info)} 个格网。")
                             final_selected_grids_info = selected_grids_info_nms + backfill_grids_info
                             
                         else:
                             final_selected_grids_info = selected_grids_info_nms
 
                         all_tasks = [info['diag'] for info in final_selected_grids_info]
-                        print(f"Rank 0: 最终选中 {len(all_tasks)} 个格网。")
+                        
+                        if not args.auto:
+                            print(f"Rank 0: 最终选中 {len(all_tasks)} 个格网。")
                     
                     else:
                         # (grid_num 为 0 或候选总数本就 <= grid_num，则使用所有)
-                        print(f"Rank 0: grid_num ({args.grid_num}) 为 0 或 >= 有效格网总数。使用所有 {len(all_valid_grids_info)} 个有效格网。")
+                        if not args.auto:
+                            print(f"Rank 0: grid_num ({args.grid_num}) 为 0 或 >= 有效格网总数。使用所有 {len(all_valid_grids_info)} 个有效格网。")
                         all_tasks = [info['diag'] for info in all_valid_grids_info]
 
                     # 4. 调用可视化
@@ -1199,30 +1275,30 @@ if __name__ == '__main__':
                 
                 else:
                     # --- 策略 2: 均匀抽样 (快) ---
-                    print("Rank 0: Strategy = Uniform selection (fast, reproducible).")
+                    if not args.auto:
+                        print("Rank 0: Strategy = Uniform selection (fast, reproducible).")
                     
                     num_candidates = len(all_common_diags)
                     all_valid_grids_info_for_vis = [] # 仅用于可视化的辅助列表
                     
                     # 检查是否需要抽样
                     if args.grid_num > 0 and num_candidates > args.grid_num:
-                        print(f"Rank 0: Found {num_candidates} grids. Sorting for reproducible uniform selection...")
+                        if not args.auto:
+                            print(f"Rank 0: Found {num_candidates} grids. Sorting for reproducible uniform selection...")
                         
                         # 1. 排序 (关键步骤，确保可复现)
-                        # [修改] 将 np.ndarray 转换为 list，然后才能使用 key 参数排序
                         all_common_diags_list = list(all_common_diags)
                         all_common_diags_list.sort(key=lambda diag: (diag.mean(axis=0)[0], diag.mean(axis=0)[1]))
                         
                         # 2. 均匀抽样 (使用 np.linspace 选取固定间隔的索引)
-                        print(f"Rank 0: Selecting {args.grid_num} grids uniformly...")
+                        if not args.auto:
+                            print(f"Rank 0: Selecting {args.grid_num} grids uniformly...")
                         indices = np.linspace(0, num_candidates - 1, args.grid_num, dtype=int)
-                        # [修改] 从 all_common_diags_list 中选取
                         all_tasks = [all_common_diags_list[i] for i in indices]
                         
                         # 3. 准备可视化数据
                         # 创建一个set以便快速查找
                         selected_grids_map = {tuple(diag.flatten()) for diag in all_tasks}
-                        # [修改] 遍历 all_common_diags_list (排序后的完整列表)
                         for diag in all_common_diags_list: 
                             is_selected = tuple(diag.flatten()) in selected_grids_map
                             all_valid_grids_info_for_vis.append({
@@ -1233,23 +1309,23 @@ if __name__ == '__main__':
 
                     else:
                         # (使用所有格网)
-                        print(f"Rank 0: Using all {num_candidates} grids (grid_num is 0 or >= num_candidates).")
+                        if not args.auto:
+                            print(f"Rank 0: Using all {num_candidates} grids (grid_num is 0 or >= num_candidates).")
                         all_tasks = all_common_diags
-                        # [修改] 遍历 all_common_diags (np.ndarray 也可以) 来填充可视化列表
                         all_valid_grids_info_for_vis = [{'diag': diag, 'center': diag.mean(axis=0), 'score': 1} for diag in all_tasks]
 
                     # 4. 调用可视化
                     visualize_grid_selection(args, all_valid_grids_info_for_vis, all_tasks, images[0], level)
                     # (此分支无需清理 encoder)
                 
-                # --- [修改结束] ---
 
                 # 6. 保存结果给下一层级
                 selected_diags_for_level = all_tasks
                 
             else:
                 # [层级 > 0: 执行格网四叉树划分]
-                print(f"Rank 0: Level {level+1}. Subdividing {len(selected_diags_for_level)} grids from previous level.")
+                if not args.auto:
+                    print(f"Rank 0: Level {level+1}. Subdividing {len(selected_diags_for_level)} grids from previous level.")
                 
                 # 1. 调用新函数进行划分
                 all_tasks = subdivide_grids(selected_diags_for_level)
@@ -1257,11 +1333,13 @@ if __name__ == '__main__':
                 # 2. 保存结果给下一层级
                 selected_diags_for_level = all_tasks
                 
-                print(f"Rank 0: Created {len(all_tasks)} new sub-grids for processing.")
+                if not args.auto:
+                    print(f"Rank 0: Created {len(all_tasks)} new sub-grids for processing.")
             
             # 7. [通用] 为DDP负载均衡打乱任务列表
             random.shuffle(all_tasks)
-            print(f"Rank 0: Final task list for level {level+1} has {len(all_tasks)} grids.")
+            if not args.auto:
+                print(f"Rank 0: Final task list for level {level+1} has {len(all_tasks)} grids.")
         
         # --- 步骤 2: (所有 Rank) 广播和执行当前层级的平差 ---
         
@@ -1281,15 +1359,22 @@ if __name__ == '__main__':
         # 4. 每个进程都加载自己的特征提取器
         encoder = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
         encoder.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-        if local_rank == 0:
+        
+        if local_rank == 0 and not args.auto:
             print(f"Encoder Loaded by all processes for feature extraction on Level {level+1}")
 
         # 5. 每个进程在自己的 *格网* 子集上创建 SharedGrid
         local_shared_grids: List[SharedGrid] = [] # 新的数据列表
-        print(f"[Rank {local_rank}] Level {level+1}: Total grids: {len(all_tasks)}, assigned: {len(my_tasks)}.")
         
+        if local_rank == 0 and not args.auto:
+            print(f"[Rank {local_rank}] Level {level+1}: Total grids: {len(all_tasks)}, assigned: {len(my_tasks)}.")
+        
+        grid_creation_iter = my_tasks
+        if local_rank == 0 and args.auto:
+            grid_creation_iter = tqdm(my_tasks, desc=f"Lvl {level+1} Grid Creation", leave=False, position=1)
+
         # 循环格网 (diags)
-        for idx, diag in enumerate(my_tasks):
+        for idx, diag in enumerate(grid_creation_iter):
             # 构造一个包含层级信息的全局唯一ID
             global_grid_id = f"L{level}_R{local_rank}_{idx}" 
             try:
@@ -1301,7 +1386,9 @@ if __name__ == '__main__':
                 grid.extract_features_sequentially(encoder, local_rank)
                 
                 local_shared_grids.append(grid)
-                print(f"[Rank {local_rank}] Grid {global_grid_id} (with {len(grid.overlapping_image_ids)} images) created and features extracted on cuda:{local_rank}")
+                
+                if not args.auto:
+                    print(f"[Rank {local_rank}] Grid {global_grid_id} (with {len(grid.overlapping_image_ids)} images) created and features extracted on cuda:{local_rank}")
             except Exception as e:
                 print(f"[Rank {local_rank}] !! FAILED to create grid {global_grid_id}. Error: {e}")
 
@@ -1329,11 +1416,11 @@ if __name__ == '__main__':
         
         best_model_state = []
 
-        if optimizer_r is None and optimizer_t is None and local_rank == 0:
+        if optimizer_r is None and optimizer_t is None and local_rank == 0 and not args.auto:
             print(f"Warning: No parameters to optimize for level {level+1} (only one image provided?). Skipping optimization.")
         else:
             # 7. 调用 fit_affine_bundle
-            best_model_state = fit_affine_bundle(args, # 传入 args
+            best_model_state = fit_affine_bundle(args, # <--- [修改] 传入 args
                                                  local_shared_grids, 
                                                  images, 
                                                  model_ddp, 
@@ -1355,7 +1442,6 @@ if __name__ == '__main__':
         dist.barrier()
         
         # 9. (Rank 0) [重要] 将本层级的结果“烘焙”到RPC模型中
-        # --- [修改开始]: 广播最佳模型，所有 Ranks 都执行烘焙 ---
 
         # 1. Rank 0 广播 best_model_state
         state_to_broadcast = [best_model_state] if local_rank == 0 else [None]
@@ -1363,7 +1449,7 @@ if __name__ == '__main__':
         best_model_state = state_to_broadcast[0]
 
         # 2. 所有 Ranks 加载最佳模型状态到 *本地* 的 DDP 模型
-        if local_rank == 0:
+        if local_rank == 0 and not args.auto:
             print(f"\n[All Ranks] Applying (best) adjustments from Level {level+1} to RPC models...")
             
         if best_model_state: 
@@ -1374,30 +1460,32 @@ if __name__ == '__main__':
                         model_ddp.module.models[i].R.data.copy_(state['R'])
                         model_ddp.module.models[i].T.data.copy_(state['T'])
         else:
-            if local_rank == 0:
+            if local_rank == 0 and not args.auto:
                 print(f"Warning: No best model state found for Level {level+1}. Using final iteration state.")
         
         # 3. 所有 Ranks 将*本地* DDP 模型中的仿射变换 "烘焙" 到*本地*的 images RPC 列表中
         for i in range(1, len(images)):
             final_A_i_level = model_ddp.module.get_affine(i).detach()
-            if local_rank == 0: # 仅 Rank 0 打印，避免日志混乱
+            
+            if local_rank == 0 and not args.auto: 
                 print(f"Level {level+1} Affine Delta for image {i}: \n {final_A_i_level.cpu().numpy()}")
             # rpc.Update_Adjust 会将新的变换(final_A_i_level)
             # 与已有的变换进行矩阵复合 [cite: rpc.py, line 290]
             images[i].rpc.Update_Adjust(final_A_i_level)
         
-        if local_rank == 0:
+        if local_rank == 0 and not args.auto:
             print(f"Rank 0: Level {level+1} adjustments applied by all ranks.")
-        
-        # --- [修改结束] ---
         
         
         # 10. (Rank 0) 打印本层级后的精度
         if local_rank == 0:
             if args.check_error_during_train or level == args.num_levels - 1:
-                print(f"\n--- Error Report After Level {level+1} ---")
-                all_errors_level = check_all_pairs_error(images, overlapping_pairs)
-                if len(all_errors_level) > 0 and all_errors_level.mean() != 0.0:
+                if not args.auto:
+                    print(f"\n--- Error Report After Level {level+1} ---")
+                
+                all_errors_level = check_all_pairs_error(images, overlapping_pairs, verbose=not args.auto)
+                
+                if len(all_errors_level) > 0 and all_errors_level.mean() != 0.0 and not args.auto:
                     print(f"Total tie points checked: {len(all_errors_level)}")
                     print(f"Mean Error:   {all_errors_level.mean():.4f} m")
                     print(f"Median Error: {np.median(all_errors_level):.4f} m")
@@ -1406,66 +1494,100 @@ if __name__ == '__main__':
                     print(f"< 1.0 m: {((all_errors_level < 1.0).sum() * 1. / len(all_errors_level)) * 100:.2f} %")
                     print(f"< 3.0 m: {((all_errors_level < 3.0).sum() * 1. / len(all_errors_level)) * 100:.2f} %")
                     print(f"< 5.0 m: {((all_errors_level < 5.0).sum() * 1. / len(all_errors_level)) * 100:.2f} %")
-                else:
+                elif not args.auto:
                     print("No valid tie points found for intermediate check.")
 
         
-        # --- [新步骤: 并行可视化] ---
-        # 此刻, 所有 Ranks 上的 images[i].rpc 都已更新
-        if local_rank == 0:
-            print(f"\n[All Ranks] Starting parallel visualization for Level {level+1} (Res: {args.vis_resolution}m)...")
-        
-        vis_resolution = args.vis_resolution # 使用命令行参数
-        
-        # 每个 Rank 并行处理自己的格网
-        for grid in local_shared_grids:
-            grid_ortho_cache = {} # 缓存本格网的正射影像，用于棋盘格
+        if not args.auto:
+            if local_rank == 0:
+                print(f"\n[All Ranks] Starting parallel visualization for Level {level+1} (Res: {args.vis_resolution}m)...")
             
-            # 使用 grid.id 创建唯一的输出文件夹
-            # grid.id 已经是 "L{level}_R{local_rank}_{idx}" 格式
-            grid_vis_path = os.path.join(args.debug_output_path, f"vis_{grid.id}") # 加一个 "vis_" 前缀
-            os.makedirs(grid_vis_path, exist_ok=True)
+            vis_resolution = args.vis_resolution # 使用命令行参数
             
-            # 1. 生成正射影像
-            for img_id in grid.overlapping_image_ids:
-                rs_image = images[img_id] # 获取包含 *已调整* RPC 的 RSImage
-                ortho_output_path = os.path.join(grid_vis_path, f"ortho_img_{img_id}.tif")
+            # 每个 Rank 并行处理自己的格网
+            for grid in local_shared_grids:
+                grid_ortho_cache = {} # 缓存本格网的正射影像，用于棋盘格
                 
-                try:
-                    ortho_array, transform = orthorectify_patch_mercator(
-                        rs_image, 
-                        grid.diag, # [cite: adjust_test_1023.py, line 161]
-                        resolution=vis_resolution,
-                        output_path=ortho_output_path
-                    )
-                    grid_ortho_cache[img_id] = (ortho_array, transform)
-                except Exception as e:
-                    print(f"[Rank {local_rank}] FAILED orthorectification for {grid.id}/img_{img_id}. Error: {e}")
-
-            # 2. 生成棋盘格
-            for (i, j) in itertools.combinations(grid.overlapping_image_ids, 2):
-                if i in grid_ortho_cache and j in grid_ortho_cache:
-                    ortho_i, transform_i = grid_ortho_cache[i]
-                    ortho_j, transform_j = grid_ortho_cache[j]
+                # 使用 grid.id 创建唯一的输出文件夹
+                # grid.id 已经是 "L{level}_R{local_rank}_{idx}" 格式
+                grid_vis_path = os.path.join(args.debug_output_path, f"vis_{grid.id}") # 加一个 "vis_" 前缀
+                os.makedirs(grid_vis_path, exist_ok=True)
+                
+                # 1. 生成正射影像
+                for img_id in grid.overlapping_image_ids:
+                    rs_image = images[img_id] # 获取包含 *已调整* RPC 的 RSImage
+                    # [修改] 不再定义 ortho_output_path
+                    # ortho_output_path = os.path.join(grid_vis_path, f"ortho_img_{img_id}.tif")
                     
-                    checker_output_path = os.path.join(grid_vis_path, f"checker_{i}_vs_{j}.png")
                     try:
-                        create_checkerboard(
-                            ortho_i, ortho_j, 
-                            transform_i, # 变换应该是相同的
-                            checker_output_path, 
-                            block_size=50 # 棋盘格大小 (像素)
+                        ortho_array, transform = orthorectify_patch_mercator(
+                            rs_image, 
+                            grid.diag, 
+                            resolution=vis_resolution,
+                            output_path=None # <--- [修改] 设置为 None
                         )
+                        grid_ortho_cache[img_id] = (ortho_array, transform)
                     except Exception as e:
-                        print(f"[Rank {local_rank}] FAILED checkerboard for {grid.id}/({i},{j}). Error: {e}")
-        
-        # [新] 添加一个同步点
-        # 确保所有 Rank 都完成了文件写入，然后再进入下一层或清理资源
-        dist.barrier()
-        if local_rank == 0:
-            print(f"[All Ranks] Visualization for Level {level+1} complete.")
-        # --- [新步骤结束] ---
+                        print(f"[Rank {local_rank}] FAILED orthorectification for {grid.id}/img_{img_id}. Error: {e}")
 
+                # 2. 生成棋盘格 (此部分逻辑不变)
+                for (i, j) in itertools.combinations(grid.overlapping_image_ids, 2):
+                    if i in grid_ortho_cache and j in grid_ortho_cache:
+                        ortho_i, transform_i = grid_ortho_cache[i]
+                        ortho_j, transform_j = grid_ortho_cache[j]
+                        
+                        checker_output_path = os.path.join(grid_vis_path, f"checker_{i}_vs_{j}.png")
+                        try:
+                            create_checkerboard(
+                                ortho_i, ortho_j, 
+                                transform_i, # 变换应该是相同的
+                                checker_output_path, 
+                                block_size=50 # 棋盘格大小 (像素)
+                            )
+                        except Exception as e:
+                            print(f"[Rank {local_rank}] FAILED checkerboard for {grid.id}/({i},{j}). Error: {e}")
+            
+            # 确保所有 Rank 都完成了文件写入，然后再进入下一层或清理资源
+            dist.barrier()
+            if local_rank == 0:
+                print(f"[All Ranks] Visualization for Level {level+1} complete.")
+        # --- [可视化步骤修改结束] ---
+
+
+        # --- [新步骤 1]：所有进程同步 "烘焙" RPC ---
+        # 这一步至关重要：它将当前层级优化的 adjust_params 
+        # "烘焙" 进RPC主系数，并重置 adjust_params。
+        # 确保所有进程在进入下一层级时，都基于相同的、已更新的RPC模型。
+        if not args.auto:
+            if local_rank == 0:
+                print(f"\n[All Ranks] Baking RPC adjustments from Level {level+1}...")
+        
+        # 所有进程都需要执行
+        for img in images:
+            img.rpc.Merge_Adjust() # [cite: rpc.py, line 316]
+
+        # --- [新步骤 2]：仅 Rank 0 保存 "烘焙" 后的 RPC 文件 ---
+        if local_rank == 0:
+            rpc_save_path = os.path.join(args.debug_output_path, f"rpc_level_{level}")
+            os.makedirs(rpc_save_path, exist_ok=True)
+            
+            if not args.auto:
+                print(f"[Rank 0] Saving baked RPCs to {rpc_save_path}...")
+            
+            for img in images:
+                # 构造一个清晰的文件名
+                save_name = f"image_{img.id}_L{level}_baked.txt"
+                output_rpc_path = os.path.join(rpc_save_path, save_name)
+                try:
+                    img.rpc.save_rpc_to_file(output_rpc_path) # [cite: rpc.py, line 763]
+                except Exception as e:
+                    print(f"[Rank 0] FAILED to save RPC for image {img.id} to {output_rpc_path}. Error: {e}")
+            
+            if not args.auto:
+                print(f"[Rank 0] RPCs for Level {level+1} saved.")
+
+        # 确保所有进程都完成了烘焙，且Rank 0已保存完毕，再清理资源
+        dist.barrier() 
 
         # 11. 清理本层级的资源，为下个层级做准备
         del local_shared_grids, model, model_ddp, optimizer_r, optimizer_t, scheduler_r, scheduler_t, encoder
@@ -1474,11 +1596,50 @@ if __name__ == '__main__':
         
     # --- 金字塔循环结束 ---
     
-    if local_rank == 0:
+    # [修改] auto 模式下不打印
+    if local_rank == 0 and not args.auto:
         print("\n" + "="*50)
         print(f"--- Multi-level Bundle Adjustment Finished ({args.num_levels} levels) ---")
         print("="*50 + "\n")
     
+    # ---  自动化结果输出 ---
+    if local_rank == 0 and args.auto:
+        # 在自动化模式下, Rank 0 负责运行最后一次精度检查并写入 JSON
+        if local_rank == 0:
+            # 仅在 auto 模式下打印此消息
+            print(f"\n[Auto Mode] Rank 0: 实验 {args.experiment_id} 完成。正在生成 final_results.json...")
+        
+        # 1. 运行最后一次精度检查 (不打印到控制台)
+        all_errors_final = check_all_pairs_error(images, overlapping_pairs, verbose=False)
+        
+        results_dict = {}
+        if len(all_errors_final) > 0 and all_errors_final.mean() != 0.0:
+            total_points = len(all_errors_final)
+            results_dict['mean_error'] = float(np.mean(all_errors_final))
+            results_dict['median_error'] = float(np.median(all_errors_final))
+            results_dict['max_error'] = float(np.max(all_errors_final))
+            results_dict['rmse'] = float(np.sqrt(np.mean(all_errors_final**2)))
+            results_dict['<1m'] = float(((all_errors_final < 1.0).sum() / total_points) * 100)
+            results_dict['<3m'] = float(((all_errors_final < 3.0).sum() / total_points) * 100)
+            results_dict['<5m'] = float(((all_errors_final < 5.0).sum() / total_points) * 100)
+            results_dict['total_tie_points'] = int(total_points)
+        else:
+            # 如果没有连接点, 填充 nan
+            keys = ['mean_error', 'median_error', 'max_error', 'rmse', '<1m', '<3m', '<5m']
+            results_dict = {k: np.nan for k in keys}
+            results_dict['total_tie_points'] = 0
+
+        # 2. 保存到 JSON 文件
+        # import json # 已在顶部导入
+        json_path = os.path.join(args.debug_output_path, 'final_results.json')
+        try:
+            with open(json_path, 'w') as f:
+                json.dump(results_dict, f, indent=4)
+            if local_rank == 0:
+                print(f"[Auto Mode] Rank 0: 成功保存结果到 {json_path}")
+        except Exception as e:
+            if local_rank == 0:
+                print(f"[!!] [Auto Mode] Rank 0: 无法保存 results.json 到 {json_path}。错误: {e}")
+    
     # 最终清理
     dist.destroy_process_group()
-
