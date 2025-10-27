@@ -22,10 +22,10 @@ import itertools
 import hashlib
 import re
 import numpy as np
-from tqdm import tqdm
+# from tqdm import tqdm # <--- [修改] 移除总进度条
 import sys
 import time
-import json # <--- [新导入]
+import json 
 
 # --- [用户必须配置] ---
 
@@ -273,118 +273,93 @@ def main():
         
     print(f"总共 {len(all_experiments)} 个实验, {len(experiments_to_run)} 个待运行 (已跳过 {len(completed_ids)} 个 'completed')。")
     
-    # 4. 循环执行所有待运行的实验
+    # 4. (修改) 循环执行所有待运行的实验 (移除 tqdm)
     try:
-        with tqdm(experiments_to_run, desc="总实验进度") as pbar:
-            for params in pbar:
-                exp_id = params['experiment_id']
-                pbar.set_description(f"运行中: {exp_id}")
+        num_to_run = len(experiments_to_run)
+        for i, params in enumerate(experiments_to_run):
+            exp_id = params['experiment_id']
+            
+            # (修改) 打印清晰的实验编号和总数
+            print(f"\n--- [开始实验 {i+1}/{num_to_run}: {exp_id}] ---")
+            print(f"    参数: {params}")
                 
-                print(f"\n--- [开始实验: {exp_id}] ---")
-                print(f"    参数: {params}")
-                
-                # 5. 构建 DDP 调用命令
-                cmd = list(DDP_LAUNCHER) 
-                cmd.append('adjust_test_1023.py')
-                cmd.extend(FIXED_ARGS)
-                
-                # 添加本次实验的动态参数
-                for key, value in params.items():
-                    # 将 Python 的 True/False 转换为空标志 (如果需要)
-                    if isinstance(value, bool) and value:
-                        cmd.append(f'--{key}')
-                    elif not (isinstance(value, bool) and not value):
-                        cmd.append(f'--{key}')
-                        cmd.append(str(value))
-                        
-                # print(f"    命令: {' '.join(cmd)}") # 调试时取消注释
+            # 5. 构建 DDP 调用命令
+            cmd = list(DDP_LAUNCHER) 
+            cmd.append('adjust_test_1023.py')
+            cmd.extend(FIXED_ARGS)
+            
+            # 添加本次实验的动态参数
+            for key, value in params.items():
+                # 将 Python 的 True/False 转换为空标志 (如果需要)
+                if isinstance(value, bool) and value:
+                    cmd.append(f'--{key}')
+                elif not (isinstance(value, bool) and not value):
+                    cmd.append(f'--{key}')
+                    cmd.append(str(value))
+                    
+            # print(f"    命令: {' '.join(cmd)}") # 调试时取消注释
 
-                # 6. 执行与容灾
-                start_time = time.time()
-                status = 'failed' # 默认为 'failed'
-                run_time = 0.0 # 初始化
+            # 6. 执行与容灾
+            start_time = time.time()
+            status = 'failed' # 默认为 'failed'
+            run_time = 0.0 # 初始化
+            
+            # [修改] 定义默认的 nan 结果字典
+            results_keys = [
+                'mean_error', 'median_error', 'rmse', 'max_error', 
+                '<1m', '<3m', '<5m', 'total_tie_points'
+            ]
+            results = {k: np.nan for k in results_keys}
+            results['total_tie_points'] = 0
+            
+            try:
+                # [!! 核心修改 !!]
+                # 移除 capture_output=True, 改为 stderr=subprocess.PIPE
+                # 这将允许子进程的 stdout (进度条) 实时打印到终端
+                result = subprocess.run(cmd, 
+                                        stdout=None,              # (新) 允许 stdout 传递到终端
+                                        stderr=subprocess.PIPE,   # (新) 仅捕获 stderr
+                                        text=True, 
+                                        check=False, 
+                                        encoding='utf-8')
                 
-                # [修改] 定义默认的 nan 结果字典
-                results_keys = [
-                    'mean_error', 'median_error', 'rmse', 'max_error', 
-                    '<1m', '<3m', '<5m', 'total_tie_points'
-                ]
-                results = {k: np.nan for k in results_keys}
-                results['total_tie_points'] = 0
+                end_time = time.time()
+                run_time = end_time - start_time
                 
-                try:
-                    # 执行子进程。
-                    # capture_output=True 捕获 stdout/stderr
-                    # text=True         使用系统默认编码 (通常是 utf-8)
-                    # check=False       我们手动检查返回码, 不让它在失败时抛出异常
-                    # encoding='utf-8'  显式指定编码, 避免 Windows 上的 GBK 问题
-                    result = subprocess.run(cmd, 
-                                            capture_output=True, 
-                                            text=True, 
-                                            check=False, 
-                                            encoding='utf-8')
+                # 检查返回码
+                if result.returncode == 0:
+                    # 成功！
+                    print(f"    [✓] 实验 {exp_id} 成功。 (耗时: {run_time:.2f} 秒)")
+                    status = 'completed'
                     
-                    end_time = time.time()
-                    run_time = end_time - start_time
+                    # [修改] 从 JSON 加载结果, 而不是解析 stdout
+                    results = load_results_from_json(params['root'], exp_id)
+                    print(f"    [i] 结果: mean_error={results.get('mean_error', 'N/A'):.4f} m, <1m={results.get('<1m', 'N/A'):.2f} %")
                     
-                    # 检查返回码
-                    if result.returncode == 0:
-                        # 成功！
-                        print(f"    [✓] 实验 {exp_id} 成功。 (耗时: {run_time:.2f} 秒)")
-                        status = 'completed'
-                        
-                        # [修改] 从 JSON 加载结果, 而不是解析 stdout
-                        results = load_results_from_json(params['root'], exp_id)
-                        print(f"    [i] 结果: mean_error={results.get('mean_error', 'N/A'):.4f} m, <1m={results.get('<1m', 'N/A'):.2f} %")
-                        
-                    else:
-                        # 失败！
-                        print(f"    [X] 实验 {exp_id} 失败 (Return Code: {result.returncode})。 (耗时: {run_time:.2f} 秒)")
-                        status = 'failed'
-                        # 记录 stderr 以便调试
+                else:
+                    # 失败！
+                    print(f"    [X] 实验 {exp_id} 失败 (Return Code: {result.returncode})。 (耗时: {run_time:.2f} 秒)")
+                    status = 'failed'
+                    # 记录 stderr 以便调试 (仍然有效)
+                    if result.stderr:
                         print("--- [STDERR (最后 1000 字符)] ---")
                         print(result.stderr[-1000:]) # 只打印最后1000字符
                         print("--- [END STDERR] ---")
-                        
-                except KeyboardInterrupt:
-                    print(f"\n[!!] 检测到用户中断 (Ctrl+C)。")
-                    print("    [i] 正在终止当前实验并安全退出...")
-                    # 记录中断状态并退出
-                    status = 'interrupted'
-                    end_time = time.time()
-                    run_time = end_time - start_time
                     
-                    # (新) 即使中断, 也尝试记录日志条目
-                    log_entry = params.copy()
-                    log_entry['status'] = status
-                    log_entry['run_time_seconds'] = round(run_time, 2)
-                    log_entry.update(results) # results 此时应为默认的 nan
-                    
-                    ordered_log_entry = {col: log_entry.get(col) for col in [
-                        'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
-                        'status', 'run_time_seconds', 
-                        'mean_error', 'median_error', 'rmse', 'max_error', 
-                        '<1m', '<3m', '<5m', 'total_tie_points'
-                    ]}
-                    
-                    df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
-                    print(f"    [i] 已将实验 {exp_id} 标记为 'interrupted' 并保存日志。")
-                    sys.exit(0) # 正常退出
-                    
-                except Exception as e:
-                    # 捕获更严重的错误 (例如 subprocess 启动失败, OOM Kill, 命令本身错误)
-                    end_time = time.time()
-                    run_time = end_time - start_time
-                    print(f"    [X] 实验 {exp_id} 遭遇灾难性错误: {e}")
-                    status = 'catastrophic_failure'
-
-                # 7. 持久化日志 (无论成功与否)
+            except KeyboardInterrupt:
+                print(f"\n[!!] 检测到用户中断 (Ctrl+C)。")
+                print("    [i] 正在终止当前实验并安全退出...")
+                # 记录中断状态并退出
+                status = 'interrupted'
+                end_time = time.time()
+                run_time = end_time - start_time
+                
+                # (新) 即使中断, 也尝试记录日志条目
                 log_entry = params.copy()
                 log_entry['status'] = status
                 log_entry['run_time_seconds'] = round(run_time, 2)
-                log_entry.update(results) # [修改] 合并从 JSON 加载的 results 字典
+                log_entry.update(results) # results 此时应为默认的 nan
                 
-                # [修改] 确保日志条目的键顺序与表头一致
                 ordered_log_entry = {col: log_entry.get(col) for col in [
                     'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
                     'status', 'run_time_seconds', 
@@ -392,14 +367,39 @@ def main():
                     '<1m', '<3m', '<5m', 'total_tie_points'
                 ]}
                 
-                # (修改) 持久化日志 (调用新函数)
                 df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
+                print(f"    [i] 已将实验 {exp_id} 标记为 'interrupted' 并保存日志。")
+                sys.exit(0) # 正常退出
                 
-                # (修改) 更新内存中的已完成集合
-                if status == 'completed':
-                    completed_ids.add(exp_id)
-                
-                print(f"    [i] 实验 {exp_id} 已记录 (状态: {status}) 到 {MASTER_LOG_CSV}。")
+            except Exception as e:
+                # 捕获更严重的错误 (例如 subprocess 启动失败, OOM Kill, 命令本身错误)
+                end_time = time.time()
+                run_time = end_time - start_time
+                print(f"    [X] 实验 {exp_id} 遭遇灾难性错误: {e}")
+                status = 'catastrophic_failure'
+
+            # 7. 持久化日志 (无论成功与否)
+            log_entry = params.copy()
+            log_entry['status'] = status
+            log_entry['run_time_seconds'] = round(run_time, 2)
+            log_entry.update(results) # [修改] 合并从 JSON 加载的 results 字典
+            
+            # [修改] 确保日志条目的键顺序与表头一致
+            ordered_log_entry = {col: log_entry.get(col) for col in [
+                'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
+                'status', 'run_time_seconds', 
+                'mean_error', 'median_error', 'rmse', 'max_error', 
+                '<1m', '<3m', '<5m', 'total_tie_points'
+            ]}
+            
+            # (修改) 持久化日志 (调用新函数)
+            df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
+            
+            # (修改) 更新内存中的已完成集合
+            if status == 'completed':
+                completed_ids.add(exp_id)
+            
+            print(f"    [i] 实验 {exp_id} 已记录 (状态: {status}) 到 {MASTER_LOG_CSV}。")
     
     except KeyboardInterrupt:
         print("\n[!!] 用户在实验循环间隙中断。脚本将退出。")
@@ -414,3 +414,4 @@ if __name__ == "__main__":
         sys.exit(1)
         
     main()
+

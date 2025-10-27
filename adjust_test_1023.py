@@ -1236,6 +1236,12 @@ if __name__ == '__main__':
     local_rank = setup_ddp()
     world_size = dist.get_world_size() # 总进程数
 
+    seed = 42 
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
     if args.stop_criterion == 'error' and not args.check_error_during_train:
         if local_rank == 0 and not args.auto:
             print("Info: stop_criterion is set to 'error', automatically enabling --check_error_during_train.")
