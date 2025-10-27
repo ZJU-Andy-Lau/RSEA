@@ -73,7 +73,7 @@ def get_param_grid():
     param_space = {
         'root': ['./datasets/wv_test_error_5', './datasets/wv_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
         'max_lr': [0.1, 0.05, 0.01],
-        'window_size': [2000, 1000],
+        'window_size': [1000, 2000],
         'grid_num': [8, 16, 24],
         'seed':[9,13,17,27,32]
     }
