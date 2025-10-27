@@ -114,6 +114,8 @@ class TraditionalBundleAdjuster:
                     mkpts_i = results['keypoints0'].cpu().numpy() 
                     mkpts_j = results['keypoints1'].cpu().numpy()
                     conf = results['confidence'].cpu().numpy()
+
+                    print(len(mkpts_i),conf.mean(),conf.max().conf.min())
                     
                     if len(mkpts_i) == 0:
                         continue
