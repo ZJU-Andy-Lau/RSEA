@@ -487,7 +487,12 @@ class TraditionalBundleAdjuster:
     def run(self, window_size=1000.0, max_iter=20):
         """ 运行完整的BBA流程 """
         grids = self._find_overlapping_grids(window_size=window_size)
-        if not grids:
+        
+        # --- [修改后的代码] ---
+        # 检查 grids 是否为空。
+        # 使用 len(grids) == 0 同时兼容 list 和 ndarray。
+        if len(grids) == 0:
+        # --- [修改结束] ---
             print("未找到重叠格网，无法提取连接点。")
             return
             
@@ -570,3 +575,4 @@ if __name__ == "__main__":
     print("="*50 + "\n")
 
     print("平差流程执行完毕。")
+
