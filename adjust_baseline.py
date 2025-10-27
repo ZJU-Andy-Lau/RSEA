@@ -82,18 +82,20 @@ class TraditionalBundleAdjuster:
                         diag_tl, [diag_br[0], diag_tl[1]],
                         diag_br, [diag_tl[0], diag_br[1]]
                     ])
+                    # corners_samp 已经是 [samp, line] 格式
                     corners_samp = img.xy_to_sampline(corners_geo)
                     
                     if (corners_samp.min() < 0 or 
                         corners_samp[:, 0].max() > img.W or 
                         corners_samp[:, 1].max() > img.H):
                         continue
-                        
-                    img_patch, _ = img.resample_image_by_sampline(corners_samp, (loftr_res, loftr_res), need_local=False)
+                    
+                    # resample_image_by_sampline 期望 [line, samp] 格式的角点
+                    img_patch, _ = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
                     overlapping_imgs.append({
                         'img_id': img.id,
                         'patch_gray': torch.from_numpy(cv2.cvtColor(img_patch, cv2.COLOR_BGR2GRAY)).float().to(DEVICE)[None, None] / 255.0,
-                        'corners_samp': corners_samp
+                        'corners_samp': corners_samp # 存储 [samp, line] 格式的角点
                     })
                 except Exception:
                     continue
@@ -108,8 +110,9 @@ class TraditionalBundleAdjuster:
                     with torch.no_grad():
                         results = self.loftr(batch)
                     
-                    mkpts_i = results['keypoints0'].cpu().numpy() # (N, 2) [x, y]
-                    mkpts_j = results['keypoints1'].cpu().numpy() # (N, 2) [x, y]
+                    # mkpts_i 是 (N, 2) [x, y] -> [samp, line]
+                    mkpts_i = results['keypoints0'].cpu().numpy() 
+                    mkpts_j = results['keypoints1'].cpu().numpy()
                     conf = results['confidence'].cpu().numpy()
                     
                     if len(mkpts_i) == 0:
@@ -122,33 +125,50 @@ class TraditionalBundleAdjuster:
                     if len(mkpts_i) < 10:
                         continue
 
-                    # 坐标转换: LoFTR patch (x,y) -> 全局影像 (line, samp)
-                    # 1. Patch (x,y) -> Patch (line, samp)
-                    mkpts_i_ls = mkpts_i[:, [1, 0]]
-                    mkpts_j_ls = mkpts_j[:, [1, 0]]
+                    # --- [修改开始] ---
                     
-                    # 2. Resample (line, samp) -> 原始影像 (line, samp)
-                    # 我们需要反向 resample_from_quad，使用透视变换
-                    M_i = cv2.getPerspectiveTransform(
-                        np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32), 
-                        img_i_data['corners_samp'][:, [1, 0]].astype(np.float32) # [line, samp]
-                    )
-                    M_j = cv2.getPerspectiveTransform(
-                        np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32), 
-                        img_j_data['corners_samp'][:, [1, 0]].astype(np.float32)
-                    )
+                    # 1. (已删除) 不再需要翻转 LoFTR 的输出
+                    # mkpts_i_ls = mkpts_i[:, [1, 0]] <-- 错误, 已删除
+                    # mkpts_j_ls = mkpts_j[:, [1, 0]] <-- 错误, 已删除
                     
-                    full_pts_i_ls = cv2.perspectiveTransform(mkpts_i_ls[None, :, :], M_i).squeeze(0)
-                    full_pts_j_ls = cv2.perspectiveTransform(mkpts_j_ls[None, :, :], M_j).squeeze(0)
+                    # 2. 计算变换矩阵 M
+                    # cv2.getPerspectiveTransform 期望 src 和 dst 都是 (x, y) -> [samp, line]
+                    
+                    # src 角点 (LoFTR patch) [samp, line]
+                    src_cv2_corners = np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32)
+                    
+                    # dst 角点 (原始影像) [samp, line]
+                    dst_i_cv2_corners = img_i_data['corners_samp'].astype(np.float32)
+                    dst_j_cv2_corners = img_j_data['corners_samp'].astype(np.float32)
 
-                    # 存储匹配
-                    for k in range(len(full_pts_i_ls)):
-                        pt_i = full_pts_i_ls[k] # (line, samp)
-                        pt_j = full_pts_j_ls[k] # (line, samp)
+                    M_i = cv2.getPerspectiveTransform(src_cv2_corners, dst_i_cv2_corners)
+                    M_j = cv2.getPerspectiveTransform(src_cv2_corners, dst_j_cv2_corners)
+                    
+                    # 3. 应用变换
+                    # cv2.perspectiveTransform 期望输入 (N, 1, 2) 且为 (x, y) -> [samp, line]
+                    # mkpts_i 已经是 (N, 2) [samp, line]
+                    
+                    # 添加一个维度 (N, 2) -> (N, 1, 2)
+                    mkpts_i_cv2 = mkpts_i[:, None, :].astype(np.float32)
+                    mkpts_j_cv2 = mkpts_j[:, None, :].astype(np.float32)
+
+                    # full_pts_i_sl 的格式是 (N, 2) [samp, line]
+                    full_pts_i_sl = cv2.perspectiveTransform(mkpts_i_cv2, M_i).squeeze(1)
+                    full_pts_j_sl = cv2.perspectiveTransform(mkpts_j_cv2, M_j).squeeze(1)
+
+                    # 4. 存储匹配
+                    # 后续代码期望 (line, samp) 格式
+                    for k in range(len(full_pts_i_sl)):
+                        pt_i_sl = full_pts_i_sl[k] # [samp, line]
+                        pt_j_sl = full_pts_j_sl[k] # [samp, line]
+                        
+                        # 存储为 (line, samp)
                         self.matches.append(
-                            (img_i_data['img_id'], (pt_i[0], pt_i[1]), 
-                             img_j_data['img_id'], (pt_j[0], pt_j[1]))
+                            (img_i_data['img_id'], (pt_i_sl[1], pt_i_sl[0]), 
+                             img_j_data['img_id'], (pt_j_sl[1], pt_j_sl[0]))
                         )
+                    # --- [修改结束] ---
+                        
                 except Exception as e:
                     print(f"LoFTR匹配失败: {e}")
                     continue
@@ -393,6 +413,10 @@ class TraditionalBundleAdjuster:
                 
                 total_error += torch.dot(l_k, l_k)
             
+            if len(self.observations) == 0:
+                print("错误：观测列表为空，无法计算误差。")
+                break
+            
             print(f"Iter {iter+1}: 总误差 (RMSE): {torch.sqrt(total_error / len(self.observations)):.4f} 像素")
 
             # --- C. 解算舒尔补系统 ---
@@ -488,11 +512,9 @@ class TraditionalBundleAdjuster:
         """ 运行完整的BBA流程 """
         grids = self._find_overlapping_grids(window_size=window_size)
         
-        # --- [修改后的代码] ---
         # 检查 grids 是否为空。
         # 使用 len(grids) == 0 同时兼容 list 和 ndarray。
         if len(grids) == 0:
-        # --- [修改结束] ---
             print("未找到重叠格网，无法提取连接点。")
             return
             
