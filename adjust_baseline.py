@@ -81,20 +81,20 @@ class TraditionalBundleAdjuster:
                     diag_tl, [diag_br[0], diag_tl[1]],
                     diag_br, [diag_tl[0], diag_br[1]]
                 ])
-                # corners_samp 已经是 [samp, line] 格式
-                corners_samp = img.xy_to_sampline(corners_geo)
+                # corners_sampline 已经是 [samp, line] 格式
+                corners_sampline = img.xy_to_sampline(corners_geo)
                 
-                if (corners_samp.min() < 0 or 
-                    corners_samp[:, 0].max() > img.W or 
-                    corners_samp[:, 1].max() > img.H):
+                if (corners_sampline.min() < 0 or 
+                    corners_sampline[:, 0].max() > img.W or 
+                    corners_sampline[:, 1].max() > img.H):
                     continue
                 
                 # resample_image_by_sampline 期望 [line, samp] 格式的角点
-                img_patch = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
+                img_patch = img.resample_image_by_sampline(corners_sampline, (loftr_res, loftr_res), need_local=False)
                 overlapping_imgs.append({
                     'img_id': img.id,
                     'patch_gray': torch.from_numpy(cv2.cvtColor(img_patch, cv2.COLOR_BGR2GRAY)).float().to(DEVICE)[None, None] / 255.0,
-                    'corners_samp': corners_samp # 存储 [samp, line] 格式的角点
+                    'corners_sampline': corners_sampline # 存储 [samp, line] 格式的角点
                 })
             
             # 在所有重叠对上运行LoFTR
@@ -140,8 +140,8 @@ class TraditionalBundleAdjuster:
                 src_cv2_corners = np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32)
                 
                 # dst 角点 (原始影像) [samp, line]
-                dst_i_cv2_corners = img_i_data['corners_samp'].astype(np.float32)
-                dst_j_cv2_corners = img_j_data['corners_samp'].astype(np.float32)
+                dst_i_cv2_corners = img_i_data['corners_sampline'].astype(np.float32)
+                dst_j_cv2_corners = img_j_data['corners_sampline'].astype(np.float32)
 
                 M_i = cv2.getPerspectiveTransform(src_cv2_corners, dst_i_cv2_corners)
                 M_j = cv2.getPerspectiveTransform(src_cv2_corners, dst_j_cv2_corners)
