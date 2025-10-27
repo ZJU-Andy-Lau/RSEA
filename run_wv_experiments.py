@@ -39,7 +39,7 @@ DDP_LAUNCHER = ['torchrun', '--nproc_per_node=8']
 FIXED_ARGS = [
     # '--root', '/path/to/your/data_root',  # <--- !! 已移除, 将在网格搜索中定义
     '--auto', # <--- !! 新增: 强制开启 auto 模式
-    '--dino_path', 'weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth', # <--- 检查路径
+    '--dino_path', 'weights', # <--- 检查路径
     '--encoder_path', 'weights/encoder_dino_1024_d100_b2_h20', # <--- 检查路径
     '--select_imgs', '0,1,2',
     '--patience', '1000',
