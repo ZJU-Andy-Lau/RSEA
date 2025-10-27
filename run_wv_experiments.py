@@ -49,6 +49,7 @@ FIXED_ARGS = [
     '--vis_resolution', '0.5',
     '--stop_criterion', 'error', # 或 'error'
     '--min_loss_threshold', '1e-4',
+    '--max_grid_num','32',
     # '--check_error_during_train', # 如果使用, 请取消注释
     # ... 在这里添加您其他所有固定的参数 ...
     # 例如: '--grid_offset_x', '0',
