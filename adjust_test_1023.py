@@ -962,6 +962,181 @@ def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diag
     except Exception as e:
         print(f"Rank 0: FAILED to generate grid visualization. Error: {e}")
 
+def select_grids_by_confidence(args, 
+                             all_candidate_diags: List[np.ndarray], 
+                             num_to_select: int, 
+                             images: List[RSImage], 
+                             current_window_size: float, 
+                             local_rank: int) -> Tuple[List[np.ndarray], List[Dict]]:
+    """
+    (新) 从候选格网中，通过置信度评估和空间NMS，筛选出指定数量的格网。
+    (重构自 L1099-L1231)
+    """
+    
+    if not args.auto:
+        print(f"Rank {local_rank}: Strategy = Confidence-based selection...")
+        print(f"Rank {local_rank}: Loading encoder for grid quality assessment...")
+
+    encoder_assess = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
+    encoder_assess.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
+    encoder_assess.cuda(local_rank) # local_rank is 0
+    encoder_assess.eval()
+    transform_assess = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
+    ])
+    
+    all_valid_grids_info = [] 
+    
+    if not args.auto:
+        print(f"Rank {local_rank}: Assessing quality for {len(all_candidate_diags)} candidate grids...")
+    resample_size = 1024
+    
+    grid_iter = all_candidate_diags
+    if args.auto:
+        grid_iter = tqdm(all_candidate_diags, desc="Assessing Grids", leave=False, position=1)
+
+    with torch.no_grad():
+        for diag in grid_iter:
+            total_conf_score = 0.0
+            overlapping_img_count = 0
+            
+            for img in images:
+                try:
+                    corners_geo = np.array([
+                        diag[0], [diag[1,0], diag[0,1]],
+                        diag[1], [diag[0,0], diag[1,1]]
+                    ])
+                    corners_sampline = img.xy_to_sampline(corners_geo)
+
+                    if (corners_sampline.min() < 0 or 
+                        corners_sampline[:, 0].max() > img.W or 
+                        corners_sampline[:, 1].max() > img.H):
+                        continue 
+
+                    img_patch, _ = img.resample_image_by_sampline(corners_sampline, 
+                                                                        (resample_size, resample_size), 
+                                                                        need_local=True) 
+
+                    img_tensor = transform_assess(img_patch)[None].cuda(local_rank)
+                    _, conf = encoder_assess(img_tensor)
+
+                    total_conf_score += conf.sum().item()
+                    overlapping_img_count += 1
+                    
+                except Exception as e:
+                    continue
+            
+            if overlapping_img_count >= 2:
+                average_conf = total_conf_score / overlapping_img_count
+                center_xy = diag.mean(axis=0)
+                all_valid_grids_info.append({
+                    'score': average_conf,
+                    'center': center_xy,
+                    'diag': diag
+                })
+    
+    selected_tasks = []
+
+    if num_to_select > 0 and len(all_valid_grids_info) > num_to_select:
+        if not args.auto:
+            print(f"Rank {local_rank}: Found {len(all_valid_grids_info)} valid grids. Selecting {num_to_select} using spatial selection...")
+        
+        all_valid_grids_sorted = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
+        candidate_grids_for_nms = all_valid_grids_sorted.copy()
+        
+        selected_grids_info_nms = [] 
+        suppression_radius = current_window_size * 1.5 
+        
+        if not args.auto:
+            print(f"Rank {local_rank}: Using suppression radius {suppression_radius:.2f} m...")
+
+        while len(candidate_grids_for_nms) > 0 and len(selected_grids_info_nms) < num_to_select:
+            best_grid = candidate_grids_for_nms.pop(0)
+            selected_grids_info_nms.append(best_grid)
+            
+            remaining_grids = []
+            for grid_info in candidate_grids_for_nms:
+                distance = np.linalg.norm(best_grid['center'] - grid_info['center'])
+                if distance > suppression_radius:
+                    remaining_grids.append(grid_info)
+            candidate_grids_for_nms = remaining_grids 
+        
+        num_selected_by_nms = len(selected_grids_info_nms)
+        
+        if num_selected_by_nms < num_to_select:
+            if not args.auto:
+                print(f"Rank 0: NMS 选中了 {num_selected_by_nms} 个格网 (目标: {num_to_select})。")
+                print(f"Rank 0: 正在从高置信度列表中补齐剩余格网...")
+            
+            num_to_backfill = num_to_select - num_selected_by_nms
+            selected_diags_set = {info['diag'].tostring() for info in selected_grids_info_nms}
+            backfill_grids_info = []
+            
+            for grid_info in all_valid_grids_sorted:
+                if grid_info['diag'].tostring() not in selected_diags_set:
+                    backfill_grids_info.append(grid_info)
+                    if len(backfill_grids_info) == num_to_backfill:
+                        break
+            
+            if not args.auto:
+                print(f"Rank 0: 已补齐 {len(backfill_grids_info)} 个格网。")
+            final_selected_grids_info = selected_grids_info_nms + backfill_grids_info
+        else:
+            final_selected_grids_info = selected_grids_info_nms
+
+        selected_tasks = [info['diag'] for info in final_selected_grids_info]
+        
+    else:
+        if not args.auto:
+             print(f"Rank {local_rank}: num_to_select ({num_to_select}) 为 0 或 >= 有效格网总数。使用所有 {len(all_valid_grids_info)} 个有效格网。")
+        selected_tasks = [info['diag'] for info in all_valid_grids_info]
+
+    del encoder_assess, transform_assess
+    torch.cuda.empty_cache()
+    
+    return selected_tasks, all_valid_grids_info
+
+def select_grids_uniformly(args, 
+                           all_candidate_diags: List[np.ndarray], 
+                           num_to_select: int,
+                           local_rank: int) -> Tuple[List[np.ndarray], List[Dict]]:
+
+    if not args.auto:
+        print(f"Rank {local_rank}: Strategy = Uniform selection (fast, reproducible).")
+
+    num_candidates = len(all_candidate_diags)
+    all_valid_grids_info_for_vis = []
+    selected_tasks = []
+
+    if num_to_select > 0 and num_candidates > num_to_select:
+        if not args.auto:
+            print(f"Rank {local_rank}: Found {num_candidates} grids. Sorting and selecting {num_to_select} uniformly...")
+        
+        all_common_diags_list = list(all_candidate_diags)
+        all_common_diags_list.sort(key=lambda diag: (diag.mean(axis=0)[0], diag.mean(axis=0)[1]))
+        
+        indices = np.linspace(0, num_candidates - 1, num_to_select, dtype=int)
+        selected_tasks = [all_common_diags_list[i] for i in indices]
+        
+        selected_grids_map = {tuple(diag.flatten()) for diag in selected_tasks}
+        for diag in all_common_diags_list: 
+            is_selected = tuple(diag.flatten()) in selected_grids_map
+            all_valid_grids_info_for_vis.append({
+                'diag': diag,
+                'center': diag.mean(axis=0),
+                'score': 1 if is_selected else 0 
+            })
+
+    else:
+        if not args.auto:
+            print(f"Rank {local_rank}: Using all {num_candidates} grids (num_to_select ({num_to_select}) is 0 or >= num_candidates).")
+        selected_tasks = list(all_candidate_diags) # 确保返回列表
+        all_valid_grids_info_for_vis = [{'diag': diag, 'center': diag.mean(axis=0), 'score': 1} for diag in selected_tasks]
+
+    return selected_tasks, all_valid_grids_info_for_vis
+
+
 def subdivide_grids(parent_diags: List[np.ndarray]) -> List[np.ndarray]:
     """
     Takes a list of geographic grid diagonals (diags) and returns a new list
@@ -1023,6 +1198,9 @@ if __name__ == '__main__':
     parser.add_argument('--grid_offset_y',type=float,default=0)
 
     parser.add_argument('--grid_num',type=int,default=1)
+
+    parser.add_argument('--max_grid_num', type=int, default=1000, 
+                        help='(新) Lvl > 0 时, 每层允许的最大格网数。如果0或负数，则不限制。')
 
     parser.add_argument('--patience', type=int, default=100, 
                         help='Patience for early stopping (e.g., 100 iterations)')
@@ -1128,7 +1306,7 @@ if __name__ == '__main__':
                 if not args.auto:
                     print("Rank 0: Level 0. Finding, assessing, and selecting initial grids...")
                 
-                # 1. 查找初始格网 (这是两种策略的共同步骤)
+                # 1. 查找初始格网 (原 L1091)
                 all_corners = np.stack([img.corner_xys for img in images], axis=0)
                 all_common_diags = find_grids(all_corners, current_window_size, 
                                             offset_x=args.grid_offset_x, 
@@ -1137,204 +1315,67 @@ if __name__ == '__main__':
                     print(f"Rank 0: Found {len(all_common_diags)} total common grids.")
 
                 
-                # 2. 根据策略进行格网评估和筛选
+                # 2. 根据策略进行格网评估和筛选 (调用新函数)
                 if args.select_grid_by_conf:
-                    # --- 策略 1: 基于置信度的质量优先选择 (慢) ---
-                    if not args.auto:
-                        print("Rank 0: Strategy = Confidence-based selection (slow, high-quality).")
-                        print("Rank 0: Loading encoder for grid quality assessment...")
-                    
-                    encoder_assess = EncoderDino(os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),upsample_times=0)
-                    encoder_assess.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
-                    encoder_assess.cuda(local_rank) # local_rank is 0
-                    encoder_assess.eval()
-
-                    transform_assess = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)) 
-                    ])
-                    
-                    all_valid_grids_info = [] # 存储所有有效格网的信息
-                    
-                    # [修改] auto 模式下不打印
-                    if not args.auto:
-                        print("Rank 0: Assessing quality for all candidate grids (using AVG confidence)...")
-                    resample_size = 1024 # 与SharedGrid中使用的尺寸保持一致
-                    
-                    # [修改] auto 模式下使用 tqdm
-                    grid_iter = all_common_diags
-                    if args.auto:
-                        grid_iter = tqdm(all_common_diags, desc="Assessing Grids", leave=False, position=1)
-
-                    with torch.no_grad():
-                        for diag in grid_iter:
-                            total_conf_score = 0.0
-                            overlapping_img_count = 0
-                            
-                            for img in images:
-                                try:
-                                    corners_geo = np.array([
-                                        diag[0], [diag[1,0], diag[0,1]],
-                                        diag[1], [diag[0,0], diag[1,1]]
-                                    ])
-                                    corners_sampline = img.xy_to_sampline(corners_geo)
-
-                                    if (corners_sampline.min() < 0 or 
-                                        corners_sampline[:, 0].max() > img.W or 
-                                        corners_sampline[:, 1].max() > img.H):
-                                        continue 
-
-                                    img_patch, _ = img.resample_image_by_sampline(corners_sampline, 
-                                                                                        (resample_size, resample_size), 
-                                                                                        need_local=True) 
-
-                                    img_tensor = transform_assess(img_patch)[None].cuda(local_rank)
-                                    _, conf = encoder_assess(img_tensor)
-
-                                    total_conf_score += conf.sum().item()
-                                    overlapping_img_count += 1
-                                    
-                                except Exception as e:
-                                    continue
-                            
-                            if overlapping_img_count >= 2:
-                                average_conf = total_conf_score / overlapping_img_count
-                                center_xy = diag.mean(axis=0)
-                                all_valid_grids_info.append({
-                                    'score': average_conf,
-                                    'center': center_xy,
-                                    'diag': diag
-                                })
-                    
-                    # 3. 执行空间抑制选择算法 (NMS + 置信度补齐)
-                    if args.grid_num > 0 and len(all_valid_grids_info) > args.grid_num:
-                        if not args.auto:
-                            print(f"Rank 0: Found {len(all_valid_grids_info)} valid grids. Selecting {args.grid_num} using confidence-based spatial selection...")
-                        
-                        all_valid_grids_sorted = sorted(all_valid_grids_info, key=lambda x: x['score'], reverse=True)
-                        candidate_grids_for_nms = all_valid_grids_sorted.copy()
-                        
-                        selected_grids_info_nms = [] 
-                        suppression_radius = current_window_size * 1.5 
-                        
-                        if not args.auto:
-                            print(f"Rank 0: Using suppression radius {suppression_radius:.2f} m...")
-
-                        while len(candidate_grids_for_nms) > 0 and len(selected_grids_info_nms) < args.grid_num:
-                            best_grid = candidate_grids_for_nms.pop(0)
-                            selected_grids_info_nms.append(best_grid)
-                            
-                            remaining_grids = []
-                            for grid_info in candidate_grids_for_nms:
-                                distance = np.linalg.norm(best_grid['center'] - grid_info['center'])
-                                if distance > suppression_radius:
-                                    remaining_grids.append(grid_info)
-                            candidate_grids_for_nms = remaining_grids 
-                        
-                        num_selected_by_nms = len(selected_grids_info_nms)
-                        
-                        if num_selected_by_nms < args.grid_num:
-                            if not args.auto:
-                                print(f"Rank 0: NMS 选中了 {num_selected_by_nms} 个格网 (目标: {args.grid_num})。")
-                                print(f"Rank 0: 正在从高置信度列表中补齐剩余格网...")
-                            
-                            num_to_backfill = args.grid_num - num_selected_by_nms
-                            selected_diags_set = {info['diag'].tostring() for info in selected_grids_info_nms}
-                            backfill_grids_info = []
-                            
-                            for grid_info in all_valid_grids_sorted:
-                                if grid_info['diag'].tostring() not in selected_diags_set:
-                                    backfill_grids_info.append(grid_info)
-                                    if len(backfill_grids_info) == num_to_backfill:
-                                        break
-                            
-                            if not args.auto:
-                                print(f"Rank 0: 已补齐 {len(backfill_grids_info)} 个格网。")
-                            final_selected_grids_info = selected_grids_info_nms + backfill_grids_info
-                            
-                        else:
-                            final_selected_grids_info = selected_grids_info_nms
-
-                        all_tasks = [info['diag'] for info in final_selected_grids_info]
-                        
-                        if not args.auto:
-                            print(f"Rank 0: 最终选中 {len(all_tasks)} 个格网。")
-                    
-                    else:
-                        # (grid_num 为 0 或候选总数本就 <= grid_num，则使用所有)
-                        if not args.auto:
-                            print(f"Rank 0: grid_num ({args.grid_num}) 为 0 或 >= 有效格网总数。使用所有 {len(all_valid_grids_info)} 个有效格网。")
-                        all_tasks = [info['diag'] for info in all_valid_grids_info]
-
+                    # --- 策略 1: 基于置信度 ---
+                    all_tasks, all_valid_grids_info = select_grids_by_confidence(
+                        args, all_common_diags, args.grid_num, images, current_window_size, local_rank
+                    )
                     # 4. 调用可视化
                     visualize_grid_selection(args, all_valid_grids_info, all_tasks, images[0], level)
                     
-                    # 5. 清理Encoder
-                    del encoder_assess, transform_assess
-                    torch.cuda.empty_cache()
-                
                 else:
-                    # --- 策略 2: 均匀抽样 (快) ---
-                    if not args.auto:
-                        print("Rank 0: Strategy = Uniform selection (fast, reproducible).")
-                    
-                    num_candidates = len(all_common_diags)
-                    all_valid_grids_info_for_vis = [] # 仅用于可视化的辅助列表
-                    
-                    # 检查是否需要抽样
-                    if args.grid_num > 0 and num_candidates > args.grid_num:
-                        if not args.auto:
-                            print(f"Rank 0: Found {num_candidates} grids. Sorting for reproducible uniform selection...")
-                        
-                        # 1. 排序 (关键步骤，确保可复现)
-                        all_common_diags_list = list(all_common_diags)
-                        all_common_diags_list.sort(key=lambda diag: (diag.mean(axis=0)[0], diag.mean(axis=0)[1]))
-                        
-                        # 2. 均匀抽样 (使用 np.linspace 选取固定间隔的索引)
-                        if not args.auto:
-                            print(f"Rank 0: Selecting {args.grid_num} grids uniformly...")
-                        indices = np.linspace(0, num_candidates - 1, args.grid_num, dtype=int)
-                        all_tasks = [all_common_diags_list[i] for i in indices]
-                        
-                        # 3. 准备可视化数据
-                        # 创建一个set以便快速查找
-                        selected_grids_map = {tuple(diag.flatten()) for diag in all_tasks}
-                        for diag in all_common_diags_list: 
-                            is_selected = tuple(diag.flatten()) in selected_grids_map
-                            all_valid_grids_info_for_vis.append({
-                                'diag': diag,
-                                'center': diag.mean(axis=0),
-                                'score': 1 if is_selected else 0 # 假的 "score" 仅用于可视化
-                            })
-
-                    else:
-                        # (使用所有格网)
-                        if not args.auto:
-                            print(f"Rank 0: Using all {num_candidates} grids (grid_num is 0 or >= num_candidates).")
-                        all_tasks = all_common_diags
-                        all_valid_grids_info_for_vis = [{'diag': diag, 'center': diag.mean(axis=0), 'score': 1} for diag in all_tasks]
-
+                    # --- 策略 2: 均匀抽样 ---
+                    all_tasks, all_valid_grids_info_for_vis = select_grids_uniformly(
+                        args, all_common_diags, args.grid_num, local_rank
+                    )
                     # 4. 调用可视化
                     visualize_grid_selection(args, all_valid_grids_info_for_vis, all_tasks, images[0], level)
-                    # (此分支无需清理 encoder)
-                
 
                 # 6. 保存结果给下一层级
                 selected_diags_for_level = all_tasks
                 
             else:
-                # [层级 > 0: 执行格网四叉树划分]
+                # [层级 > 0: 执行格网四叉树划分 和 *二次筛选*]
                 if not args.auto:
                     print(f"Rank 0: Level {level+1}. Subdividing {len(selected_diags_for_level)} grids from previous level.")
                 
-                # 1. 调用新函数进行划分
-                all_tasks = subdivide_grids(selected_diags_for_level)
+                # 1. 调用函数进行划分
+                subdivided_tasks = subdivide_grids(selected_diags_for_level)
+                num_subdivided = len(subdivided_tasks)
                 
-                # 2. 保存结果给下一层级
+                # 2. (新) 检查是否需要根据 max_grid_num 进行裁剪
+                if args.max_grid_num > 0 and num_subdivided > args.max_grid_num:
+                    if not args.auto:
+                        print(f"Rank 0: Subdivided into {num_subdivided} grids. Capping at {args.max_grid_num} using selection strategy...")
+                    
+                    # 3. (新) 重用与Level 0 相同的筛选逻辑
+                    if args.select_grid_by_conf:
+                        # --- 策略 1: 基于置信度 ---
+                        # 注意：这里会重新加载模型并评估
+                        all_tasks, all_valid_grids_info = select_grids_by_confidence(
+                            args, subdivided_tasks, args.max_grid_num, images, current_window_size, local_rank
+                        )
+                        # (可选) 调用可视化
+                        visualize_grid_selection(args, all_valid_grids_info, all_tasks, images[0], level)
+
+                    else:
+                        # --- 策略 2: 均匀抽样 ---
+                        all_tasks, all_valid_grids_info_for_vis = select_grids_uniformly(
+                            args, subdivided_tasks, args.max_grid_num, local_rank
+                        )
+                        # (可选) 调用可视化
+                        visualize_grid_selection(args, all_valid_grids_info_for_vis, all_tasks, images[0], level)
+
+                else:
+                    # 不需要裁剪 (数量未超限，或 max_grid_num <= 0)
+                    all_tasks = subdivided_tasks
+                    if not args.auto:
+                        print(f"Rank 0: Created {len(all_tasks)} new sub-grids (no cap applied).")
+
+                
+                # 4. 保存结果给下一层级 
                 selected_diags_for_level = all_tasks
-                
-                if not args.auto:
-                    print(f"Rank 0: Created {len(all_tasks)} new sub-grids for processing.")
             
             # 7. [通用] 为DDP负载均衡打乱任务列表
             random.shuffle(all_tasks)
