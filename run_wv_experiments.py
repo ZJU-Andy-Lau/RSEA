@@ -75,7 +75,7 @@ def get_param_grid():
         'max_lr': [0.1, 0.05, 0.01],
         'window_size': [1000, 2000],
         'grid_num': [8, 16, 24],
-        'seed':[9,13,17,27,32]
+        'random_seed':[9,13,17,27,32]
     }
     
     # 2. 创建所有笛卡尔积组合
@@ -354,7 +354,7 @@ def main():
                     # 记录 stderr 以便调试 (仍然有效)
                     if result.stderr:
                         print("--- [STDERR (最后 1000 字符)] ---")
-                        print(result.stderr[-1000:]) # 只打印最后1000字符
+                        print(result.stderr) # 只打印最后1000字符
                         print("--- [END STDERR] ---")
                     
             except KeyboardInterrupt:
