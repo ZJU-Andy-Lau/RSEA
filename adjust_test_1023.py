@@ -30,6 +30,8 @@ from pyproj import CRS
 from scipy.interpolate import RegularGridInterpolator
 import json
 
+import sys
+
 
 warnings.filterwarnings("ignore")
 
@@ -599,7 +601,8 @@ def fit_affine_bundle(args,
                             unit="iter", 
                             position=0, 
                             leave=True,
-                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]' 
+                            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]' ,
+                            file=sys.stdout
                            )
         
         optimizer_r.zero_grad()
@@ -991,7 +994,7 @@ def select_grids_by_confidence(args,
     grid_iter = all_candidate_diags
     if args.auto:
         # (修改) 明确 position=1, leave=False
-        grid_iter = tqdm(all_candidate_diags, desc=f"Lvl Assess Grids", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}')
+        grid_iter = tqdm(all_candidate_diags, desc=f"Lvl Assess Grids", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}',file=sys.stdout)
 
     with torch.no_grad():
         for diag in grid_iter:
@@ -1421,7 +1424,7 @@ if __name__ == '__main__':
         # 按照你的需求, 在 auto 模式下, 格网创建前增加层级提示
         if local_rank == 0 and args.auto:
             print(f"\n--- [Auto Mode] Lvl {level+1}/{args.num_levels}: Creating {len(my_tasks)} grids (Rank 0)... ---") 
-            grid_creation_iter = tqdm(my_tasks, desc=f"Lvl {level+1} Grid Creation", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}')
+            grid_creation_iter = tqdm(my_tasks, desc=f"Lvl {level+1} Grid Creation", leave=False, position=1, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}',file=sys.stdout)
         # --- [修改结束] ---
 
         # 循环格网 (diags)
