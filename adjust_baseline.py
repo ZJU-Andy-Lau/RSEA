@@ -35,7 +35,7 @@ class TraditionalBundleAdjuster:
     def __init__(self, images: List[RSImage], loftr_ckpt_path: str):
         self.images = images
         self.num_images = len(images)
-        self.loftr = LoFTR(pretrained=None).to(DEVICE).eval()
+        self.loftr = LoFTR(pretrained=None).to(DEVICE,dtype=torch.float).eval()
         try:
             self.loftr.load_state_dict(torch.load(loftr_ckpt_path)['state_dict'])
             print(f"成功加载 LoFTR 模型: {loftr_ckpt_path}")

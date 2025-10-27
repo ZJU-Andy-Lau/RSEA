@@ -1209,18 +1209,21 @@ if __name__ == '__main__':
                         print(f"Rank 0: Found {num_candidates} grids. Sorting for reproducible uniform selection...")
                         
                         # 1. 排序 (关键步骤，确保可复现)
-                        # 我们通过格网中心点的 (x, y) 坐标进行排序
-                        all_common_diags.sort(key=lambda diag: (diag.mean(axis=0)[0], diag.mean(axis=0)[1]))
+                        # [修改] 将 np.ndarray 转换为 list，然后才能使用 key 参数排序
+                        all_common_diags_list = list(all_common_diags)
+                        all_common_diags_list.sort(key=lambda diag: (diag.mean(axis=0)[0], diag.mean(axis=0)[1]))
                         
                         # 2. 均匀抽样 (使用 np.linspace 选取固定间隔的索引)
                         print(f"Rank 0: Selecting {args.grid_num} grids uniformly...")
                         indices = np.linspace(0, num_candidates - 1, args.grid_num, dtype=int)
-                        all_tasks = [all_common_diags[i] for i in indices]
+                        # [修改] 从 all_common_diags_list 中选取
+                        all_tasks = [all_common_diags_list[i] for i in indices]
                         
                         # 3. 准备可视化数据
                         # 创建一个set以便快速查找
                         selected_grids_map = {tuple(diag.flatten()) for diag in all_tasks}
-                        for diag in all_common_diags:
+                        # [修改] 遍历 all_common_diags_list (排序后的完整列表)
+                        for diag in all_common_diags_list: 
                             is_selected = tuple(diag.flatten()) in selected_grids_map
                             all_valid_grids_info_for_vis.append({
                                 'diag': diag,
@@ -1232,6 +1235,7 @@ if __name__ == '__main__':
                         # (使用所有格网)
                         print(f"Rank 0: Using all {num_candidates} grids (grid_num is 0 or >= num_candidates).")
                         all_tasks = all_common_diags
+                        # [修改] 遍历 all_common_diags (np.ndarray 也可以) 来填充可视化列表
                         all_valid_grids_info_for_vis = [{'diag': diag, 'center': diag.mean(axis=0), 'score': 1} for diag in all_tasks]
 
                     # 4. 调用可视化
@@ -1477,3 +1481,4 @@ if __name__ == '__main__':
     
     # 最终清理
     dist.destroy_process_group()
+
