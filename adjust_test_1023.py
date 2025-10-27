@@ -112,9 +112,6 @@ def orthorectify_patch_mercator(rs_image: RSImage,
             
             xy_points = np.stack([block_xx.ravel(), block_yy.ravel()], axis=-1)
             
-            # 5. (关键) 使用 rs_image.xy_to_sampline 进行投影
-            # 此函数使用 *已调整* 的 self.rpc，并自动迭代DEM [cite: rs_image_1022.py, line 85]
-            # 它返回 (samp, line)
             try:
                 sampline_pred = rs_image.xy_to_sampline(xy_points) 
             except Exception as e:
@@ -495,7 +492,6 @@ def find_overlapping_pairs(args, images: List[RSImage]) -> List[Tuple[int, int]]
             if not is_disjoint:
                 pairs.append((i, j))
     
-    # [修改] auto 模式下减少打印
     if not args.auto:
         print(f"Found {len(pairs)} overlapping pairs for validation.")
     return pairs
@@ -867,7 +863,6 @@ def check_all_pairs_error(images: List[RSImage],
     """在所有重叠对上计算并汇总误差"""
     all_distances = []
     
-    # [修改] auto 模式下 (verbose=False) 不打印
     if verbose and dist.get_rank() == 0:
         print("--- Global Error Report ---")
         
@@ -875,12 +870,10 @@ def check_all_pairs_error(images: List[RSImage],
         distances = check_pair_error(images[i], images[j])
         if len(distances) > 0:
             all_distances.append(distances)
-            # [修改] auto 模式下 (verbose=False) 不打印
             if verbose and dist.get_rank() == 0:
                 print(f"Pair ({i}, {j}) | Points: {len(distances)} | Mean Error: {distances.mean():.4f} m | Median Error: {np.median(distances):.4f} m")
 
     if not all_distances:
-        # [修改] auto 模式下 (verbose=False) 不打印
         if verbose and dist.get_rank() == 0:
             print("No valid tie points found for any overlapping pair. Cannot generate report.")
         return np.array([0.0])
@@ -943,7 +936,6 @@ def visualize_grid_selection(args, all_candidate_info: List[Dict], selected_diag
             cv2.polylines(canvas, [np.array(canvas_corners, dtype=np.int32)], isClosed=True, color=(200, 200, 200), thickness=1)
 
         # 5. 绘制所有选中的格网 (绿色)
-        #    [修改] 优化：创建一个set以便快速查找
         selected_diags_set = {tuple(d.flatten()) for d in selected_diags}
         
         for diag in selected_diags:
@@ -1344,19 +1336,19 @@ if __name__ == '__main__':
                 subdivided_tasks = subdivide_grids(selected_diags_for_level)
                 num_subdivided = len(subdivided_tasks)
                 
-                # 2. (新) 检查是否需要根据 max_grid_num 进行裁剪
+                # 2. 检查是否需要根据 max_grid_num 进行裁剪
                 if args.max_grid_num > 0 and num_subdivided > args.max_grid_num:
                     if not args.auto:
                         print(f"Rank 0: Subdivided into {num_subdivided} grids. Capping at {args.max_grid_num} using selection strategy...")
                     
-                    # 3. (新) 重用与Level 0 相同的筛选逻辑
+                    # 3.重用与Level 0 相同的筛选逻辑
                     if args.select_grid_by_conf:
                         # --- 策略 1: 基于置信度 ---
                         # 注意：这里会重新加载模型并评估
                         all_tasks, all_valid_grids_info = select_grids_by_confidence(
                             args, subdivided_tasks, args.max_grid_num, images, current_window_size, local_rank
                         )
-                        # (可选) 调用可视化
+                        #  调用可视化
                         visualize_grid_selection(args, all_valid_grids_info, all_tasks, images[0], level)
 
                     else:
@@ -1364,7 +1356,7 @@ if __name__ == '__main__':
                         all_tasks, all_valid_grids_info_for_vis = select_grids_uniformly(
                             args, subdivided_tasks, args.max_grid_num, local_rank
                         )
-                        # (可选) 调用可视化
+                        # 调用可视化
                         visualize_grid_selection(args, all_valid_grids_info_for_vis, all_tasks, images[0], level)
 
                 else:
@@ -1377,7 +1369,7 @@ if __name__ == '__main__':
                 # 4. 保存结果给下一层级 
                 selected_diags_for_level = all_tasks
             
-            # 7. [通用] 为DDP负载均衡打乱任务列表
+            # 7.为DDP负载均衡打乱任务列表
             random.shuffle(all_tasks)
             if not args.auto:
                 print(f"Rank 0: Final task list for level {level+1} has {len(all_tasks)} grids.")
@@ -1448,12 +1440,12 @@ if __name__ == '__main__':
         scheduler_t = None
 
         if all_R_params:
-            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (10 ** level))
-            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5 / (10 ** level), total_steps=args.max_iter,pct_start=50 / args.max_iter)
+            optimizer_r = torch.optim.Adam(all_R_params, lr=args.max_lr * 1e-5 / (4 ** level))
+            scheduler_r = torch.optim.lr_scheduler.OneCycleLR(optimizer_r, max_lr=args.max_lr * 1e-5 / (4 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
         
         if all_T_params:
-            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (10 ** level))
-            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr / (10 ** level), total_steps=args.max_iter,pct_start=50 / args.max_iter)
+            optimizer_t = torch.optim.Adam(all_T_params, lr=args.max_lr / (4 ** level))
+            scheduler_t = torch.optim.lr_scheduler.OneCycleLR(optimizer_t, max_lr=args.max_lr / (4 ** level), total_steps=args.max_iter,pct_start=20 / args.max_iter)
         
         best_model_state = []
 
@@ -1592,10 +1584,9 @@ if __name__ == '__main__':
             dist.barrier()
             if local_rank == 0:
                 print(f"[All Ranks] Visualization for Level {level+1} complete.")
-        # --- [可视化步骤修改结束] ---
 
 
-        # --- [新步骤 1]：所有进程同步 "烘焙" RPC ---
+        # ---所有进程同步 "烘焙" RPC ---
         # 这一步至关重要：它将当前层级优化的 adjust_params 
         # "烘焙" 进RPC主系数，并重置 adjust_params。
         # 确保所有进程在进入下一层级时，都基于相同的、已更新的RPC模型。
@@ -1637,7 +1628,7 @@ if __name__ == '__main__':
         
     # --- 金字塔循环结束 ---
     
-    # [修改] auto 模式下不打印
+    # auto 模式下不打印
     if local_rank == 0 and not args.auto:
         print("\n" + "="*50)
         print(f"--- Multi-level Bundle Adjustment Finished ({args.num_levels} levels) ---")
