@@ -90,7 +90,7 @@ class TraditionalBundleAdjuster:
                     continue
                 
                 # resample_image_by_sampline 期望 [line, samp] 格式的角点
-                img_patch, _ = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
+                img_patch = img.resample_image_by_sampline(corners_samp[:, [1, 0]], (loftr_res, loftr_res), need_local=False)
                 overlapping_imgs.append({
                     'img_id': img.id,
                     'patch_gray': torch.from_numpy(cv2.cvtColor(img_patch, cv2.COLOR_BGR2GRAY)).float().to(DEVICE)[None, None] / 255.0,
