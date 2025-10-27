@@ -102,75 +102,72 @@ class TraditionalBundleAdjuster:
                 img_i_data = pair[0]
                 img_j_data = pair[1]
                 
-                try:
-                    batch = {'image0': img_i_data['patch_gray'], 'image1': img_j_data['patch_gray']}
-                    with torch.no_grad():
-                        results = self.loftr(batch)
-                    
-                    # mkpts_i 是 (N, 2) [x, y] -> [samp, line]
-                    mkpts_i = results['keypoints0'].cpu().numpy() 
-                    mkpts_j = results['keypoints1'].cpu().numpy()
-                    conf = results['confidence'].cpu().numpy()
+                batch = {'image0': img_i_data['patch_gray'], 'image1': img_j_data['patch_gray']}
+                with torch.no_grad():
+                    results = self.loftr(batch)
+                
+                # mkpts_i 是 (N, 2) [x, y] -> [samp, line]
+                mkpts_i = results['keypoints0'].cpu().numpy() 
+                mkpts_j = results['keypoints1'].cpu().numpy()
+                conf = results['confidence'].cpu().numpy()
 
-                    print(len(mkpts_i),conf.mean(),conf.max().conf.min())
-                    
-                    if len(mkpts_i) == 0:
-                        continue
-                    
-                    # 筛选高置信度的点
-                    valid = conf > 0.5
-                    mkpts_i, mkpts_j = mkpts_i[valid], mkpts_j[valid]
-                    
-                    if len(mkpts_i) < 10:
-                        continue
-
-                    # --- [修改开始] ---
-                    
-                    # 1. (已删除) 不再需要翻转 LoFTR 的输出
-                    # mkpts_i_ls = mkpts_i[:, [1, 0]] <-- 错误, 已删除
-                    # mkpts_j_ls = mkpts_j[:, [1, 0]] <-- 错误, 已删除
-                    
-                    # 2. 计算变换矩阵 M
-                    # cv2.getPerspectiveTransform 期望 src 和 dst 都是 (x, y) -> [samp, line]
-                    
-                    # src 角点 (LoFTR patch) [samp, line]
-                    src_cv2_corners = np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32)
-                    
-                    # dst 角点 (原始影像) [samp, line]
-                    dst_i_cv2_corners = img_i_data['corners_samp'].astype(np.float32)
-                    dst_j_cv2_corners = img_j_data['corners_samp'].astype(np.float32)
-
-                    M_i = cv2.getPerspectiveTransform(src_cv2_corners, dst_i_cv2_corners)
-                    M_j = cv2.getPerspectiveTransform(src_cv2_corners, dst_j_cv2_corners)
-                    
-                    # 3. 应用变换
-                    # cv2.perspectiveTransform 期望输入 (N, 1, 2) 且为 (x, y) -> [samp, line]
-                    # mkpts_i 已经是 (N, 2) [samp, line]
-                    
-                    # 添加一个维度 (N, 2) -> (N, 1, 2)
-                    mkpts_i_cv2 = mkpts_i[:, None, :].astype(np.float32)
-                    mkpts_j_cv2 = mkpts_j[:, None, :].astype(np.float32)
-
-                    # full_pts_i_sl 的格式是 (N, 2) [samp, line]
-                    full_pts_i_sl = cv2.perspectiveTransform(mkpts_i_cv2, M_i).squeeze(1)
-                    full_pts_j_sl = cv2.perspectiveTransform(mkpts_j_cv2, M_j).squeeze(1)
-
-                    # 4. 存储匹配
-                    # 后续代码期望 (line, samp) 格式
-                    for k in range(len(full_pts_i_sl)):
-                        pt_i_sl = full_pts_i_sl[k] # [samp, line]
-                        pt_j_sl = full_pts_j_sl[k] # [samp, line]
-                        
-                        # 存储为 (line, samp)
-                        self.matches.append(
-                            (img_i_data['img_id'], (pt_i_sl[1], pt_i_sl[0]), 
-                             img_j_data['img_id'], (pt_j_sl[1], pt_j_sl[0]))
-                        )
-                    # --- [修改结束] ---
-                        
-                except Exception as e:
-                    print(f"LoFTR匹配失败: {e}")
+                print(len(mkpts_i),conf.mean(),conf.max().conf.min())
+                
+                if len(mkpts_i) == 0:
                     continue
+                
+                # 筛选高置信度的点
+                valid = conf > 0.5
+                mkpts_i, mkpts_j = mkpts_i[valid], mkpts_j[valid]
+                
+                if len(mkpts_i) < 10:
+                    continue
+
+                # --- [修改开始] ---
+                
+                # 1. (已删除) 不再需要翻转 LoFTR 的输出
+                # mkpts_i_ls = mkpts_i[:, [1, 0]] <-- 错误, 已删除
+                # mkpts_j_ls = mkpts_j[:, [1, 0]] <-- 错误, 已删除
+                
+                # 2. 计算变换矩阵 M
+                # cv2.getPerspectiveTransform 期望 src 和 dst 都是 (x, y) -> [samp, line]
+                
+                # src 角点 (LoFTR patch) [samp, line]
+                src_cv2_corners = np.array([[0,0], [loftr_res-1,0], [loftr_res-1,loftr_res-1], [0,loftr_res-1]], dtype=np.float32)
+                
+                # dst 角点 (原始影像) [samp, line]
+                dst_i_cv2_corners = img_i_data['corners_samp'].astype(np.float32)
+                dst_j_cv2_corners = img_j_data['corners_samp'].astype(np.float32)
+
+                M_i = cv2.getPerspectiveTransform(src_cv2_corners, dst_i_cv2_corners)
+                M_j = cv2.getPerspectiveTransform(src_cv2_corners, dst_j_cv2_corners)
+                
+                # 3. 应用变换
+                # cv2.perspectiveTransform 期望输入 (N, 1, 2) 且为 (x, y) -> [samp, line]
+                # mkpts_i 已经是 (N, 2) [samp, line]
+                
+                # 添加一个维度 (N, 2) -> (N, 1, 2)
+                mkpts_i_cv2 = mkpts_i[:, None, :].astype(np.float32)
+                mkpts_j_cv2 = mkpts_j[:, None, :].astype(np.float32)
+
+                # full_pts_i_sl 的格式是 (N, 2) [samp, line]
+                full_pts_i_sl = cv2.perspectiveTransform(mkpts_i_cv2, M_i).squeeze(1)
+                full_pts_j_sl = cv2.perspectiveTransform(mkpts_j_cv2, M_j).squeeze(1)
+
+                # 4. 存储匹配
+                # 后续代码期望 (line, samp) 格式
+                for k in range(len(full_pts_i_sl)):
+                    pt_i_sl = full_pts_i_sl[k] # [samp, line]
+                    pt_j_sl = full_pts_j_sl[k] # [samp, line]
+                    
+                    # 存储为 (line, samp)
+                    self.matches.append(
+                        (img_i_data['img_id'], (pt_i_sl[1], pt_i_sl[0]), 
+                            img_j_data['img_id'], (pt_j_sl[1], pt_j_sl[0]))
+                    )
+                # --- [修改结束] ---
+                    
+            
         print(f"提取了 {len(self.matches)} 个两两匹配对。")
 
     def _build_connected_components(self):
