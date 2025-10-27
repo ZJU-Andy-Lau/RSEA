@@ -422,7 +422,7 @@ class SharedGrid():
             if feat_j_in_i is not None:
                 feat_j_orig = window_j.feature[valid_j].float()
                 conf_cov_a = window_j.conf[valid_j].float() * conf_j_in_i
-                weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-8)
+                weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-3)
                 loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
             pair_loss = loss_a
@@ -1229,6 +1229,8 @@ if __name__ == '__main__':
     parser.add_argument('--experiment_id', type=str, default=None,
                         help='(新) Unique ID for the experiment, used for output folder naming.')
 
+    parser.add_argument('--random_seed',type=int,default=42)
+
 
     args = parser.parse_args()
 
@@ -1236,7 +1238,7 @@ if __name__ == '__main__':
     local_rank = setup_ddp()
     world_size = dist.get_world_size() # 总进程数
 
-    seed = 42 
+    seed = args.random_seed 
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)

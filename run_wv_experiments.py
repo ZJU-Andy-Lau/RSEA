@@ -73,7 +73,8 @@ def get_param_grid():
         'root': ['./datasets/wv_test_error_5', './datasets/wv_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
         'max_lr': [0.1, 0.05, 0.01],
         'window_size': [2000, 1000],
-        'grid_num': [8, 16, 24, 32]
+        'grid_num': [8, 16, 24],
+        'seed':[9,13,17,27,32]
     }
     
     # 2. 创建所有笛卡尔积组合
@@ -314,14 +315,23 @@ def main():
             
             try:
                 # [!! 核心修改 !!]
-                # 移除 capture_output=True, 改为 stderr=subprocess.PIPE
-                # 这将允许子进程的 stdout (进度条) 实时打印到终端
+                # 1. 复制当前的环境变量
+                my_env = os.environ.copy()
+                
+                # 2. 设置 PYTHONUNBUFFERED=1
+                #    这将强制子进程(torchrun及其worker)不缓冲stdout,
+                #    允许tqdm进度条(如 mean_error)实时刷新到本终端。
+                my_env["PYTHONUNBUFFERED"] = "1"
+
+                # 3. 将修改后的 'env' 传入 subprocess.run
+                #    (并保持上一版的 stdout=None, stderr=subprocess.PIPE)
                 result = subprocess.run(cmd, 
-                                        stdout=None,              # (新) 允许 stdout 传递到终端
-                                        stderr=subprocess.PIPE,   # (新) 仅捕获 stderr
+                                        stdout=None,              # (保持) 允许 stdout 传递到终端
+                                        stderr=subprocess.PIPE,   # (保持) 仅捕获 stderr
                                         text=True, 
                                         check=False, 
-                                        encoding='utf-8')
+                                        encoding='utf-8',
+                                        env=my_env)               # <--- [!! 新增此行 !!]
                 
                 end_time = time.time()
                 run_time = end_time - start_time
