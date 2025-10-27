@@ -111,10 +111,11 @@ class TraditionalBundleAdjuster:
                 mkpts_j = results['keypoints1'].cpu().numpy()
                 conf = results['confidence'].cpu().numpy()
 
-                print(len(mkpts_i),img_i_data['patch_gray'].squeeze().cpu().numpy().shape)
-                cv2.imwrite('./vis/loftr_0.png',(255. * img_i_data['patch_gray'].squeeze().cpu().numpy()).astype(int))
-                cv2.imwrite('./vis/loftr_1.png',(255. * img_j_data['patch_gray'].squeeze().cpu().numpy()).astype(int))
-                exit()
+                if len(mkpts_i) > 100:
+                    print(len(mkpts_i),img_i_data['patch_gray'].squeeze().cpu().numpy().shape)
+                    cv2.imwrite('./vis/loftr_0.png',(255. * img_i_data['patch_gray'].squeeze().cpu().numpy()).astype(int))
+                    cv2.imwrite('./vis/loftr_1.png',(255. * img_j_data['patch_gray'].squeeze().cpu().numpy()).astype(int))
+                    exit()
                 
                 if len(mkpts_i) == 0:
                     continue
