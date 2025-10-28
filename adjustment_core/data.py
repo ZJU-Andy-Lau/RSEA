@@ -1,6 +1,5 @@
 import os
 import torch
-import torch.nn.functional as F # [新增] 导入 F 用于
 from torchvision import transforms
 import numpy as np
 import cv2
@@ -164,7 +163,6 @@ class SharedGrid():
         """
          (已修改) 计算此格网内所有影像两两之间的 *非对称* 损失 (j -> i, j > i)。
          [Refactored] 依赖外部导入的 warp_local 和 feature_sampling
-         [!! 已修改] 损失函数逻辑已根据新需求重写。
         """
         import itertools # 确保导入
         
@@ -187,88 +185,17 @@ class SharedGrid():
             
             # 1. Warp j -> i  (始终将索引号大的 j 投影到索引号小的 i)
             warp_j_to_i = warp_local(window_j.local.float(), window_j.dem, rpc_j, rpc_i, A_j)
+            feat_j_in_i, conf_j_in_i, valid_j = feature_sampling(window_i.feature.float(), window_i.conf.float(), window_i.local.float(), warp_j_to_i, k = self.args.kmin_k)
 
-            # 2. [已修改] 调用新的 feature_sampling
-            #    它现在只返回 K 近邻的空间距离、索引和有效掩码
-            spatial_dists_k, neighbor_idxs_k, valid_j = feature_sampling(
-                window_i.local.float(),  # 基础点云 (在...中查找)
-                warp_j_to_i,             # 查询点云
-                k = self.args.kmin_k
-            )
-
-            # 3. [已修改] 计算 loss_a (j -> i)
+            # 3. 计算 loss_a (j -> i)
             loss_a = torch.tensor(0.0, device=local_rank)
+            if feat_j_in_i is not None:
+                feat_j_orig = window_j.feature[valid_j].float()
+                conf_cov_a = window_j.conf[valid_j].float() * conf_j_in_i
+                weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-3)
+                loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
-            # 检查 feature_sampling 是否返回了有效点
-            if spatial_dists_k is None:
-                # 没有有效点，损失为 0，跳到下一个像对
-                pair_loss = loss_a
-            else:
-                # --- START: 实施新的损失逻辑 ---
-                
-                # 4. 获取查询点 j 的原始特征 (feat_j_orig)
-                # [N_valid, D] D是特征维度
-                feat_j_valid = window_j.feature[valid_j].float() 
-
-                # 5. 获取 K 个邻近点 i 的特征 (feat_i_k)
-                # [N_valid, k, D]
-                feat_i_k = window_i.feature.float()[neighbor_idxs_k] 
-
-                # 6. 计算 Cosine 相似度
-                # (N_valid, 1, D)
-                feat_j_expanded = feat_j_valid.unsqueeze(1) 
-                
-                # dim=2 表示在特征维度 D 上计算相似度
-                # [N_valid, k]
-                cos_sim_k = F.cosine_similarity(feat_j_expanded, feat_i_k, dim=2)
-
-                # 7. (可选) 引入 temperature 缩放，使 Softmax 更敏感
-                temperature = 0.001 # (可以作为超参数)
-                cos_sim_k = cos_sim_k / temperature
-
-                # 8. 计算 Softmax 权重
-                # dim=1 表示在 K 个近邻上计算 Softmax
-                # [N_valid, k]
-                weights_k = F.softmax(cos_sim_k, dim=1)
-
-                # 9. 获取 K 个空间距离 (已由 feature_sampling 在步骤 2 返回)
-                # spatial_dists_k 形状为 [N_valid, k]
-                
-                # 10. 计算每个查询点的损失：(空间距离 * Softmax权重) 的加权平均
-                # (N_valid, k) * (N_valid, k) -> sum(dim=1) -> (N_valid)
-                loss_per_query = torch.sum(spatial_dists_k * weights_k, dim=1) # [N_valid]
-
-                # 11. 计算每个查询点的置信度
-                # 11.a 获取 K 个邻近点 i 的置信度
-                # [N_valid, k]
-                conf_i_k = window_i.conf.float()[neighbor_idxs_k]
-                
-                # 11.b 用 Softmax 权重加权平均，得到匹配到 i 上的置信度
-                # [N_valid]
-                conf_per_query_i = torch.sum(conf_i_k * weights_k, dim=1)
-
-                # 11.c 获取查询点 j 的原始置信度
-                # [N_valid]
-                conf_j_valid = window_j.conf[valid_j].float() 
-                
-                # 11.d 最终置信度 (相乘)
-                # [N_valid]
-                final_conf_per_query = conf_per_query_i * conf_j_valid
-
-                # 12. 计算该像对的总损失：(loss_per_query * final_conf_per_query) 的加权平均
-                
-                # 使用归一化的置信度作为权重
-                conf_sum = final_conf_per_query.sum()
-                if conf_sum > 1e-6:
-                    # 保留 * 10000 因子以维持损失的量级
-                    loss_a = ((loss_per_query * final_conf_per_query).sum() / conf_sum)  * 1000.
-                else:
-                    # 如果所有点置信度都为0，则损失为0
-                    loss_a = torch.tensor(0.0, device=local_rank)
-                
-                # --- END: 新的损失逻辑 ---
-
-                pair_loss = loss_a
+            pair_loss = loss_a
             
             if not torch.isnan(pair_loss) and not torch.isinf(pair_loss) and pair_loss > 0:
                 grid_total_loss = grid_total_loss + pair_loss

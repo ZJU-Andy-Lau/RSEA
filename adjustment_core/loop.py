@@ -29,70 +29,33 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32) # 输出转回float32
     return warped_local
 
-def feature_sampling(local:torch.Tensor, query:torch.Tensor, k = 4):
-    """
-    [已修正]
-    在 'local' (像方坐标) 中为 'query' (warp 后的像方坐标) 查找 K 个最近邻。
+def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 4):
+    point_base = LazyTensor(local.contiguous().unsqueeze(0))
+    query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
+    dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
+    dists,idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
+
+    locals_kmin = local[idxs] # n,k,2
+    dists = torch.cdist(query.unsqueeze(1),locals_kmin,p=2).squeeze(1)
+
+    valid_mask = (dists.min(dim=1).values < 64)
+    dists = dists[valid_mask]
+    idxs = idxs[valid_mask]
     
-    1. 使用 PyKeOps (no_grad) 高效查找 K-NN 索引 (idxs) 和用于过滤的距离 (dists_no_grad)。
-    2. 使用 PyTorch (with_grad) 重新计算空间距离 (dists_valid)，以确保梯度可以反向传播。
-
-    Args:
-        local (torch.Tensor): (N_base, 2) 基础点云 (window_i.local)
-        query (torch.Tensor): (N_query, 2) 查询点云 (warp_j_to_i)
-        k (int): K近邻的数量
-
-    Returns:
-        tuple:
-            - dists_valid (torch.Tensor): [N_valid, k] 每个有效查询点的 K 个空间距离 (带梯度)
-            - idxs_valid (torch.Tensor): [N_valid, k] 每个有效查询点的 K 个邻近点索引
-            - valid_mask (torch.Tensor): [N_query]布尔掩码，标记哪些查询点有效
-    """
-    
-    # 步骤 1: 使用 PyKeOps 在无梯度上下文中查找索引和过滤用距离
-    with torch.no_grad():
-        point_base = LazyTensor(local.contiguous().unsqueeze(0))
-        query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
-        # (N_query, N_base)
-        dist_ij_sq_no_grad:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
-        
-        # dists_sq_no_grad: [N_query, k], idxs: [N_query, k]
-        dists_sq_no_grad, idxs = dist_ij_sq_no_grad.Kmin_argKmin(K = k, dim=1) 
-        
-        # [N_query, k] (无梯度)
-        dists_no_grad = torch.sqrt(dists_sq_no_grad)
-
-    # 步骤 2: 过滤掉距离太远的点 (例如，大于 64 像素)
-    # [N_query]
-    valid_mask = (dists_no_grad.min(dim=1).values < 64) 
-
-    # 步骤 3: 过滤索引和 *需要计算梯度* 的查询点
-    # [N_valid, k]
-    idxs_valid = idxs[valid_mask]
-    # [N_valid, 2] (此张量连接着梯度)
-    query_valid = query[valid_mask] 
-    
-    if query_valid.shape[0] == 0: # 如果没有有效的点
+    if dists.shape[0] == 0: # 如果没有有效的点
         return None, None, valid_mask
 
-    # 步骤 4: 使用索引 gather K 个邻近点的坐标
-    # local: [N_base, 2]
-    # locals_kmin: [N_valid, k, 2]
-    locals_kmin = local[idxs_valid] 
+    dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,k
+    reverse_dists_ratio = 1. / (dists_ratio + 1e-6)
+    weights = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
 
-    # 步骤 5: [核心] 使用标准 PyTorch 重新计算空间距离，以保留梯度
-    
-    # 扩展 query_valid 以便广播: [N_valid, 2] -> [N_valid, 1, 2]
-    query_valid_expanded = query_valid.unsqueeze(1)
-    
-    # [N_valid, k, 2]
-    diff = query_valid_expanded - locals_kmin
-    
-    # [N_valid, k] (此张量 *包含* 梯度)
-    dists_valid = torch.norm(diff, dim=-1, p=2) 
-    
-    # 返回 K 近邻的 (带梯度)空间距离、索引和有效掩码
-    return dists_valid, idxs_valid, valid_mask
+    feature_sample_p3d = feature[idxs]
+    feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
+
+    conf_sample_p3 = conf[idxs]
+    conf_sample_p = torch.sum(conf_sample_p3 * weights,dim=1).to(torch.float32)
+
+    return feature_sample_pd,conf_sample_p,valid_mask
 
 def fit_affine_bundle(args,
                       local_shared_grids, # [FIXED] 使用字符串前向引用
@@ -109,8 +72,7 @@ def fit_affine_bundle(args,
                       current_level: int 
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
-    (未修改)
-    使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
+    (已修改) 使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
     (Refactored) 使用 TqdmLogger 统一处理日志记录。
     (Refactored) 使用 calculate_error_report 统一处理误差计算。
     """
@@ -217,7 +179,7 @@ def fit_affine_bundle(args,
                     with torch.no_grad():
                         for i in range(num_images):
                             images[i].rpc.adjust_params = original_params_list[i]
-                            images[i].rpc.adjust_params_inv = original_params_list[i]
+                            images[i].rpc.adjust_params_inv = original_params_inv_list[i]
 
             # 确定本轮用于判断的指标和阈值
             current_metric_val = 0.0
