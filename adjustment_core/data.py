@@ -223,8 +223,8 @@ class SharedGrid():
                 cos_sim_k = F.cosine_similarity(feat_j_expanded, feat_i_k, dim=2)
 
                 # 7. (可选) 引入 temperature 缩放，使 Softmax 更敏感
-                # temperature = 0.1 # (可以作为超参数)
-                # cos_sim_k = cos_sim_k / temperature
+                temperature = 0.1 # (可以作为超参数)
+                cos_sim_k = cos_sim_k / temperature
 
                 # 8. 计算 Softmax 权重
                 # dim=1 表示在 K 个近邻上计算 Softmax
