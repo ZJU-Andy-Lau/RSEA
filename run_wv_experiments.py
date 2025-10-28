@@ -119,11 +119,22 @@ def load_log_and_completed_ids(log_file):
     # [修改] 定义日志文件的所有列
     columns = [
         'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
+        'random_seed', # <--- [!! 修正 !!] 在原始代码中, 这个参数在 param_space 中但不在 columns 中, 现已添加
         'status', 'run_time_seconds', 
         'mean_error', 'median_error', 'rmse', 'max_error', 
         '<1m', '<3m', '<5m', 'total_tie_points'
     ]
     
+    # 确保日志目录存在
+    log_dir = os.path.dirname(log_file)
+    if log_dir and not os.path.exists(log_dir):
+        try:
+            os.makedirs(log_dir)
+            print(f"已创建日志目录: {log_dir}")
+        except OSError as e:
+            print(f"[!!] 致命错误: 无法创建日志目录 {log_dir}。请检查权限。错误: {e}")
+            sys.exit(1)
+
     if not os.path.exists(log_file):
         try:
             # 如果日志不存在, 创建一个空的 DataFrame 并写入表头
@@ -147,11 +158,19 @@ def load_log_and_completed_ids(log_file):
             print("    [!!] 脚本将尝试使用预期表头继续, 这可能导致数据错位或丢失。")
             
             # 尝试用标准列重新加载，丢弃不匹配的
-            df_log = pd.read_csv(log_file, names=columns, header=0, usecols=lambda c: c in columns)
-            # 确保所有标准列都存在
+            # [!! 修正 !!] 修正列不匹配时的加载逻辑
+            existing_cols = list(pd.read_csv(log_file, nrows=0).columns)
+            use_cols = [col for col in existing_cols if col in columns]
+            
+            df_log = pd.read_csv(log_file, usecols=use_cols)
+            
+            # 确保所有标准列都存在, 缺少的填充 nan
             for col in columns:
                 if col not in df_log:
                     df_log[col] = np.nan
+            
+            # 重新排序以匹配标准
+            df_log = df_log[columns]
         
         # (关键修改) 只筛选 'completed' 状态的
         completed_ids = set(df_log[df_log['status'] == 'completed']['experiment_id'].unique())
@@ -226,12 +245,23 @@ def update_log_file(log_file: str, df_log: pd.DataFrame, log_entry: dict) -> pd.
             idx = index_to_update[0]
             # print(f"    [i] 覆盖日志 (ID: {exp_id}, Index: {idx})") # 调试时使用
             for col, val in log_entry.items():
-                df_log.at[idx, col] = val
+                if col in df_log.columns: # 增加一个安全检查
+                    df_log.at[idx, col] = val
         else:
             # --- 不存在, 执行追加 ---
             # print(f"    [i] 追加新日志 (ID: {exp_id})") # 调试时使用
-            new_row_df = pd.DataFrame([log_entry])
-            df_log = pd.concat([df_log, new_row_df], ignore_index=True)
+            
+            # [!! 核心修正 !!]
+            # 旧的, 有问题的代码 (创建了新对象, 导致状态混乱):
+            # new_row_df = pd.DataFrame([log_entry])
+            # df_log = pd.concat([df_log, new_row_df], ignore_index=True)
+            
+            # [!! 修正 !!]
+            # 使用 .loc[len(df_log)] 直接在原 DataFrame 上追加新行。
+            # 这是一个原地(in-place)操作, 避免了 pd.concat 的引用问题。
+            # log_entry 是一个字典, pandas 会自动将其键(key)
+            # 匹配到 df_log 的列(column)。
+            df_log.loc[len(df_log)] = log_entry
 
         # --- 原子写入磁盘 ---
         # 写入临时文件
@@ -265,6 +295,10 @@ def main():
     # 2. (修改) 加载日志 DataFrame 和 *已完成* 的ID
     df_log, completed_ids = load_log_and_completed_ids(MASTER_LOG_CSV)
     
+    # [!! 修正 !!] 获取 df_log 的列定义, 以便在 main 中使用
+    # 这确保了 ordered_log_entry 与 df_log 中的列完全一致
+    LOG_COLUMNS = list(df_log.columns)
+
     # 3. (修改) 过滤出未完成的实验
     # (此行逻辑不变, 但由于 completed_ids 的定义改变, 行为已变为 "跳过已完成")
     experiments_to_run = [exp for exp in all_experiments if exp['experiment_id'] not in completed_ids]
@@ -353,8 +387,14 @@ def main():
                     status = 'failed'
                     # 记录 stderr 以便调试 (仍然有效)
                     if result.stderr:
-                        print("--- [STDERR (最后 1000 字符)] ---")
-                        print(result.stderr) # 只打印最后1000字符
+                        # [!! 修正 !!] 限制 stderr 的输出长度, 避免刷屏
+                        stderr_output = result.stderr.strip()
+                        if len(stderr_output) > 2000:
+                             print("--- [STDERR (最后 2000 字符)] ---")
+                             print(stderr_output[-2000:])
+                        else:
+                             print("--- [STDERR] ---")
+                             print(stderr_output)
                         print("--- [END STDERR] ---")
                     
             except KeyboardInterrupt:
@@ -371,12 +411,8 @@ def main():
                 log_entry['run_time_seconds'] = round(run_time, 2)
                 log_entry.update(results) # results 此时应为默认的 nan
                 
-                ordered_log_entry = {col: log_entry.get(col) for col in [
-                    'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
-                    'status', 'run_time_seconds', 
-                    'mean_error', 'median_error', 'rmse', 'max_error', 
-                    '<1m', '<3m', '<5m', 'total_tie_points'
-                ]}
+                # [!! 修正 !!] 使用从 df_log 加载的 LOG_COLUMNS 确保顺序
+                ordered_log_entry = {col: log_entry.get(col, np.nan) for col in LOG_COLUMNS}
                 
                 df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
                 print(f"    [i] 已将实验 {exp_id} 标记为 'interrupted' 并保存日志。")
@@ -395,13 +431,9 @@ def main():
             log_entry['run_time_seconds'] = round(run_time, 2)
             log_entry.update(results) # [修改] 合并从 JSON 加载的 results 字典
             
-            # [修改] 确保日志条目的键顺序与表头一致
-            ordered_log_entry = {col: log_entry.get(col) for col in [
-                'experiment_id', 'root', 'max_lr', 'window_size', 'grid_num', 'num_levels', 
-                'status', 'run_time_seconds', 
-                'mean_error', 'median_error', 'rmse', 'max_error', 
-                '<1m', '<3m', '<5m', 'total_tie_points'
-            ]}
+            # [!! 修正 !!] 使用从 df_log 加载的 LOG_COLUMNS 确保顺序
+            # 并为 log_entry 中可能缺少的键提供默认值 np.nan
+            ordered_log_entry = {col: log_entry.get(col, np.nan) for col in LOG_COLUMNS}
             
             # (修改) 持久化日志 (调用新函数)
             df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
@@ -425,4 +457,3 @@ if __name__ == "__main__":
         sys.exit(1)
         
     main()
-
