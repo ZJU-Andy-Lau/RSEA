@@ -95,11 +95,12 @@ def get_param_grid():
         # 4. 生成可复现的 Experiment ID
         # [修改] 添加 root 的 basename, 使 ID 更具信息量且唯一
         root_basename = os.path.basename(params['root'].rstrip('/')) # 获取路径的最后一部分
-        param_string = (f"root={root_basename}_" # <--- 新增
+        param_string = (f"root={root_basename}_" 
                         f"lr={params['max_lr']}_"
                         f"ws={params['window_size']}_"
                         f"gn={params['grid_num']}_"
-                        f"nl={params['num_levels']}")
+                        f"nl={params['num_levels']}_"
+                        f"seed={params['random_seed']}")
         
         # 使用 sha256 避免潜在的哈希碰撞, 取前12位
         params['experiment_id'] = hashlib.sha256(param_string.encode()).hexdigest()[:12]
