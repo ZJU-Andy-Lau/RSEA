@@ -58,7 +58,7 @@ FIXED_ARGS = [
 
 # 3. 主日志文件
 # 脚本将自动创建此文件 (如果不存在)
-MASTER_LOG_CSV = './log/wv_experiments_log.csv'
+MASTER_LOG_CSV = './log/beijing_experiments_log.csv'
 
 # --- [配置结束] ---
 

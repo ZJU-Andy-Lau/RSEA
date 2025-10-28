@@ -41,7 +41,7 @@ FIXED_ARGS = [
     '--auto', # <--- !! 新增: 强制开启 auto 模式
     '--dino_path', 'weights', # <--- 检查路径
     '--encoder_path', 'weights/encoder_dino_1024_d100_b2_h20', # <--- 检查路径
-    '--select_imgs', '0,1,2',
+    '--select_imgs', '1,2,3',
     '--patience', '100',
     '--conf_threshold', '0.5',
     '--max_iter', '5000',
@@ -58,7 +58,7 @@ FIXED_ARGS = [
 
 # 3. 主日志文件
 # 脚本将自动创建此文件 (如果不存在)
-MASTER_LOG_CSV = './log/wv_experiments_log.csv'
+MASTER_LOG_CSV = './log/guangzhou_experiments_log.csv'
 
 # --- [配置结束] ---
 
@@ -71,7 +71,7 @@ def get_param_grid():
     
     # 1. 定义搜索空间
     param_space = {
-        'root': ['./datasets/wv_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
+        'root': ['./datasets/guangzhou_test_error_5','./datasets/guangzhou_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
         'max_lr': [0.1, 0.05, 0.01],
         'window_size': [1000, 2000],
         'grid_num': [8, 16, 24],
