@@ -44,7 +44,7 @@ FIXED_ARGS = [
     '--select_imgs', '0,1,2',
     '--patience', '1000',
     '--conf_threshold', '0.5',
-    '--max_iter', '15000',
+    '--max_iter', '5000',
     '--kmin_k', '4',
     '--vis_resolution', '0.5',
     '--stop_criterion', 'error', # 或 'error'
@@ -71,7 +71,7 @@ def get_param_grid():
     
     # 1. 定义搜索空间
     param_space = {
-        'root': ['./datasets/wv_test_error_5', './datasets/wv_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
+        'root': ['./datasets/wv_test_error_10'], # <--- !! [修改] 新增, 请填入您的路径
         'max_lr': [0.1, 0.05, 0.01],
         'window_size': [1000, 2000],
         'grid_num': [8, 16, 24],
