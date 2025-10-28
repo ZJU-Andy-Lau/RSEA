@@ -29,33 +29,49 @@ def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorc
     warped_local = torch.stack([lines,samps],dim=-1).to(torch.float32) # 输出转回float32
     return warped_local
 
-def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor, query:torch.Tensor,k = 4):
+def feature_sampling(local:torch.Tensor, query:torch.Tensor, k = 4):
+    """
+    [已修改]
+    在 'local' (像方坐标) 中为 'query' (warp 后的像方坐标) 查找 K 个最近邻。
+    
+    不再计算特征插值，而是返回 K 近邻的原始信息，供调用者计算新损失。
+
+    Args:
+        local (torch.Tensor): (N_base, 2) 基础点云 (window_i.local)
+        query (torch.Tensor): (N_query, 2) 查询点云 (warp_j_to_i)
+        k (int): K近邻的数量
+
+    Returns:
+        tuple:
+            - dists_valid (torch.Tensor): [N_valid, k] 每个有效查询点的 K 个空间距离
+            - idxs_valid (torch.Tensor): [N_valid, k] 每个有效查询点的 K 个邻近点索引
+            - valid_mask (torch.Tensor): [N_query]布尔掩码，标记哪些查询点有效
+    """
     point_base = LazyTensor(local.contiguous().unsqueeze(0))
     query_lazy = LazyTensor(query.contiguous().unsqueeze(1))
     dist_ij:LazyTensor = ((query_lazy - point_base) ** 2).sum(-1)
-    dists,idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
-
-    locals_kmin = local[idxs] # n,k,2
-    dists = torch.cdist(query.unsqueeze(1),locals_kmin,p=2).squeeze(1)
-
-    valid_mask = (dists.min(dim=1).values < 64)
-    dists = dists[valid_mask]
-    idxs = idxs[valid_mask]
     
-    if dists.shape[0] == 0: # 如果没有有效的点
+    # Kmin_argKmin 返回 (values, indices)
+    # values 是平方距离
+    dists_sq, idxs = dist_ij.Kmin_argKmin(K = k, dim=1)
+
+    # 计算真实的空间距离
+    dists = torch.sqrt(dists_sq) # [N_query, k]
+
+    # 过滤掉距离太远的点 (例如，大于 64 像素)
+    valid_mask = (dists.min(dim=1).values < 64) # [N_query]
+
+    # 仅保留有效查询点的 K-NN 信息
+    dists_valid = dists[valid_mask] # [N_valid, k]
+    idxs_valid = idxs[valid_mask] # [N_valid, k]
+    
+    if idxs_valid.shape[0] == 0: # 如果没有有效的点
         return None, None, valid_mask
 
-    dists_ratio = dists / torch.sum(dists,dim=1,keepdim=True) # n,k
-    reverse_dists_ratio = 1. / (dists_ratio + 1e-6)
-    weights = reverse_dists_ratio / torch.sum(reverse_dists_ratio,dim=1,keepdim=True)
+    # [已移除] 移除所有旧的基于空间距离的特征插值逻辑
 
-    feature_sample_p3d = feature[idxs]
-    feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
-
-    conf_sample_p3 = conf[idxs]
-    conf_sample_p = torch.sum(conf_sample_p3 * weights,dim=1).to(torch.float32)
-
-    return feature_sample_pd,conf_sample_p,valid_mask
+    # 返回 K 近邻的空间距离、索引和有效掩码
+    return dists_valid, idxs_valid, valid_mask
 
 def fit_affine_bundle(args,
                       local_shared_grids, # [FIXED] 使用字符串前向引用
@@ -72,7 +88,8 @@ def fit_affine_bundle(args,
                       current_level: int 
                       ) -> List[Dict[str, torch.Tensor]]: 
     """
-    (已修改) 使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
+    (未修改)
+    使用DDP并行计算损失并优化仿射矩阵，支持基于loss或error的早停。
     (Refactored) 使用 TqdmLogger 统一处理日志记录。
     (Refactored) 使用 calculate_error_report 统一处理误差计算。
     """
@@ -179,7 +196,7 @@ def fit_affine_bundle(args,
                     with torch.no_grad():
                         for i in range(num_images):
                             images[i].rpc.adjust_params = original_params_list[i]
-                            images[i].rpc.adjust_params_inv = original_params_inv_list[i]
+                            images[i].rpc.adjust_params_inv = original_params_list[i]
 
             # 确定本轮用于判断的指标和阈值
             current_metric_val = 0.0
@@ -264,4 +281,3 @@ def fit_affine_bundle(args,
         print("Bundle adjustment optimization finished for this level.")
 
     return best_model_state
-
