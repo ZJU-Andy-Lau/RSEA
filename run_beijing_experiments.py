@@ -348,31 +348,36 @@ def main():
             results = {k: np.nan for k in results_keys}
             results['total_tie_points'] = 0
             
+            # [!! 核心修正: Ctrl+C 处理 !!]
+            process = None
             try:
-                # [!! 核心修改 !!]
+                # [!! 核心修改: Popen !!]
                 # 1. 复制当前的环境变量
                 my_env = os.environ.copy()
                 
                 # 2. 设置 PYTHONUNBUFFERED=1
-                #    这将强制子进程(torchrun及其worker)不缓冲stdout,
-                #    允许tqdm进度条(如 mean_error)实时刷新到本终端。
                 my_env["PYTHONUNBUFFERED"] = "1"
 
-                # 3. 将修改后的 'env' 传入 subprocess.run
-                #    (并保持上一版的 stdout=None, stderr=subprocess.PIPE)
-                result = subprocess.run(cmd, 
-                                        stdout=None,              # (保持) 允许 stdout 传递到终端
-                                        stderr=subprocess.PIPE,   # (保持) 仅捕获 stderr
-                                        text=True, 
-                                        check=False, 
-                                        encoding='utf-8',
-                                        env=my_env)               # <--- [!! 新增此行 !!]
+                # 3. 使用 Popen 启动子进程, 而不是 run
+                process = subprocess.Popen(cmd, 
+                                           stdout=None,              # (保持) 允许 stdout 传递到终端
+                                           stderr=subprocess.PIPE,   # (保持) 仅捕获 stderr
+                                           text=True, 
+                                           encoding='utf-8',
+                                           env=my_env)               # <--- [!! 新增此行 !!]
                 
+                # 4. 阻塞并等待子进程完成
+                #    .wait() 会阻塞, 直到子进程退出, 并返回 returncode
+                #    当 Ctrl+C 按下时, .wait() 会被中断并抛出 KeyboardInterrupt
+                returncode = process.wait()
+                
+                # 5. 子进程正常结束, 计算时间和读取 stderr
                 end_time = time.time()
                 run_time = end_time - start_time
-                
-                # 检查返回码
-                if result.returncode == 0:
+                stderr_output = process.stderr.read() if process.stderr else ""
+
+                # 6. 检查返回码
+                if returncode == 0:
                     # 成功！
                     print(f"    [✓] 实验 {exp_id} 成功。 (耗时: {run_time:.2f} 秒)")
                     status = 'completed'
@@ -383,27 +388,34 @@ def main():
                     
                 else:
                     # 失败！
-                    print(f"    [X] 实验 {exp_id} 失败 (Return Code: {result.returncode})。 (耗时: {run_time:.2f} 秒)")
+                    print(f"    [X] 实验 {exp_id} 失败 (Return Code: {returncode})。 (耗时: {run_time:.2f} 秒)")
                     status = 'failed'
                     # 记录 stderr 以便调试 (仍然有效)
-                    if result.stderr:
+                    if stderr_output:
                         # [!! 修正 !!] 限制 stderr 的输出长度, 避免刷屏
-                        stderr_output = result.stderr.strip()
-                        if len(stderr_output) > 2000:
+                        stderr_output_str = stderr_output.strip()
+                        if len(stderr_output_str) > 2000:
                              print("--- [STDERR (最后 2000 字符)] ---")
-                             print(stderr_output[-2000:])
+                             print(stderr_output_str[-2000:])
                         else:
                              print("--- [STDERR] ---")
-                             print(stderr_output)
+                             print(stderr_output_str)
                         print("--- [END STDERR] ---")
                     
             except KeyboardInterrupt:
+                # [!! 核心修正 !!]
+                # .wait() 被 Ctrl+C 中断
                 print(f"\n[!!] 检测到用户中断 (Ctrl+C)。")
-                print("    [i] 正在终止当前实验并安全退出...")
-                # 记录中断状态并退出
+                print("    [i] 正在等待子进程 (torchrun) 终止...")
                 status = 'interrupted'
                 end_time = time.time()
                 run_time = end_time - start_time
+                
+                if process:
+                    # 子进程也收到了 SIGINT
+                    # 我们必须再次调用 .wait() 来等待它完成清理
+                    process.wait() 
+                    print("    [i] 子进程已终止。")
                 
                 # (新) 即使中断, 也尝试记录日志条目
                 log_entry = params.copy()
@@ -416,7 +428,9 @@ def main():
                 
                 df_log = update_log_file(MASTER_LOG_CSV, df_log, ordered_log_entry)
                 print(f"    [i] 已将实验 {exp_id} 标记为 'interrupted' 并保存日志。")
-                sys.exit(0) # 正常退出
+                
+                # 重新抛出异常, 干净地退出 *整个* 脚本
+                raise 
                 
             except Exception as e:
                 # 捕获更严重的错误 (例如 subprocess 启动失败, OOM Kill, 命令本身错误)
@@ -426,6 +440,8 @@ def main():
                 status = 'catastrophic_failure'
 
             # 7. 持久化日志 (无论成功与否)
+            # (此代码块现在在 'completed', 'failed', 'catastrophic_failure' 时执行)
+            # ('interrupted' 状态已在上面处理并 `raise`)
             log_entry = params.copy()
             log_entry['status'] = status
             log_entry['run_time_seconds'] = round(run_time, 2)
@@ -445,7 +461,9 @@ def main():
             print(f"    [i] 实验 {exp_id} 已记录 (状态: {status}) 到 {MASTER_LOG_CSV}。")
     
     except KeyboardInterrupt:
-        print("\n[!!] 用户在实验循环间隙中断。脚本将退出。")
+        # [!! 核心修正 !!]
+        # (这个块现在会捕获由 "raise" 传来的中断)
+        print("\n[!!] 用户中断。脚本将退出。")
         
     print("\n--- [所有待运行的实验已处理完毕] ---")
 
@@ -457,3 +475,5 @@ if __name__ == "__main__":
         sys.exit(1)
         
     main()
+
+
