@@ -11,7 +11,8 @@ from rs_image_1022 import RSImage
 # 从同一核心模块导入
 from adjustment_core.validation import calculate_error_report
 from adjustment_core.utils import TqdmLogger
-from adjustment_core.data import SharedGrid # 仅用于类型提示
+# [FIXED] 移除此处的循环导入
+# from adjustment_core.data import SharedGrid # 仅用于类型提示
 
 
 def warp_local(local:torch.Tensor,dem:torch.Tensor,rpc_src:RPCModelParameterTorch,rpc_dst:RPCModelParameterTorch,affine_matrix:torch.Tensor):
@@ -57,7 +58,7 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
     return feature_sample_pd,conf_sample_p,valid_mask
 
 def fit_affine_bundle(args,
-                      local_shared_grids: List['SharedGrid'], # 使用字符串前向引用
+                      local_shared_grids, # [FIXED] 使用字符串前向引用
                       images: List[RSImage], 
                       model_ddp: DDP, 
                       optimizer_r: torch.optim.Adam, 
@@ -106,8 +107,11 @@ def fit_affine_bundle(args,
     # 4. 迭代优化
     for iter in range(args.max_iter):
         
-        optimizer_r.zero_grad()
-        optimizer_t.zero_grad()
+        # [FIXED] 检查优化器是否存在
+        if optimizer_r:
+            optimizer_r.zero_grad()
+        if optimizer_t:
+            optimizer_t.zero_grad()
         
         local_total_loss = torch.tensor(0.0, device=local_rank)
         num_valid_grids = 0 
@@ -130,10 +134,13 @@ def fit_affine_bundle(args,
                 local_total_loss = local_total_loss / num_valid_grids
             
         # 7. 反向传播
-        local_total_loss.backward()
+        if local_total_loss > 0: # [FIXED] 仅在loss有效时反向传播
+            local_total_loss.backward()
         
-        optimizer_r.step()
-        optimizer_t.step()
+        if optimizer_r:
+            optimizer_r.step()
+        if optimizer_t:
+            optimizer_t.step()
             
         # 1. 获取全局平均损失 (所有进程都需要)
         global_loss_sum = local_total_loss.clone().detach()
@@ -257,3 +264,4 @@ def fit_affine_bundle(args,
         print("Bundle adjustment optimization finished for this level.")
 
     return best_model_state
+
