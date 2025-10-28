@@ -261,7 +261,7 @@ class SharedGrid():
                 conf_sum = final_conf_per_query.sum()
                 if conf_sum > 1e-6:
                     # 保留 * 10000 因子以维持损失的量级
-                    loss_a = ((loss_per_query * final_conf_per_query).sum() / conf_sum) # * 10000.
+                    loss_a = ((loss_per_query * final_conf_per_query).sum() / conf_sum)  * 1000.
                 else:
                     # 如果所有点置信度都为0，则损失为0
                     loss_a = torch.tensor(0.0, device=local_rank)
