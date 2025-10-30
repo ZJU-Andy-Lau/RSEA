@@ -191,8 +191,7 @@ class SharedGrid():
             loss_a = torch.tensor(0.0, device=local_rank)
             if feat_j_in_i is not None:
                 feat_j_orig = window_j.feature[valid_j].float()
-                conf_cov_a = window_j.conf[valid_j].float() * conf_j_in_i
-                weight_a = conf_cov_a / (conf_cov_a.mean() + 1e-3)
+                weight_a = (window_j.conf[valid_j].float() + conf_j_in_i) * .5
                 loss_a = (torch.norm(feat_j_orig - feat_j_in_i, dim=-1) * weight_a).mean() * 10000.
 
             pair_loss = loss_a
