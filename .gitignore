@@ -12,3 +12,4 @@ pretrain_swt.sh
 pretrain_dino.sh
 localize.sh
 *.sh
+./*.ipynb
