@@ -395,12 +395,7 @@ def main():
                     if stderr_output:
                         # [!! 修正 !!] 限制 stderr 的输出长度, 避免刷屏
                         stderr_output_str = stderr_output.strip()
-                        if len(stderr_output_str) > 2000:
-                             print("--- [STDERR (最后 2000 字符)] ---")
-                             print(stderr_output_str[-2000:])
-                        else:
-                             print("--- [STDERR] ---")
-                             print(stderr_output_str)
+                        print(stderr_output_str)
                         print("--- [END STDERR] ---")
                     
             except KeyboardInterrupt:
