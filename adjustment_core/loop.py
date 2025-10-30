@@ -53,7 +53,7 @@ def feature_sampling(feature:torch.Tensor, conf:torch.Tensor, local:torch.Tensor
     feature_sample_pd = torch.sum(feature_sample_p3d * weights.unsqueeze(-1),dim=1).to(torch.float32)
 
     conf_sample_p3 = conf[idxs]
-    conf_sample_p = torch.sum(conf_sample_p3 * weights,dim=1).to(torch.float32)
+    conf_sample_p = torch.sum(conf_sample_p3 * weights,dim=1).to(torch.float32).detach()
 
     return feature_sample_pd,conf_sample_p,valid_mask
 
