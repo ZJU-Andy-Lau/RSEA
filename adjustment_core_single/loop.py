@@ -10,8 +10,8 @@ from rpc import RPCModelParameterTorch
 from rs_image_1022 import RSImage
 
 # 从同一核心模块导入
-from adjustment_core.validation import calculate_error_report
-from adjustment_core.utils import TqdmLogger
+from adjustment_core_single.validation import calculate_error_report
+from adjustment_core_single.utils import TqdmLogger
 # [FIXED] 移除此处的循环导入
 # from adjustment_core.data import SharedGrid # 仅用于类型提示
 
