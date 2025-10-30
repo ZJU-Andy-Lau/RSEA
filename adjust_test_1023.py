@@ -22,7 +22,7 @@ from rs_image_1022 import RSImage
 from rpc import RPCModelParameterTorch
 from model.encoder_dino_0927 import EncoderDino
 import scheduler
-from utils import find_grids # find_grids 仍从原始 utils.py 导入
+from utils import find_grids,str2bool # find_grids 仍从原始 utils.py 导入
 
 
 # --- [Refactored] 从 adjustment_core 导入所有模块 ---
@@ -106,6 +106,10 @@ if __name__ == '__main__':
 
     parser.add_argument('--random_seed',type=int,default=42)
 
+    parser.add_argument('--use_adapter',type=str2bool,default=True)
+
+    parser.add_argument('--use_conf',type=str2bool,default=True)
+
 
     args = parser.parse_args()
 
@@ -175,7 +179,9 @@ if __name__ == '__main__':
         # (Rank 0 加载并用于评估, 所有 Ranks 加载并用于特征提取)
         encoder_level = EncoderDino(
             os.path.join(args.dino_path,'dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth'),
-            upsample_times=0
+            upsample_times=0,
+            use_adapter=args.use_adapter,
+            use_conf = args.use_conf
         )
         encoder_level.load_adapter(os.path.join(args.encoder_path,'adapter.pth'))
         encoder_level.cuda(local_rank) # 每个进程将模型移到自己的卡上

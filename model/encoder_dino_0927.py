@@ -174,7 +174,7 @@ class Adapter(nn.Module):
 
 class EncoderDino(nn.Module):
 
-    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False,unitize = True,upsample_times = 2):
+    def __init__(self,dino_weight_path,output_channels=512,verbose = 1,layers = [5,11,17,23],adapter_pos_embed = False,unitize = True,upsample_times = 2,use_adapter = True,use_conf = True):
         super().__init__()
         self.verbose = verbose
         self.layers = layers
@@ -189,14 +189,22 @@ class EncoderDino(nn.Module):
 
         self.adapter = Adapter(input_channels=1024 * len(layers),output_channels=output_channels,pos_embed=adapter_pos_embed,unitize=unitize)
 
+        self.use_adapter = use_adapter
+        self.use_conf = use_conf
+
 
     def forward(self, x):
         B = x.shape[0]
         H,W = x.shape[-2:]
-        feat_backbone = self.backbone.get_intermediate_layers(x = x, n = self.layers)
-        feat_backbone = torch.cat(feat_backbone,dim=-1)
+
+        feat_multilayers = self.backbone.get_intermediate_layers(x = x, n = self.layers)
+        feat_backbone = torch.cat(feat_multilayers,dim=-1)
         feat_backbone = feat_backbone.reshape(B,H // 16,W // 16,-1).permute(0,3,1,2)
         feat,conf = self.adapter(feat_backbone)
+        if not self.use_conf:
+            conf = torch.full(conf.shape,0.5,device=conf.device,dtype=conf.dtype)
+        if not self.use_adapter:
+            feat = feat_multilayers[-1].reshape(B,H // 16,W // 16,-1).permute(0,3,1,2)            
 
         for i in range(self.upsample_times):
             feat = F.interpolate(feat,scale_factor=2,mode='bilinear')
