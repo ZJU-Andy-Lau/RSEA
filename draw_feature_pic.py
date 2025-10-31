@@ -53,7 +53,7 @@ def get_feature(encoder:EncoderDino,img1_np: np.ndarray, img2_np: np.ndarray):
 # =============================================================================
 # 步骤 5: 核心计算函数 (特征匹配与距离计算)
 # =============================================================================
-def find_min_dist_pair(feat1: np.ndarray, feat2: np.ndarray, feat_orig_coords: np.ndarray):
+def find_min_dist_pair(feat1: np.ndarray, feat2: np.ndarray, coords1: np.ndarray, coords2: np.ndarray ):
     """
     在GPU上高效计算最佳匹配对及其在原图上的最小距离。
     
@@ -91,15 +91,11 @@ def find_min_dist_pair(feat1: np.ndarray, feat2: np.ndarray, feat_orig_coords: n
     
     # 步骤 5: 计算原图坐标距离
     # (h, w, 2) -> (h*w, 2)
-    coords_flat = torch.from_numpy(feat_orig_coords).to(device).reshape(-1, 2)
-    
-    # feat2 中所有点的原图坐标 (N, 2)
-    coords_f2 = coords_flat
-    # feat2 中每个点 对应匹配的 feat1 点的原图坐标 (N, 2)
-    coords_f1_matched = coords_flat[best_indices_f1]
+    coords1_flat = torch.from_numpy(coords1).to(device).reshape(-1, 2)[best_indices_f1]
+    coords2_flat = torch.from_numpy(coords2).to(device).reshape(-1, 2)
     
     # 计算欧氏距离的平方 (更快)，或者直接计算范数
-    distances = torch.norm(coords_f2 - coords_f1_matched, dim=1) # shape: (h*w,)
+    distances = torch.norm(coords1_flat - coords2_flat, dim=1) # shape: (h*w,)
     
     # 找到距离最小的那个
     min_dist, min_idx_f2_flat = torch.min(distances, dim=0)
@@ -336,7 +332,7 @@ def get_random_affine_transform(orig_w, orig_h, min_area_ratio=0.5, jitter_ratio
             continue # 面积检查失败, 重试
             
         # 8. 成功. 计算 M 并返回
-        M = cv2.getAffineTransform(src_pts, dst_pts)
+        M = cv2.getAffineTransform(dst_pts, src_pts)
         logging.debug(f"成功生成仿射变换 M: {M.ravel()}")
         return M
     
@@ -430,12 +426,7 @@ def main():
         
         # 3b. [NEW] 应用仿射变换 (Warp)
         # 使用黑色填充边界，因为我们假定变换都在图像内部
-        resize1 = cv2.warpAffine(
-            img1_orig, M, (RESIZE_W, RESIZE_H), 
-            flags=cv2.INTER_LINEAR, 
-            borderMode=cv2.BORDER_CONSTANT, 
-            borderValue=(0,0,0)
-        )
+        resize1 = cv2.resize(img1_orig,(1024,1024))
         resize2 = cv2.warpAffine(
             img2_orig, M, (RESIZE_W, RESIZE_H), 
             flags=cv2.INTER_LINEAR, 
@@ -471,15 +462,15 @@ def main():
         x_o_feat = m11 * u_r + m12 * v_r + m13
         y_o_feat = m21 * u_r + m22 * v_r + m23
         
-        # feat_orig_coords[v_f, u_f] = (x_o, y_o)
-        feat_orig_coords = np.stack((x_o_feat, y_o_feat), axis=-1)
+        coords_1 = np.stack([u_r,v_r],axis=-1)
+        coords_2 = np.stack([x_o_feat,y_o_feat],axis=-1)
 
         # 3e. 特征提取
         feat1, feat2 = get_feature(encoder, resize1, resize2)
         
         # 3f. [关键] 匹配与距离计算
         min_dist, target_pt_f1_uv, target_pt_f2_uv = find_min_dist_pair(
-            feat1, feat2, feat_orig_coords
+            feat1, feat2, coords_1,coords_2
         )
         
         # 3g. 存储结果
