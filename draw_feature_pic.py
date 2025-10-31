@@ -229,7 +229,7 @@ def plot_similarity_map(data: dict, save_file: Path):
     sim_map = sims.reshape(h, w)
     max_sim = sim_map.max()
     min_sim = 2 * np.median(sim_map) - max_sim
-    sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.)
+    sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.,a_max=1.)
     
     # (3) 绘制蓝到黄的热力图
     fig, ax = plt.subplots(figsize=(w/100, h/100), dpi=300)
