@@ -238,8 +238,8 @@ class CriterionFinetune(nn.Module):
 
         shift_amount1 = torch.randint(low=1,high = P // 2,size=(1,))[0].item()
         shift_amount2 = torch.randint(low=-P // 2,high = -1,size=(1,))[0].item()
-        feat1_negative = torch.roll(feat1_PD,shift_amount1)
-        feat2_negative = torch.roll(feat2_PD,shift_amount2)
+        feat1_negative = torch.roll(feat1_PD,shift_amount1,dims=0)
+        feat2_negative = torch.roll(feat2_PD,shift_amount2,dims=0)
         simi_positive = torch.concatenate([torch.sum(feat1_PD * feat2_PD,dim=1),
                                            torch.sum(feat2_PD * feat1_PD,dim=1)])
         simi_negative = torch.concatenate([torch.sum(feat1_PD * feat1_negative,dim=1),
