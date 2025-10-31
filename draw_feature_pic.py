@@ -1,4 +1,5 @@
 import argparse
+from sys import maxsize
 import cv2
 import numpy as np
 import torch
@@ -226,7 +227,9 @@ def plot_similarity_map(data: dict, save_file: Path):
     # (h*w, D) @ (D,) -> (h*w,)
     sims = f1_flat_norm @ target_vec_norm
     sim_map = sims.reshape(h, w)
-    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min())
+    max_sim = sim_map.max()
+    min_sim = 2 * np.median(sim_map) - max_sim
+    sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.)
     
     # (3) 绘制蓝到黄的热力图
     fig, ax = plt.subplots(figsize=(w/100, h/100), dpi=300)
