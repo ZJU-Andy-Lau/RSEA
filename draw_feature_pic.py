@@ -226,7 +226,7 @@ def plot_similarity_map(data: dict, save_file: Path):
     # (h*w, D) @ (D,) -> (h*w,)
     sims = f1_flat_norm @ target_vec_norm
     sim_map = sims.reshape(h, w)
-    print(sim_map)
+    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min())
     
     # (3) 绘制蓝到黄的热力图
     fig, ax = plt.subplots(figsize=(w/100, h/100), dpi=300)
