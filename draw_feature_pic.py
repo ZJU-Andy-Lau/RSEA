@@ -402,7 +402,7 @@ def main():
 
     encoder = EncoderDino(
             'weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
-            upsample_times=int(np.log2(16 // s)),
+            upsample_times=int(np.log2(16 // args.downsample_s)),
             use_adapter=True,
             use_conf = True
         )
