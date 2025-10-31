@@ -42,7 +42,7 @@ FIXED_ARGS = [
     '--dino_path', 'weights', # <--- 检查路径
     '--encoder_path', 'weights/encoder_dino_1024_d100_b2_h20', # <--- 检查路径
     '--select_imgs', '0,1,2',
-    '--patience', '100',
+    '--patience', '1000',
     '--conf_threshold', '0.5',
     '--max_iter', '5000',
     '--kmin_k', '4',
