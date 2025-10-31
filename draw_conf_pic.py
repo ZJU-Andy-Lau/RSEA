@@ -108,17 +108,10 @@ def draw_confidence_heatmap(image: np.ndarray,
     except Exception as e:
         print(f"错误: 无法保存图像到 {output_path} - {e}")
 
+@torch.no_grad()
 def main():
     # 步骤 1: Argparse
-    parser = argparse.ArgumentParser(description="""
-    图像对特征匹配与可视化 (V2 - 支持仿射变换).
-    1. 随机生成仿射变换 (N 次).
-    2. Warp 图像到 (1024, 1024).
-    3. 提取特征 (by get_feature).
-    4. 计算特征图上每个点对应的原图坐标.
-    5. 找到原图坐标距离最小的最佳匹配对.
-    6. 保存 K 个最佳结果的可视化.
-    """)
+    parser = argparse.ArgumentParser()
     parser.add_argument("--img_path", type=str, help="输入图片1的路径")
     parser.add_argument("--output_dir", type=str, help="输出结果的目录")
     parser.add_argument("--n_crops", type=int, default=100, help="随机裁切的总次数 (N)")
