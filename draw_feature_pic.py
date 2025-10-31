@@ -78,7 +78,7 @@ def find_min_dist_pair(feat1: np.ndarray, feat2: np.ndarray, feat_orig_coords: n
     # L2 归一化 (用于余弦相似度)
     # 添加 epsilon 防止除以零
     f1_norm = f1_flat / (torch.norm(f1_flat, dim=1, keepdim=True) + 1e-8)
-    f2_norm = f2_flat / (torch.norm(f2_flat, dim=1, keepdims=True) + 1e-8)
+    f2_norm = f2_flat / (torch.norm(f2_flat, dim=1, keepdim=True) + 1e-8)
     
     # (N, D) @ (D, M) -> (N, M)
     # N = h*w (feat2), M = h*w (feat1)
