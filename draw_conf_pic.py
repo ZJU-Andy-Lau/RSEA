@@ -120,7 +120,7 @@ def main():
     parser.add_argument('--encoder_path',type=str)
     
     args = parser.parse_args()
-    os.makedirs(args.output_dir)
+    os.makedirs(args.output_dir,exist_ok=True)
     img = cv2.imread(args.img_path)
     encoder = EncoderDino(
             'weights/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth',
