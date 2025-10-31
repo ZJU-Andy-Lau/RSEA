@@ -1,5 +1,4 @@
 import argparse
-from sys import maxsize
 import cv2
 import numpy as np
 import torch
