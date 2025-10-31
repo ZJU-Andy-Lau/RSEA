@@ -147,4 +147,6 @@ def main():
     _,conf = encoder(img_tensor)
     conf = conf.squeeze().cpu().numpy()
     draw_confidence_heatmap(img,conf,os.path.join(args.output_dir,f'conf_vis_{get_current_time()}.png'))
-    
+
+if __name__ == '__main__':
+    main()
