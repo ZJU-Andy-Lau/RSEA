@@ -369,9 +369,9 @@ def main():
     5. 找到原图坐标距离最小的最佳匹配对.
     6. 保存 K 个最佳结果的可视化.
     """)
-    parser.add_argument("img1_path", type=str, help="输入图片1的路径")
-    parser.add_argument("img2_path", type=str, help="输入图片2的路径")
-    parser.add_argument("output_dir", type=str, help="输出结果的目录")
+    parser.add_argument("--img1_path", type=str, help="输入图片1的路径")
+    parser.add_argument("--img2_path", type=str, help="输入图片2的路径")
+    parser.add_argument("--output_dir", type=str, help="输出结果的目录")
     parser.add_argument("--n_crops", type=int, default=100, help="随机裁切的总次数 (N)")
     parser.add_argument("--k_top", type=int, default=5, help="保存前 K 个最佳匹配结果")
     parser.add_argument("--downsample_s", type=int, default=16, help="特征提取器的下采样率 (s)")
