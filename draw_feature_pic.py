@@ -140,12 +140,12 @@ def plot_correspondence(data: dict, save_file: Path):
     plt.imshow(cv2.cvtColor(resize1, cv2.COLOR_BGR2RGB))
     plt.axis('off')
     plt.plot(u_r1,v_r1, 'r+', markersize=12, markeredgewidth=2)
-    plt.savefig(save_file.replace('.png','_1.png'), dpi=300)
+    plt.savefig(str(save_file).replace('.png','_1.png'), dpi=300)
 
     plt.imshow(cv2.cvtColor(resize2, cv2.COLOR_BGR2RGB))
     plt.axis('off')
     plt.plot(u_r2,v_r2, 'r+', markersize=12, markeredgewidth=2)
-    plt.savefig(save_file.replace('.png','_2.png'), dpi=300)
+    plt.savefig(str(save_file).replace('.png','_2.png'), dpi=300)
     
     # # 竖直堆叠
     # canvas = np.vstack((resize1, resize2))
