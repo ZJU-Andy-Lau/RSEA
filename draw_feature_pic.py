@@ -532,7 +532,7 @@ def main():
             "s": s
         }
 
-        if min_dist > 1:
+        if min_dist > 0.5:
             continue
         
         count += 1
