@@ -216,7 +216,7 @@ def plot_pca(data: dict, save_file: Path):
     ax.axis('off')
     
     # 标注目标点 (u_f, v_f)
-    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=1, markeredgewidth=0)
+    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=1, markeredgewidth=1)
     
     plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)
     plt.close(fig)
