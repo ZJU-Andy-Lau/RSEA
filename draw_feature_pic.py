@@ -9,7 +9,7 @@ import logging
 from model.encoder_dino_0927 import EncoderDino
 import os
 from torchvision import transforms
-
+from scipy.special import softmax
 # --- 全局常量 ---
 RESIZE_W, RESIZE_H = 1024, 1024 # (W, H) 格式
 # 设置日志
@@ -135,26 +135,26 @@ def plot_correspondence(data: dict, save_file: Path):
     canvas = np.vstack((resize1, resize2))
     
     # 设置画布大小以匹配像素，dpi=100
-    fig, ax = plt.subplots(figsize=(W_r/100, (H_r*2)/100), dpi=300)
+    fig, ax = plt.subplots(figsize=(W_r/100, (H_r*2 + 100)/100), dpi=300)
     ax.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
     ax.axis('off') # 不显示坐标轴
 
-    # (1) 绘制10组随机对应点
-    # (u_r, v_r) 在 resize1 和 resize2 中是对应的
-    colors = plt.cm.get_cmap('gist_rainbow', 10)
-    for i in range(10):
-        # 在 resize 图像坐标系中随机选点
-        u_r = np.random.randint(0, W_r)
-        v_r = np.random.randint(0, H_r)
+    # # (1) 绘制10组随机对应点
+    # # (u_r, v_r) 在 resize1 和 resize2 中是对应的
+    # colors = plt.cm.get_cmap('gist_rainbow', 10)
+    # for i in range(10):
+    #     # 在 resize 图像坐标系中随机选点
+    #     u_r = np.random.randint(0, W_r)
+    #     v_r = np.random.randint(0, H_r)
         
-        pt1 = (u_r, v_r)
-        pt2 = (u_r, v_r + H_r) # 因为是竖直堆叠
-        color = colors(i)
+    #     pt1 = (u_r, v_r)
+    #     pt2 = (u_r, v_r + H_r) # 因为是竖直堆叠
+    #     color = colors(i)
         
-        # 绘制虚线
-        ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], linestyle=':', color=color, linewidth=1.0)
-        # 绘制点
-        ax.scatter([pt1[0], pt2[0]], [pt1[1], pt2[1]], color=color, s=15, marker='.')
+    #     # 绘制虚线
+    #     ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], linestyle=':', color=color, linewidth=1.0)
+    #     # 绘制点
+    #     ax.scatter([pt1[0], pt2[0]], [pt1[1], pt2[1]], color=color, s=15, marker='.')
 
     # (2) 绘制目标点（红色十字）
     # 将特征坐标 (u_f, v_f) 转换回 resize 图像坐标 (u_r, v_r)
@@ -172,7 +172,7 @@ def plot_correspondence(data: dict, save_file: Path):
     ax.plot(target_pt_r2[0], target_pt_r2[1], 'r+', markersize=12, markeredgewidth=2)
     
     # 保存图像，去除所有白边
-    plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)
+    plt.savefig(save_file, dpi=300)
     plt.close(fig)
 
 
@@ -198,7 +198,7 @@ def plot_pca(data: dict, save_file: Path):
     ax.axis('off')
     
     # 标注目标点 (u_f, v_f)
-    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=12, markeredgewidth=2)
+    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=3, markeredgewidth=1)
     
     plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)
     plt.close(fig)
@@ -226,14 +226,15 @@ def plot_similarity_map(data: dict, save_file: Path):
     # (h*w, D) @ (D,) -> (h*w,)
     sims = f1_flat_norm @ target_vec_norm
     sim_map = sims.reshape(h, w)
-    max_sim = sim_map.max()
-    min_sim = 2 * np.median(sim_map) - max_sim
-    sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.,a_max=1.)
+    # max_sim = sim_map.max()
+    # min_sim = 2 * np.median(sim_map) - max_sim
+    # sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.,a_max=1.)
+    sim_map = softmax(sim_map)
+    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min())
     
     # (3) 绘制蓝到黄的热力图
     fig, ax = plt.subplots(figsize=(w/100, h/100), dpi=300)
-    # 'plasma' 是一个很好的 蓝-品红-黄 色带
-    ax.imshow(sim_map, cmap='plasma', vmin=0.0, vmax=1.0) 
+    ax.imshow(sim_map, cmap='viridis', vmin=0.0, vmax=1.0) 
     ax.axis('off')
     
     plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)

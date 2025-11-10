@@ -13,3 +13,4 @@ pretrain_dino.sh
 localize.sh
 *.sh
 ./*.ipynb
+*.Lnk
