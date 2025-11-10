@@ -227,6 +227,7 @@ def plot_similarity_map(data: dict, save_file: Path):
     logging.debug(f"绘制图3: {save_file}")
     feat1 = data['feat1']
     feat2 = data['feat2']
+    target_pt_f1_uv = data['target_pt_f1'] # (u_f, v_f)
     target_pt_f2_uv = data['target_pt_f2'] # (u_f, v_f)
     
     h, w, D = feat1.shape
@@ -255,7 +256,33 @@ def plot_similarity_map(data: dict, save_file: Path):
     ax.imshow(sim_map, cmap='viridis', vmin=0.0, vmax=1.0) 
     ax.axis('off')
     
-    plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)
+    plt.savefig(str(save_file).replace('.png','_1.png'), bbox_inches='tight', pad_inches=0, dpi=300)
+    plt.close(fig)
+
+    target_vec_f1 = feat1[target_pt_f1_uv[1], target_pt_f1_uv[0], :] # (D,)
+    
+    # 计算它与 feat1 中所有特征的余弦相似度
+    f2_flat = feat2.reshape(h * w, D)
+    
+    # 归一化
+    target_vec_norm = target_vec_f1 / (np.linalg.norm(target_vec_f1) + 1e-8)
+    f2_flat_norm = f2_flat / (np.linalg.norm(f2_flat, axis=1, keepdims=True) + 1e-8)
+    
+    # (h*w, D) @ (D,) -> (h*w,)
+    sims = f2_flat_norm @ target_vec_norm
+    sim_map = sims.reshape(h, w)
+    # max_sim = sim_map.max()
+    # min_sim = 2 * np.median(sim_map) - max_sim
+    # sim_map = np.clip((sim_map - min_sim) / (max_sim - min_sim),a_min=0.,a_max=1.)
+    sim_map = softmax(sim_map)
+    sim_map = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min())
+    
+    # (3) 绘制蓝到黄的热力图
+    fig, ax = plt.subplots(figsize=(w/100, h/100), dpi=300)
+    ax.imshow(sim_map, cmap='viridis', vmin=0.0, vmax=1.0) 
+    ax.axis('off')
+    
+    plt.savefig(str(save_file).replace('.png','_2.png'), bbox_inches='tight', pad_inches=0, dpi=300)
     plt.close(fig)
 
 # =============================================================================
