@@ -130,50 +130,66 @@ def plot_correspondence(data: dict, save_file: Path):
     s = data['s']
     
     H_r, W_r = resize1.shape[:2] # (1024, 1024)
-    
-    # 竖直堆叠
-    canvas = np.vstack((resize1, resize2))
-    
-    # 设置画布大小以匹配像素，dpi=100
-    fig, ax = plt.subplots(figsize=(W_r/100, (H_r*2 + 100)/100), dpi=300)
-    ax.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
-    ax.axis('off') # 不显示坐标轴
 
-    # # (1) 绘制10组随机对应点
-    # # (u_r, v_r) 在 resize1 和 resize2 中是对应的
-    # colors = plt.cm.get_cmap('gist_rainbow', 10)
-    # for i in range(10):
-    #     # 在 resize 图像坐标系中随机选点
-    #     u_r = np.random.randint(0, W_r)
-    #     v_r = np.random.randint(0, H_r)
-        
-    #     pt1 = (u_r, v_r)
-    #     pt2 = (u_r, v_r + H_r) # 因为是竖直堆叠
-    #     color = colors(i)
-        
-    #     # 绘制虚线
-    #     ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], linestyle=':', color=color, linewidth=1.0)
-    #     # 绘制点
-    #     ax.scatter([pt1[0], pt2[0]], [pt1[1], pt2[1]], color=color, s=15, marker='.')
-
-    # (2) 绘制目标点（红色十字）
-    # 将特征坐标 (u_f, v_f) 转换回 resize 图像坐标 (u_r, v_r)
     u_r1 = (target_pt_f1_uv[0] + 0.5) * s - 0.5
     v_r1 = (target_pt_f1_uv[1] + 0.5) * s - 0.5
     
     u_r2 = (target_pt_f2_uv[0] + 0.5) * s - 0.5
     v_r2 = (target_pt_f2_uv[1] + 0.5) * s - 0.5
+
+    plt.imshow(cv2.cvtColor(resize1, cv2.COLOR_BGR2RGB))
+    plt.axis('off')
+    plt.plot(u_r1,v_r1, 'r+', markersize=12, markeredgewidth=2)
+    plt.savefig(save_file.replace('.png','_1.png'), dpi=300)
+
+    plt.imshow(cv2.cvtColor(resize2, cv2.COLOR_BGR2RGB))
+    plt.axis('off')
+    plt.plot(u_r2,v_r2, 'r+', markersize=12, markeredgewidth=2)
+    plt.savefig(save_file.replace('.png','_2.png'), dpi=300)
     
-    target_pt_r1 = (u_r1, v_r1)
-    target_pt_r2 = (u_r2, v_r2 + H_r) # 添加H_r偏移
+    # # 竖直堆叠
+    # canvas = np.vstack((resize1, resize2))
     
-    # 使用 'r+' 绘制红色十字
-    ax.plot(target_pt_r1[0], target_pt_r1[1], 'r+', markersize=12, markeredgewidth=2)
-    ax.plot(target_pt_r2[0], target_pt_r2[1], 'r+', markersize=12, markeredgewidth=2)
+    # # 设置画布大小以匹配像素，dpi=100
+    # fig, ax = plt.subplots(figsize=(W_r/100, (H_r*2 + 100)/100), dpi=300)
+    # ax.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
+    # ax.axis('off') # 不显示坐标轴
+
+    # # # (1) 绘制10组随机对应点
+    # # # (u_r, v_r) 在 resize1 和 resize2 中是对应的
+    # # colors = plt.cm.get_cmap('gist_rainbow', 10)
+    # # for i in range(10):
+    # #     # 在 resize 图像坐标系中随机选点
+    # #     u_r = np.random.randint(0, W_r)
+    # #     v_r = np.random.randint(0, H_r)
+        
+    # #     pt1 = (u_r, v_r)
+    # #     pt2 = (u_r, v_r + H_r) # 因为是竖直堆叠
+    # #     color = colors(i)
+        
+    # #     # 绘制虚线
+    # #     ax.plot([pt1[0], pt2[0]], [pt1[1], pt2[1]], linestyle=':', color=color, linewidth=1.0)
+    # #     # 绘制点
+    # #     ax.scatter([pt1[0], pt2[0]], [pt1[1], pt2[1]], color=color, s=15, marker='.')
+
+    # # (2) 绘制目标点（红色十字）
+    # # 将特征坐标 (u_f, v_f) 转换回 resize 图像坐标 (u_r, v_r)
+    # u_r1 = (target_pt_f1_uv[0] + 0.5) * s - 0.5
+    # v_r1 = (target_pt_f1_uv[1] + 0.5) * s - 0.5
     
-    # 保存图像，去除所有白边
-    plt.savefig(save_file, dpi=300)
-    plt.close(fig)
+    # u_r2 = (target_pt_f2_uv[0] + 0.5) * s - 0.5
+    # v_r2 = (target_pt_f2_uv[1] + 0.5) * s - 0.5
+    
+    # target_pt_r1 = (u_r1, v_r1)
+    # target_pt_r2 = (u_r2, v_r2 + H_r) # 添加H_r偏移
+    
+    # # 使用 'r+' 绘制红色十字
+    # ax.plot(target_pt_r1[0], target_pt_r1[1], 'r+', markersize=12, markeredgewidth=2)
+    # ax.plot(target_pt_r2[0], target_pt_r2[1], 'r+', markersize=12, markeredgewidth=2)
+    
+    # # 保存图像，去除所有白边
+    # plt.savefig(save_file, dpi=300)
+    # plt.close(fig)
 
 
 def plot_pca(data: dict, save_file: Path):
@@ -198,7 +214,7 @@ def plot_pca(data: dict, save_file: Path):
     ax.axis('off')
     
     # 标注目标点 (u_f, v_f)
-    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=3, markeredgewidth=1)
+    ax.plot(target_pt_f2_uv[0], target_pt_f2_uv[1], 'r+', markersize=1, markeredgewidth=0)
     
     plt.savefig(save_file, bbox_inches='tight', pad_inches=0, dpi=300)
     plt.close(fig)
