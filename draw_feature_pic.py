@@ -390,8 +390,7 @@ def main():
     parser.add_argument("--img1_path", type=str, help="输入图片1的路径")
     parser.add_argument("--img2_path", type=str, help="输入图片2的路径")
     parser.add_argument("--output_dir", type=str, help="输出结果的目录")
-    parser.add_argument("--n_crops", type=int, default=100, help="随机裁切的总次数 (N)")
-    parser.add_argument("--k_top", type=int, default=5, help="保存前 K 个最佳匹配结果")
+    parser.add_argument("--n_results", type=int, default=100, help="随机裁切的总次数 (N)")
     parser.add_argument("--downsample_s", type=int, default=16, help="特征提取器的下采样率 (s)")
     parser.add_argument('--encoder_path',type=str)
     
@@ -428,15 +427,15 @@ def main():
     encoder.cuda()
     encoder.eval()
 
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
+    total_count = 0
+    count = 0   
     
-    # 步骤 3: N 次裁切循环
-    results = [] # 存储 (min_dist, data_for_plotting)
-    
-    logging.info(f"开始 {args.n_crops} 次裁切 (N={args.n_crops})...")
-    
-    for i in range(args.n_crops):
-        logging.info(f"--- 裁切 {i+1}/{args.n_crops} ---")
+    while True:
+        total_count += 1
+        logging.info(f"--- 裁切 {total_count} ---")
         
         # 3a. [NEW] 生成随机仿射变换矩阵 M
         # M maps from (resize_space) -> (original_space)
@@ -505,36 +504,29 @@ def main():
             "target_pt_f2": target_pt_f2_uv, # (u_f, v_f)
             "s": s
         }
-        results.append((min_dist, plot_data))
 
-    # 步骤 6: 排序，选取 K 个
-    logging.info(f"完成 {args.n_crops} 次裁切。正在排序结果...")
-    
-    if not results:
-        logging.error("没有成功生成任何结果。退出。")
-        return
+        if min_dist > 1:
+            continue
         
-    top_k_results = sorted(results, key=lambda x: x[0])[:args.k_top]
-    
-    # 步骤 7: 绘图与保存
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logging.info(f"正在保存 K={len(top_k_results)} 个最佳结果到 {output_dir}")
-    
-    for i, (min_dist, data) in enumerate(top_k_results):
-        # 创建子文件夹
-        save_path = output_dir / f"rank_{i+1:03d}_dist_{min_dist:.4f}"
+        count += 1
+        
+        save_path = output_dir / f"{count}_dist_{min_dist:.4f}"
         save_path.mkdir(exist_ok=True)
         
-        logging.info(f"  保存 Rank {i+1} (dist={min_dist:.4f}) 到 {save_path.name}")
+        logging.info(f"  保存 第 {count} (dist={min_dist:.4f}) 到 {save_path.name}")
         
         try:
             # 绘制三张图
-            plot_correspondence(data, save_path / "1_correspondence.png")
-            plot_pca(data, save_path / "2_pca.png")
-            plot_similarity_map(data, save_path / "3_similarity_map.png")
+            plot_correspondence(plot_data, save_path / "1_correspondence.png")
+            plot_pca(plot_data, save_path / "2_pca.png")
+            plot_similarity_map(plot_data, save_path / "3_similarity_map.png")
         except Exception as e:
-            logging.error(f"为 Rank {i+1} 绘图时发生错误: {e}")
+            logging.error(f"为 No.{count} 绘图时发生错误: {e}")
+
+        if count >= args.n_results:
+            break
+        
+
 
     logging.info("所有任务完成。")
 
