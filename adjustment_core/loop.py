@@ -271,7 +271,7 @@ def fit_affine_bundle(args,
         print("Bundle adjustment optimization finished for this level.")
         end_time = time.perf_counter()
         print(f"Time Cost:{(end_time - start_time):.2f}")
-        with open(os.path.join(args.debug_output_path,'loss_log.txt'),'w') as f:
+        with open(os.path.join(args.debug_output_path,f'loss_log_level_{current_level}.txt'),'w') as f:
             f.write(loss_log)
 
     return best_model_state
