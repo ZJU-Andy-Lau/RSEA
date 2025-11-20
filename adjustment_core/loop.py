@@ -3,6 +3,7 @@ from pykeops.torch import LazyTensor
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import List, Tuple, Dict
+import time
 
 # 假设的外部依赖
 from rpc import RPCModelParameterTorch
@@ -84,6 +85,9 @@ def fit_affine_bundle(args,
     
     # --- [Refactored] 初始化 Logger ---
     logger = TqdmLogger(args, args.max_iter, current_level, local_rank)
+
+    if local_rank == 0:
+        start_time = time.perf_counter()
     
     # ---初始化早停和最佳模型变量 ---
     best_model_state = [] 
@@ -262,6 +266,8 @@ def fit_affine_bundle(args,
     
     if local_rank == 0 and not args.auto:
         print("Bundle adjustment optimization finished for this level.")
-
+        end_time = time.perf_counter()
+        print(f"Time Cost:{(end_time - start_time):.2f}")
+        
     return best_model_state
 
