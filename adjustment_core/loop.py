@@ -4,6 +4,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from typing import List, Tuple, Dict
 import time
+import os
 
 # 假设的外部依赖
 from rpc import RPCModelParameterTorch
@@ -88,6 +89,7 @@ def fit_affine_bundle(args,
 
     if local_rank == 0:
         start_time = time.perf_counter()
+        loss_log = ""
     
     # ---初始化早停和最佳模型变量 ---
     best_model_state = [] 
@@ -245,6 +247,7 @@ def fit_affine_bundle(args,
             
             # 调用 logger
             logger.update(iter, global_avg_loss, metric_log_dict, patience_counter, patience)
+            loss_log += f"{global_avg_loss:.2f}\n"
 
         
         # 3.广播停止信号
@@ -268,6 +271,8 @@ def fit_affine_bundle(args,
         print("Bundle adjustment optimization finished for this level.")
         end_time = time.perf_counter()
         print(f"Time Cost:{(end_time - start_time):.2f}")
-        
+        with open(os.path.join(args.debug_output_path,'loss_log.txt'),'w') as f:
+            f.write(loss_log)
+
     return best_model_state
 
