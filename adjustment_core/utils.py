@@ -151,8 +151,11 @@ def create_checkerboard(ortho1: np.ndarray,
 def load_imgs_bundle(args) -> List[RSImage]:
     """加载所有影像 (包含完整的图像数据)。"""
     base_path = os.path.join(args.root, 'adjust_images')
-    select_img_idxs = [int(i) for i in args.select_imgs.split(',')]
     img_folders = sorted([d for d in os.listdir(base_path) if os.path.isdir(os.path.join(base_path, d))])
+    if args.select_imgs != -1:
+        select_img_idxs = [int(i) for i in args.select_imgs.split(',')]
+    else:
+        select_img_idxs = range(len(img_folders))
     img_folders = [img_folders[i] for i in select_img_idxs]
     
     images = []
