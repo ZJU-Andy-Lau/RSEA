@@ -30,11 +30,13 @@ class RSImage():
         # if options.use_clahe:
         #     self.image = clahe.apply(self.image)
         self.image = np.stack([self.image] * 3,axis=-1)
-        self.dem = np.load(os.path.join(root,'dem.npy'))
+        self.dem = np.load(os.path.join(root,'dem.npy'),mmap_mode='r')
         if os.path.exists(os.path.join(root,'tie_points.txt')):
             self.tie_points = self.__load_tie_points__(os.path.join(root,'tie_points.txt'))
+            self.tie_points_height = self.dem[self.tie_points[:,0],self.tie_points[:,1]]
         else:
             self.tie_points = None
+            self.tie_points_height = None
 
         if size_limit > 0:
             self.image = self.image[:size_limit,:size_limit]

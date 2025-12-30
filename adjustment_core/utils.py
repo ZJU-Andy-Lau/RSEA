@@ -158,7 +158,7 @@ def load_imgs_bundle(args) -> List[RSImage]:
         select_img_idxs = range(len(img_folders))
     img_folders = [img_folders[i] for i in select_img_idxs]
     
-    images = []
+    images:List[RSImage] = []
     if dist.get_rank() == 0 and not args.auto:
         print(f"[Rank {dist.get_rank()}] Found {len(img_folders)} image folders. Loading all...")
         
@@ -166,6 +166,7 @@ def load_imgs_bundle(args) -> List[RSImage]:
         img_path = os.path.join(base_path, folder)
         try:
             images.append(RSImage(args, img_path, idx))
+            images[-1].tie_points_height = images[0].tie_points_height
             if dist.get_rank() == 0 and not args.auto:
                 print(f"[Rank {dist.get_rank()}] Loaded image {idx} from {folder}.")
         except Exception as e:
