@@ -87,9 +87,9 @@ def get_param_grid():
     # 3. 应用条件逻辑 和 生成ID
     for params in all_combinations:
         # 应用条件逻辑: window_size -> num_levels
-        if params['window_size'] == 2000:
+        if params['window_size'] == 400:
             params['num_levels'] = 3
-        elif params['window_size'] == 1000:
+        elif params['window_size'] == 200:
             params['num_levels'] = 2
         
         # 4. 生成可复现的 Experiment ID
