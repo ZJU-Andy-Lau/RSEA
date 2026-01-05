@@ -42,7 +42,7 @@ FIXED_ARGS = [
     '--dino_path', 'weights', # <--- 检查路径
     '--encoder_path', 'weights/encoder_dino_1031_d100_b2_h20', # <--- 检查路径
     '--select_imgs', '-1',
-    '--patience', '100',
+    '--patience', '50',
     '--conf_threshold', '0.5',
     '--max_iter', '5000',
     '--kmin_k', '4',
@@ -71,11 +71,11 @@ def get_param_grid():
     
     # 1. 定义搜索空间
     param_space = {
-        'root': ['./datasets/JAX_error_10/JAX_0','./datasets/JAX_error_10/JAX_2','./datasets/JAX_error_10/JAX_3'], # <--- !! [修改] 新增, 请填入您的路径
-        'max_lr': [0.1, 0.05, 0.01],
+        'root': ['./datasets/JAX_error_10/JAX_3'], # <--- !! [修改] 新增, 请填入您的路径
+        'max_lr': [0.1],
         'window_size': [200],
         'grid_num': [4],
-        'random_seed':[9,13,17,27,32]
+        'random_seed':[9,17,27]
     }
     
     # 2. 创建所有笛卡尔积组合
