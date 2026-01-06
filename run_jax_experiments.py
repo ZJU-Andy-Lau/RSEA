@@ -71,7 +71,7 @@ def get_param_grid():
     
     # 1. 定义搜索空间
     param_space = {
-        'root': ['./datasets/JAX_error_10/JAX_3'], # <--- !! [修改] 新增, 请填入您的路径
+        'root': ['./datasets/JAX_error_20/JAX_0','./datasets/JAX_error_20/JAX_1','./datasets/JAX_error_20/JAX_2'], # <--- !! [修改] 新增, 请填入您的路径
         'max_lr': [0.1],
         'window_size': [200],
         'grid_num': [4],
