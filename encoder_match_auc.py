@@ -29,12 +29,12 @@ def set_seed(seed: int) -> None:
 
 
 def load_image(path: str, size: Tuple[int, int]) -> np.ndarray:
-    image_bgr = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if image_bgr is None:
+    image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    if image is None:
         raise FileNotFoundError(f"Failed to read image: {path}")
-    image_rgb = cv2.resize(image_rgb, size, interpolation=cv2.INTER_LINEAR)
-    image_rgb = np.stack([image_rgb] * 3,axis=-1)
-    return image_rgb
+    image = cv2.resize(image, size, interpolation=cv2.INTER_LINEAR)
+    image = np.stack([image] * 3,axis=-1)
+    return image
 
 
 def build_affine_matrix(params: WarpParams, size: Tuple[int, int]) -> np.ndarray:
